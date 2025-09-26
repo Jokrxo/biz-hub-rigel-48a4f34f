@@ -1,11 +1,34 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Bell, Menu, Search, Plus } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useAuth } from "@/context/AuthContext";
+import { Bell, Menu, Search, Plus, LogOut } from "lucide-react";
 
 interface DashboardHeaderProps {
   onMenuClick: () => void;
 }
+
+const UserMenu = () => {
+  const { user, logout } = useAuth();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className="flex flex-col items-end">
+          <span className="text-sm font-medium">{user?.name ?? "User"}</span>
+          <span className="text-xs text-muted-foreground">{user?.email}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>Account</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={logout} className="text-destructive">
+          <LogOut className="h-4 w-4 mr-2" /> Log out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
 
 export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
   return (
@@ -44,10 +67,7 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
           </Button>
         </div>
 
-        <div className="text-right">
-          <p className="text-sm font-medium">ABC Trading (Pty) Ltd</p>
-          <p className="text-xs text-muted-foreground">VAT: 4123456789</p>
-        </div>
+        <UserMenu />
       </div>
     </header>
   );
