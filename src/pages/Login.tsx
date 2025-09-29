@@ -36,7 +36,7 @@ export default function Login() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      await login(values.email, values.password, values.remember);
+      await login(values.email, values.password);
       const redirect = params.get("redirect") || "/";
       navigate(redirect, { replace: true });
     } catch (e: any) {

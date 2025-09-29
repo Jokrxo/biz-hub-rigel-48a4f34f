@@ -1,10 +1,10 @@
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
-import { DashboardOverview } from "@/components/Dashboard/DashboardOverview";
+import { TrialBalanceManager } from "@/components/TrialBalance/TrialBalanceManager";
 
 const Index = () => {
   return (
     <DashboardLayout>
-      <DashboardOverview />
+      <TrialBalanceManager />
     </DashboardLayout>
   );
 };

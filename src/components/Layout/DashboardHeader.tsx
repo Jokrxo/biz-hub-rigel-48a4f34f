@@ -15,7 +15,7 @@ const UserMenu = () => {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="flex flex-col items-end">
-          <span className="text-sm font-medium">{user?.name ?? "User"}</span>
+          <span className="text-sm font-medium">{user?.user_metadata?.name || user?.email}</span>
           <span className="text-xs text-muted-foreground">{user?.email}</span>
         </Button>
       </DropdownMenuTrigger>
