@@ -10,10 +10,24 @@ import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
 import { AuthProvider } from "./context/AuthContext";
 import { ProtectedRoute } from "./components/Auth/ProtectedRoute";
+import { SupabaseSetup } from "./components/Setup/SupabaseSetup";
 
 const queryClient = new QueryClient();
 
-const App = () => (
+// Check if Supabase is properly configured
+const isSupabaseConfigured = () => {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  return url && key && url !== 'https://placeholder.supabase.co' && key !== 'placeholder-key';
+};
+
+const App = () => {
+  // Show setup screen if Supabase is not configured
+  if (!isSupabaseConfigured()) {
+    return <SupabaseSetup />;
+  }
+
+  return (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
@@ -41,6 +55,7 @@ const App = () => (
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>
-);
+  );
+};
 
 export default App;
