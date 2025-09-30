@@ -27,12 +27,17 @@ export default function ForgotPassword() {
 
   return (
     <>
-      <SEO title="Forgot Password | SA Finance Manager" description="Reset your SA Finance Manager password" canonical={window.location.href} />
-      <main className="min-h-screen bg-gradient-subtle flex items-center justify-center p-6">
-        <article className="w-full max-w-md rounded-lg border border-border bg-card shadow-sm p-6">
-          <header className="mb-6 text-center">
-            <h1 className="text-2xl font-semibold">Reset your password</h1>
-            <p className="text-sm text-muted-foreground mt-1">We will email you a secure reset link</p>
+      <SEO title="Forgot Password | ApexAccounts" description="Reset your ApexAccounts password" canonical={window.location.href} />
+      <main className="min-h-screen bg-gradient-to-br from-primary/5 via-accent/5 to-background flex items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=1920&h=1080&fit=crop')] bg-cover bg-center opacity-5" />
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-accent/10 backdrop-blur-3xl" />
+        <article className="w-full max-w-md rounded-lg border border-border bg-card/95 backdrop-blur-sm shadow-elegant p-8 relative z-10">
+          <header className="mb-8 text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4 animate-glow">
+              <span className="text-3xl font-bold text-primary-foreground">A</span>
+            </div>
+            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">ApexAccounts</h1>
+            <p className="text-sm text-muted-foreground mt-2">Reset your password</p>
           </header>
 
           <Form {...form}>

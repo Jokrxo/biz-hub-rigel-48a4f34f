@@ -1,73 +1,135 @@
-# Welcome to your Lovable project
+# ApexAccounts - Enterprise Accounting Solution
 
-## Project info
+A comprehensive accounting and financial management system built for South African enterprises with multi-branch support.
 
-**URL**: https://lovable.dev/projects/a7160b1c-f943-4369-904d-da12434c2789
+## Features
 
-## How can I edit this code?
+### Core Accounting
+- **Dashboard**: Real-time financial overview with key metrics
+- **Transactions**: Complete transaction management with journal entries
+- **Trial Balance**: Automated trial balance generation and reporting
+- **Financial Reports**: Comprehensive AFS, P&L, and Balance Sheet
 
-There are several ways of editing your application.
+### Sales & Purchase
+- **Invoices**: Create, manage, and email professional invoices
+- **Sales Quotes**: Generate quotes and convert to invoices with one click
+- **Sales Module**: Track sales transactions and revenue
+- **Purchase Module**: Manage purchases and expenses
 
-**Use Lovable**
+### Assets & Compliance
+- **Fixed Assets Register**: Track depreciation and asset lifecycle
+- **VAT Management**: Automated VAT calculations and returns
+- **Tax Compliance**: South African tax compliance tools
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/a7160b1c-f943-4369-904d-da12434c2789) and start prompting.
+### Multi-Branch Support
+- Branch selector for companies with 3+ branches
+- Branch-filtered data across all modules
+- Centralized company management
 
-Changes made via Lovable will be committed automatically to this repo.
+### User Roles & Permissions
+- **Administrator**: Full system access
+- **Accountant**: Manage transactions, reports, and financial data
+- **Manager**: View-only access to dashboards and reports
 
-**Use your preferred IDE**
+## Tech Stack
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+- **Frontend**: React 18 + TypeScript + Vite
+- **Backend**: Supabase (Auth + Database + RLS)
+- **UI**: TailwindCSS + shadcn/ui components
+- **State Management**: React Query
+- **Routing**: React Router v6
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+## Getting Started
 
-Follow these steps:
+### Prerequisites
+- Node.js 18+ or Bun
+- Supabase account (already configured)
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+### Installation
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+```bash
+# Install dependencies
+npm install
+# or
+bun install
 
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start development server
 npm run dev
+# or
+bun dev
 ```
 
-**Edit a file directly in GitHub**
+### Environment Setup
+No environment variables needed - Supabase is pre-configured via integrations.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Project Structure
 
-**Use GitHub Codespaces**
+```
+src/
+├── components/
+│   ├── Layout/          # Dashboard layout components
+│   ├── ui/              # shadcn UI components
+│   └── ...              # Feature components
+├── pages/               # Route pages
+├── hooks/               # Custom React hooks
+├── lib/                 # Utilities and API clients
+├── context/             # React context providers
+└── integrations/        # Supabase integration
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Database Schema
 
-## What technologies are used for this project?
+- **companies**: Multi-company support
+- **branches**: Branch management
+- **profiles**: User profiles
+- **user_roles**: Role-based permissions
+- **transactions**: Financial transactions
+- **transaction_entries**: Journal entries
+- **trial_balances**: Trial balance records
+- **invoices**: Customer invoices
+- **quotes**: Sales quotes
+- **fixed_assets**: Asset register
+- **chart_of_accounts**: CoA structure
 
-This project is built with:
+## Security
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+- Row Level Security (RLS) enforced on all tables
+- Role-based access control
+- Secure authentication via Supabase Auth
+- Input validation with Zod schemas
 
-## How can I deploy this project?
+## Deployment
 
-Simply open [Lovable](https://lovable.dev/projects/a7160b1c-f943-4369-904d-da12434c2789) and click on Share -> Publish.
+### Production Build
+```bash
+npm run build
+# or
+bun run build
+```
 
-## Can I connect a custom domain to my Lovable project?
+### Deploy to EC2
+1. Build the project
+2. Upload `dist/` folder to EC2
+3. Configure nginx/Apache to serve static files
+4. Ensure Supabase URL is accessible from production
 
-Yes, you can!
+## Features Roadmap
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+- [x] Multi-branch support
+- [x] Role-based permissions
+- [x] Fixed assets register
+- [x] Invoice & quote management
+- [ ] Email integration (Resend)
+- [ ] PDF generation for reports
+- [ ] Service-based sales
+- [ ] Stock validation
+- [ ] Cost of Sales automation
+- [ ] Advanced analytics
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+## Support
+
+For issues or questions, contact the development team.
+
+## License
+
+Proprietary - All rights reserved

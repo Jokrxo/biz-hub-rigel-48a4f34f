@@ -1,4 +1,5 @@
 import * as React from "react";
+import { Suspense, lazy } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -12,6 +13,15 @@ import ForgotPassword from "./pages/ForgotPassword";
 import { AuthProvider } from "./context/AuthContext";
 import { ProtectedRoute } from "./components/Auth/ProtectedRoute";
 import { SupabaseSetup } from "./components/Setup/SupabaseSetup";
+import { PageLoader } from "./components/ui/loading-spinner";
+
+// Lazy load pages
+const Transactions = lazy(() => import("./pages/Transactions"));
+const Invoices = lazy(() => import("./pages/Invoices"));
+const Quotes = lazy(() => import("./pages/Quotes"));
+const FixedAssets = lazy(() => import("./pages/FixedAssets"));
+const TrialBalance = lazy(() => import("./pages/TrialBalance"));
+const Reports = lazy(() => import("./pages/Reports"));
 
 const queryClient = new QueryClient();
 
@@ -36,14 +46,14 @@ const App = () => {
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
 
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <Index />
-                </ProtectedRoute>
-              }
-            />
+            <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+            <Route path="/transactions" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Transactions /></Suspense></ProtectedRoute>} />
+            <Route path="/invoices" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Invoices /></Suspense></ProtectedRoute>} />
+            <Route path="/quotes" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Quotes /></Suspense></ProtectedRoute>} />
+            <Route path="/fixed-assets" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><FixedAssets /></Suspense></ProtectedRoute>} />
+            <Route path="/trial-balance" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><TrialBalance /></Suspense></ProtectedRoute>} />
+            <Route path="/reports" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Reports /></Suspense></ProtectedRoute>} />
 
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
