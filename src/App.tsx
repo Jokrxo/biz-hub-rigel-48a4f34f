@@ -22,6 +22,12 @@ const Quotes = lazy(() => import("./pages/Quotes"));
 const FixedAssets = lazy(() => import("./pages/FixedAssets"));
 const TrialBalance = lazy(() => import("./pages/TrialBalance"));
 const Reports = lazy(() => import("./pages/Reports"));
+const Sales = lazy(() => import("./pages/Sales"));
+const Purchase = lazy(() => import("./pages/Purchase"));
+const Tax = lazy(() => import("./pages/Tax"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const Customers = lazy(() => import("./pages/Customers"));
+const Settings = lazy(() => import("./pages/Settings"));
 
 const queryClient = new QueryClient();
 
@@ -54,6 +60,12 @@ const App = () => {
             <Route path="/fixed-assets" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><FixedAssets /></Suspense></ProtectedRoute>} />
             <Route path="/trial-balance" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><TrialBalance /></Suspense></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Reports /></Suspense></ProtectedRoute>} />
+            <Route path="/sales" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Sales /></Suspense></ProtectedRoute>} />
+            <Route path="/purchase" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Purchase /></Suspense></ProtectedRoute>} />
+            <Route path="/tax" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Tax /></Suspense></ProtectedRoute>} />
+            <Route path="/analytics" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Analytics /></Suspense></ProtectedRoute>} />
+            <Route path="/customers" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Customers /></Suspense></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Settings /></Suspense></ProtectedRoute>} />
 
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

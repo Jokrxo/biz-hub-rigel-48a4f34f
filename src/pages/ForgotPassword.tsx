@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import SEO from "@/components/SEO";
 import { useToast } from "@/components/ui/use-toast";
+import { supabase } from "@/lib/supabase";
 
 const schema = z.object({ email: z.string().trim().email("Enter a valid email") });
 
@@ -17,8 +18,10 @@ export default function ForgotPassword() {
 
   const onSubmit = async (values: FormValues) => {
     try {
-      const res = await fetch(`/api/auth/forgot-password`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(values) });
-      if (!res.ok) throw new Error((await res.json()).message || "Request failed");
+      const { error } = await supabase.auth.resetPasswordForEmail(values.email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
       toast({ title: "Email sent", description: "Check your inbox for password reset instructions." });
     } catch (e: any) {
       toast({ title: "Request failed", description: e.message, variant: "destructive" });

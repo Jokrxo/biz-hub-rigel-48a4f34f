@@ -27,6 +27,7 @@ const navItems = [
   { icon: FileText, label: "Quotes", href: "/quotes" },
   { icon: DollarSign, label: "Sales", href: "/sales" },
   { icon: CreditCard, label: "Purchase", href: "/purchase" },
+  { icon: Receipt, label: "Tax", href: "/tax" },
   { icon: Building2, label: "Fixed Assets", href: "/fixed-assets" },
   { icon: Calculator, label: "Trial Balance", href: "/trial-balance" },
   { icon: TrendingUp, label: "Financial Reports", href: "/reports" },
