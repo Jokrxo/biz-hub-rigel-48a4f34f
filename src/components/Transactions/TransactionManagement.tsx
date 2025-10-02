@@ -5,10 +5,21 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar } from "lucide-react";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { transactionsApi, type TransactionRow } from "@/lib/transactions-api";
+import { supabase } from "@/lib/supabase";
+import { TransactionForm } from "./TransactionForm";
+import { exportTransactionsToExcel, exportTransactionsToPDF } from "@/lib/export-utils";
+
+interface Transaction {
+  id: string;
+  transaction_date: string;
+  description: string;
+  reference_number: string | null;
+  total_amount: number;
+  status: string;
+  entries?: any[];
+}
 
 export const TransactionManagement = () => {
   const { toast } = useToast();
@@ -16,16 +27,43 @@ export const TransactionManagement = () => {
   const [filterType, setFilterType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
   const [loading, setLoading] = useState(true);
-  const [items, setItems] = useState<TransactionRow[]>([]);
-
+  const [items, setItems] = useState<Transaction[]>([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ date: new Date().toISOString().slice(0,10), description: "", amount: "", reference: "" });
+  const [editData, setEditData] = useState<any>(null);
 
   const load = async () => {
     try {
       setLoading(true);
-      const data = await transactionsApi.getAll();
-      setItems(data);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (!profile) return;
+
+      const { data, error } = await supabase
+        .from("transactions")
+        .select(`
+          *,
+          entries:transaction_entries(
+            id,
+            account_id,
+            debit,
+            credit,
+            description,
+            status,
+            chart_of_accounts(account_code, account_name)
+          )
+        `)
+        .eq("company_id", profile.company_id)
+        .order("transaction_date", { ascending: false });
+
+      if (error) throw error;
+      setItems(data || []);
     } catch (e: any) {
       toast({ title: "Failed to load", description: e.message, variant: "destructive" });
     } finally {
@@ -61,20 +99,56 @@ export const TransactionManagement = () => {
     return { filtered, totalIncome, totalExpenses };
   }, [items, searchTerm, filterType, filterStatus]);
 
-  const submitNew = async () => {
+  const allocateTransaction = async (id: string) => {
     try {
-      const amount = parseFloat(form.amount);
-      if (!form.description || isNaN(amount)) {
-        toast({ title: "Invalid data", description: "Provide description and amount", variant: "destructive" });
-        return;
-      }
-      await transactionsApi.create({ date: form.date, description: form.description, amount, reference: form.reference });
-      setOpen(false);
-      setForm({ date: new Date().toISOString().slice(0,10), description: "", amount: "", reference: "" });
-      await load();
-      toast({ title: "Transaction added" });
+      const { error } = await supabase
+        .from("transactions")
+        .update({ status: "approved" })
+        .eq("id", id);
+
+      if (error) throw error;
+
+      await supabase
+        .from("transaction_entries")
+        .update({ status: "approved" })
+        .eq("transaction_id", id);
+
+      toast({ title: "Success", description: "Transaction allocated" });
+      load();
     } catch (e: any) {
-      toast({ title: "Failed to add", description: e.message, variant: "destructive" });
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const deleteTransaction = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from("transactions")
+        .delete()
+        .eq("id", id);
+
+      if (error) throw error;
+      toast({ title: "Success", description: "Transaction deleted" });
+      load();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const handleExport = () => {
+    const exportData = derived.filtered.map(t => ({
+      date: t.date,
+      description: t.description,
+      type: t.type,
+      amount: t.amount,
+      vatAmount: t.vatAmount,
+      reference: t.reference
+    }));
+    
+    if (confirm("Export as Excel or PDF? (OK = Excel, Cancel = PDF)")) {
+      exportTransactionsToExcel(exportData);
+    } else {
+      exportTransactionsToPDF(exportData);
     }
   };
 
@@ -85,41 +159,17 @@ export const TransactionManagement = () => {
           <h1 className="text-3xl font-bold text-foreground">Transaction Management</h1>
           <p className="text-muted-foreground mt-1">Manage all your business transactions and financial entries</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button className="bg-gradient-primary hover:opacity-90">
-              <Plus className="h-4 w-4 mr-2" />
-              New Transaction
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>New Transaction</DialogTitle>
-            </DialogHeader>
-            <div className="grid gap-4">
-              <div>
-                <label className="text-sm">Date</label>
-                <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
-              </div>
-              <div>
-                <label className="text-sm">Description</label>
-                <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="e.g. Client payment" />
-              </div>
-              <div>
-                <label className="text-sm">Amount (ZAR)</label>
-                <Input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="e.g. 1250.00" />
-              </div>
-              <div>
-                <label className="text-sm">Reference</label>
-                <Input value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="e.g. INV-001" />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={submitNew}>Save</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+        <Button className="bg-gradient-primary hover:opacity-90" onClick={() => { setEditData(null); setOpen(true); }}>
+          <Plus className="h-4 w-4 mr-2" />
+          New Transaction
+        </Button>
+        
+        <TransactionForm
+          open={open}
+          onOpenChange={setOpen}
+          onSuccess={load}
+          editData={editData}
+        />
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -176,8 +226,7 @@ export const TransactionManagement = () => {
                 <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" className="gap-2"><Filter className="h-4 w-4" />More Filters</Button>
-            <Button variant="outline" className="gap-2"><Download className="h-4 w-4" />Export</Button>
+            <Button variant="outline" className="gap-2" onClick={handleExport}><Download className="h-4 w-4" />Export</Button>
           </div>
         </CardContent>
       </Card>
@@ -201,7 +250,7 @@ export const TransactionManagement = () => {
                   <TableHead className="text-right w-32">Amount</TableHead>
                   <TableHead className="text-right w-24">VAT</TableHead>
                   <TableHead className="w-24">Status</TableHead>
-                  <TableHead className="w-20">Actions</TableHead>
+                  <TableHead className="w-40">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -214,7 +263,22 @@ export const TransactionManagement = () => {
                     <TableCell className="text-right font-mono"><span className={transaction.type === "Income" ? "text-primary" : "text-muted-foreground"}>R {transaction.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></TableCell>
                     <TableCell className="text-right font-mono text-sm">R {transaction.vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
                     <TableCell><Badge variant={transaction.status === "Cleared" ? "default" : "outline"} className={transaction.status === "Cleared" ? "bg-primary" : ""}>{transaction.status}</Badge></TableCell>
-                    <TableCell><div className="flex items-center gap-1"><Button variant="ghost" size="sm" className="h-8 w-8 p-0"><Edit className="h-4 w-4" /></Button><Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={async ()=>{try{await transactionsApi.delete(transaction.id);await load();toast({title:'Deleted'});}catch(e:any){toast({title:'Delete failed',description:e.message,variant:'destructive'});}}}><Trash2 className="h-4 w-4" /></Button></div></TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-1">
+                        {transaction.status === "pending" && (
+                          <Button variant="ghost" size="sm" className="h-8 px-2 text-primary" onClick={() => allocateTransaction(transaction.id)}>
+                            <CheckCircle className="h-4 w-4 mr-1" />
+                            Allocate
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => { setEditData(transaction); setOpen(true); }}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={() => deleteTransaction(transaction.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
