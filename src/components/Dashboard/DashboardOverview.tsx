@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,58 +11,157 @@ import {
   AlertTriangle,
   Calendar,
   FileText,
-  CreditCard
+  CreditCard,
+  Building2,
+  Briefcase
 } from "lucide-react";
-
-const metrics = [
-  {
-    title: "Total Revenue",
-    value: "R 2,847,390.50",
-    change: "+12.5%",
-    trend: "up",
-    icon: DollarSign,
-    description: "vs last month"
-  },
-  {
-    title: "Outstanding Invoices",
-    value: "R 189,450.00",
-    change: "-8.2%",
-    trend: "down",
-    icon: FileText,
-    description: "15 invoices pending"
-  },
-  {
-    title: "VAT Due",
-    value: "R 45,680.75",
-    change: "+5.8%",
-    trend: "up",
-    icon: Receipt,
-    description: "Due: 7 days"
-  },
-  {
-    title: "Cash Flow",
-    value: "R 1,247,890.25",
-    change: "+18.3%",
-    trend: "up",
-    icon: CreditCard,
-    description: "Available funds"
-  }
-];
-
-const recentTransactions = [
-  { id: "TXN-001", description: "Client Payment - Acme Corp", amount: "R 25,000.00", type: "income", date: "2024-01-15" },
-  { id: "TXN-002", description: "Office Rent", amount: "R 15,500.00", type: "expense", date: "2024-01-14" },
-  { id: "TXN-003", description: "Equipment Purchase", amount: "R 8,750.00", type: "expense", date: "2024-01-14" },
-  { id: "TXN-004", description: "Consulting Fee - XYZ Ltd", amount: "R 32,000.00", type: "income", date: "2024-01-13" },
-];
-
-const alerts = [
-  { type: "warning", message: "VAT return due in 7 days", priority: "high" },
-  { type: "info", message: "Monthly financial reports ready", priority: "medium" },
-  { type: "error", message: "3 overdue invoices require attention", priority: "high" },
-];
+import { supabase } from "@/lib/supabase";
+import { useToast } from "@/hooks/use-toast";
 
 export const DashboardOverview = () => {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(true);
+  const [metrics, setMetrics] = useState({
+    totalAssets: 0,
+    totalLiabilities: 0,
+    totalEquity: 0,
+    totalIncome: 0,
+    totalExpenses: 0,
+    bankBalance: 0
+  });
+  const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
+
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  const loadDashboardData = async () => {
+    try {
+      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (!profile) return;
+
+      // Load transactions
+      const { data: transactions, error: txError } = await supabase
+        .from("transactions")
+        .select(`
+          *,
+          entries:transaction_entries(
+            id,
+            debit,
+            credit,
+            chart_of_accounts(account_type)
+          )
+        `)
+        .eq("company_id", profile.company_id)
+        .eq("status", "approved")
+        .order("transaction_date", { ascending: false })
+        .limit(5);
+
+      if (txError) throw txError;
+
+      // Calculate totals by account type
+      let assets = 0, liabilities = 0, equity = 0, income = 0, expenses = 0;
+
+      transactions?.forEach(tx => {
+        tx.entries?.forEach((entry: any) => {
+          const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
+          const netAmount = entry.debit - entry.credit;
+
+          if (type.includes("asset")) assets += netAmount;
+          else if (type.includes("liability")) liabilities += Math.abs(netAmount);
+          else if (type.includes("equity")) equity += Math.abs(netAmount);
+          else if (type.includes("income") || type.includes("revenue")) income += Math.abs(netAmount);
+          else if (type.includes("expense")) expenses += Math.abs(netAmount);
+        });
+      });
+
+      // Load bank balance
+      const { data: banks } = await supabase
+        .from("bank_accounts")
+        .select("current_balance")
+        .eq("company_id", profile.company_id);
+
+      const bankBalance = banks?.reduce((sum, b) => sum + b.current_balance, 0) || 0;
+
+      setMetrics({
+        totalAssets: assets,
+        totalLiabilities: liabilities,
+        totalEquity: equity,
+        totalIncome: income,
+        totalExpenses: expenses,
+        bankBalance
+      });
+
+      // Format recent transactions
+      const formatted = transactions?.slice(0, 4).map(tx => ({
+        id: tx.reference_number || tx.id.slice(0, 8),
+        description: tx.description,
+        amount: `R ${Math.abs(tx.total_amount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+        type: tx.total_amount >= 0 ? "income" : "expense",
+        date: new Date(tx.transaction_date).toLocaleDateString('en-ZA')
+      })) || [];
+
+      setRecentTransactions(formatted);
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const metricCards = [
+    {
+      title: "Total Assets",
+      value: `R ${metrics.totalAssets.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      icon: Building2,
+      color: "text-primary"
+    },
+    {
+      title: "Total Liabilities",
+      value: `R ${metrics.totalLiabilities.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      icon: FileText,
+      color: "text-destructive"
+    },
+    {
+      title: "Total Equity",
+      value: `R ${metrics.totalEquity.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      icon: Briefcase,
+      color: "text-accent"
+    },
+    {
+      title: "Total Income",
+      value: `R ${metrics.totalIncome.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      icon: TrendingUp,
+      color: "text-primary"
+    },
+    {
+      title: "Total Expenses",
+      value: `R ${metrics.totalExpenses.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      icon: TrendingDown,
+      color: "text-accent"
+    },
+    {
+      title: "Bank Balance",
+      value: `R ${metrics.bankBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      icon: CreditCard,
+      color: "text-primary"
+    }
+  ];
+
+  if (loading) {
+    return <div className="flex items-center justify-center h-96">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+    </div>;
+  }
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -80,32 +180,18 @@ export const DashboardOverview = () => {
         </div>
       </div>
 
-      {/* Key Metrics */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        {metrics.map((metric) => (
-          <Card key={metric.title} className="card-professional animate-float hover:animate-glow">
+      {/* Key Metrics - Accounting Elements */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        {metricCards.map((metric) => (
+          <Card key={metric.title} className="card-professional">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
                 {metric.title}
               </CardTitle>
-              <metric.icon className="h-5 w-5 text-primary" />
+              <metric.icon className={`h-5 w-5 ${metric.color}`} />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-foreground">{metric.value}</div>
-              <div className="flex items-center gap-2 mt-2">
-                <Badge 
-                  variant={metric.trend === "up" ? "default" : "secondary"}
-                  className={metric.trend === "up" ? "bg-primary" : ""}
-                >
-                  {metric.trend === "up" ? (
-                    <TrendingUp className="h-3 w-3 mr-1" />
-                  ) : (
-                    <TrendingDown className="h-3 w-3 mr-1" />
-                  )}
-                  {metric.change}
-                </Badge>
-                <span className="text-xs text-muted-foreground">{metric.description}</span>
-              </div>
+              <div className={`text-2xl font-bold ${metric.color}`}>{metric.value}</div>
             </CardContent>
           </Card>
         ))}
@@ -149,44 +235,51 @@ export const DashboardOverview = () => {
           </CardContent>
         </Card>
 
-        {/* Alerts & Tasks */}
+        {/* Trial Balance Summary */}
         <Card className="card-professional">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-accent" />
-              Alerts & Tasks
+              <Receipt className="h-5 w-5 text-primary" />
+              Trial Balance Summary
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {alerts.map((alert, index) => (
-                <div key={index} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                  <div className={`w-2 h-2 rounded-full mt-2 ${
-                    alert.priority === 'high' ? 'bg-destructive' : 
-                    alert.priority === 'medium' ? 'bg-accent' : 'bg-primary'
-                  }`} />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-foreground">{alert.message}</p>
-                    <Badge variant="outline" className="mt-1 text-xs">
-                      {alert.priority}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+              <div className="flex items-center justify-between p-3 border rounded">
+                <span className="font-medium">Total Debits</span>
+                <span className="font-bold text-primary">
+                  R {(metrics.totalAssets + metrics.totalExpenses).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-3 border rounded">
+                <span className="font-medium">Total Credits</span>
+                <span className="font-bold text-accent">
+                  R {(metrics.totalLiabilities + metrics.totalEquity + metrics.totalIncome).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="flex items-center justify-between p-3 border rounded bg-muted">
+                <span className="font-bold">Difference</span>
+                <span className={`font-bold ${
+                  Math.abs((metrics.totalAssets + metrics.totalExpenses) - (metrics.totalLiabilities + metrics.totalEquity + metrics.totalIncome)) < 0.01
+                    ? 'text-primary'
+                    : 'text-destructive'
+                }`}>
+                  R {Math.abs((metrics.totalAssets + metrics.totalExpenses) - (metrics.totalLiabilities + metrics.totalEquity + metrics.totalIncome)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
             </div>
             
-            {/* Quick Actions */}
             <div className="mt-6 space-y-2">
               <h4 className="font-medium text-foreground">Quick Actions</h4>
               <div className="grid gap-2">
                 <Button variant="outline" size="sm" className="justify-start">
-                  Generate VAT Return
+                  View Trial Balance
                 </Button>
                 <Button variant="outline" size="sm" className="justify-start">
-                  Export Financial Reports
+                  Generate Reports
                 </Button>
                 <Button variant="outline" size="sm" className="justify-start">
-                  Reconcile Bank Account
+                  Add Transaction
                 </Button>
               </div>
             </div>
@@ -194,38 +287,40 @@ export const DashboardOverview = () => {
         </Card>
       </div>
 
-      {/* Financial Health */}
+      {/* Accounting Equation */}
       <Card className="card-professional">
         <CardHeader>
-          <CardTitle>Financial Health Overview</CardTitle>
+          <CardTitle>Accounting Equation</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-6 md:grid-cols-3">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium">Cash Flow Health</span>
-                <span className="text-sm text-primary font-bold">85%</span>
-              </div>
-              <Progress value={85} className="h-2" />
-              <p className="text-xs text-muted-foreground mt-1">Strong cash position</p>
+          <div className="flex items-center justify-center gap-4 text-lg font-semibold">
+            <div className="text-center">
+              <div className="text-sm text-muted-foreground mb-1">Assets</div>
+              <div className="text-2xl text-primary">R {metrics.totalAssets.toLocaleString('en-ZA', { maximumFractionDigits: 0 })}</div>
             </div>
-            
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium">Invoice Collection</span>
-                <span className="text-sm text-accent font-bold">72%</span>
-              </div>
-              <Progress value={72} className="h-2" />
-              <p className="text-xs text-muted-foreground mt-1">Room for improvement</p>
+            <div className="text-3xl">=</div>
+            <div className="text-center">
+              <div className="text-sm text-muted-foreground mb-1">Liabilities</div>
+              <div className="text-2xl text-destructive">R {metrics.totalLiabilities.toLocaleString('en-ZA', { maximumFractionDigits: 0 })}</div>
             </div>
-            
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm font-medium">Tax Compliance</span>
-                <span className="text-sm text-primary font-bold">95%</span>
+            <div className="text-3xl">+</div>
+            <div className="text-center">
+              <div className="text-sm text-muted-foreground mb-1">Equity</div>
+              <div className="text-2xl text-accent">R {metrics.totalEquity.toLocaleString('en-ZA', { maximumFractionDigits: 0 })}</div>
+            </div>
+          </div>
+          <div className="mt-6 p-4 bg-muted rounded-lg">
+            <div className="text-center">
+              <div className="text-sm text-muted-foreground mb-1">Net Profit</div>
+              <div className={`text-2xl font-bold ${
+                metrics.totalIncome - metrics.totalExpenses >= 0 ? 'text-primary' : 'text-destructive'
+              }`}>
+                R {(metrics.totalIncome - metrics.totalExpenses).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
               </div>
-              <Progress value={95} className="h-2" />
-              <p className="text-xs text-muted-foreground mt-1">Excellent compliance</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Income (R {metrics.totalIncome.toLocaleString('en-ZA', { maximumFractionDigits: 0 })}) - 
+                Expenses (R {metrics.totalExpenses.toLocaleString('en-ZA', { maximumFractionDigits: 0 })})
+              </p>
             </div>
           </div>
         </CardContent>

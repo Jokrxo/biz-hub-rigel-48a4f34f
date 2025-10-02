@@ -28,6 +28,7 @@ const Tax = lazy(() => import("./pages/Tax"));
 const Analytics = lazy(() => import("./pages/Analytics"));
 const Customers = lazy(() => import("./pages/Customers"));
 const Settings = lazy(() => import("./pages/Settings"));
+const Bank = lazy(() => import("./pages/Bank"));
 
 const queryClient = new QueryClient();
 
@@ -54,6 +55,7 @@ const App = () => {
 
             <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
+            <Route path="/bank" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Bank /></Suspense></ProtectedRoute>} />
             <Route path="/transactions" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Transactions /></Suspense></ProtectedRoute>} />
             <Route path="/invoices" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Invoices /></Suspense></ProtectedRoute>} />
             <Route path="/quotes" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Quotes /></Suspense></ProtectedRoute>} />

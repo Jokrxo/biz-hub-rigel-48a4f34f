@@ -1,11 +1,15 @@
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
-import { TrialBalanceManager } from "@/components/TrialBalance/TrialBalanceManager";
+import { DashboardOverview } from "@/components/Dashboard/DashboardOverview";
+import SEO from "@/components/SEO";
 
 const Index = () => {
   return (
-    <DashboardLayout>
-      <TrialBalanceManager />
-    </DashboardLayout>
+    <>
+      <SEO title="Dashboard | ApexAccounts" description="ApexAccounts dashboard with real-time financial data" />
+      <DashboardLayout>
+        <DashboardOverview />
+      </DashboardLayout>
+    </>
   );
 };
 
