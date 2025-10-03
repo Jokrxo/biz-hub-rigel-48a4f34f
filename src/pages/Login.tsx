@@ -47,10 +47,10 @@ export default function Login() {
   return (
     <>
       <SEO title="Login | ApexAccounts" description="Secure login to ApexAccounts enterprise dashboard" canonical={window.location.href} />
-      <main className="min-h-screen bg-gradient-to-br from-primary/5 via-accent/5 to-background flex items-center justify-center p-6 relative overflow-hidden">
-        {/* Animated Background */}
-        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=1920&h=1080&fit=crop')] bg-cover bg-center opacity-5" />
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-accent/10 backdrop-blur-3xl" />
+      <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+        {/* Fixed Background Image */}
+        <div className="absolute inset-0 bg-[url('/src/assets/sa-finance-hero.jpg')] bg-cover bg-center bg-fixed" />
+        <div className="absolute inset-0 bg-gradient-to-br from-background/80 via-background/60 to-background/80 backdrop-blur-sm" />
         
         <article className="w-full max-w-md rounded-lg border border-border bg-card/95 backdrop-blur-sm shadow-elegant p-8 relative z-10 animate-float">
           <header className="mb-8 text-center">

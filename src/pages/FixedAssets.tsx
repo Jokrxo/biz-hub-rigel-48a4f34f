@@ -13,6 +13,7 @@ import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { useRoles } from "@/hooks/use-roles";
+import { calculateDepreciation } from "@/components/FixedAssets/DepreciationCalculator";
 
 interface FixedAsset {
   id: string;
@@ -61,7 +62,31 @@ export default function FixedAssetsPage() {
         .order("purchase_date", { ascending: false });
 
       if (error) throw error;
-      setAssets(data || []);
+      
+      // Auto-calculate depreciation for each asset
+      const assetsWithDepreciation = (data || []).map(asset => {
+        const depreciation = calculateDepreciation(
+          asset.cost,
+          asset.purchase_date,
+          asset.useful_life_years
+        );
+        return {
+          ...asset,
+          accumulated_depreciation: depreciation.accumulatedDepreciation,
+        };
+      });
+      
+      setAssets(assetsWithDepreciation);
+      
+      // Update depreciation in database
+      for (const asset of assetsWithDepreciation) {
+        if (asset.accumulated_depreciation !== data?.find(a => a.id === asset.id)?.accumulated_depreciation) {
+          await supabase
+            .from("fixed_assets")
+            .update({ accumulated_depreciation: asset.accumulated_depreciation })
+            .eq("id", asset.id);
+        }
+      }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
