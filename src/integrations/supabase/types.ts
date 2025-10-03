@@ -795,6 +795,42 @@ export type Database = {
           },
         ]
       }
+      suppliers: {
+        Row: {
+          address: string | null
+          company_id: string
+          created_at: string
+          email: string | null
+          id: string
+          name: string
+          phone: string | null
+          tax_number: string | null
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          company_id: string
+          created_at?: string
+          email?: string | null
+          id?: string
+          name: string
+          phone?: string | null
+          tax_number?: string | null
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          company_id?: string
+          created_at?: string
+          email?: string | null
+          id?: string
+          name?: string
+          phone?: string | null
+          tax_number?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       transaction_entries: {
         Row: {
           account_id: string

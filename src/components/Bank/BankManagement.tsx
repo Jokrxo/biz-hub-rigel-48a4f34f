@@ -125,10 +125,10 @@ export const BankManagement = () => {
                 Add Bank Account
               </Button>
             </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add Bank Account</DialogTitle>
-            </DialogHeader>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add Bank Account</DialogTitle>
+              </DialogHeader>
             <div className="grid gap-4">
               <div>
                 <Label>Account Name *</Label>
@@ -169,8 +169,9 @@ export const BankManagement = () => {
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
               <Button onClick={handleSubmit}>Add Account</Button>
             </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
