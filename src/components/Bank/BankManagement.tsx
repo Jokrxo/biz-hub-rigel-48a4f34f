@@ -7,7 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { Plus, Building2, TrendingUp, TrendingDown, Upload } from "lucide-react";
+import { Plus, Building2, TrendingUp, TrendingDown } from "lucide-react";
+import { CSVImport } from "./CSVImport";
 
 interface BankAccount {
   id: string;
@@ -115,13 +116,15 @@ export const BankManagement = () => {
           <h1 className="text-3xl font-bold">Bank Accounts</h1>
           <p className="text-muted-foreground mt-1">Manage your business bank accounts and transactions</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button className="bg-gradient-primary hover:opacity-90">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Bank Account
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-3">
+          <CSVImport bankAccounts={banks} onImportComplete={loadBanks} />
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button className="bg-gradient-primary hover:opacity-90">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Bank Account
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Add Bank Account</DialogTitle>
@@ -249,10 +252,7 @@ export const BankManagement = () => {
                       R {bank.current_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
                     </TableCell>
                     <TableCell>
-                      <Button variant="outline" size="sm">
-                        <Upload className="h-3 w-3 mr-1" />
-                        Import Statement
-                      </Button>
+                      {/* Actions can be added here */}
                     </TableCell>
                   </TableRow>
                 ))}
