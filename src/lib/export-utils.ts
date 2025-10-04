@@ -72,3 +72,64 @@ export const exportTransactionsToPDF = (rows: ExportableTransaction[], filename 
   autoTable(doc, { head: [['Date','Description','Type','Amount','VAT','Reference']], body, startY: 26 });
   doc.save(`${filename}.pdf`);
 };
+
+// Financial Reports Export
+export interface FinancialReportLine {
+  account: string;
+  amount: number;
+  type?: string;
+}
+
+export const exportFinancialReportToExcel = (
+  data: FinancialReportLine[], 
+  reportName: string,
+  filename: string
+) => {
+  const exportData = data.map(line => ({
+    'Account': line.account,
+    'Amount': line.amount
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(exportData);
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, reportName);
+  XLSX.writeFile(workbook, `${filename}.xlsx`);
+};
+
+export const exportFinancialReportToPDF = (
+  data: FinancialReportLine[],
+  reportName: string,
+  period: string,
+  filename: string
+) => {
+  const doc = new jsPDF();
+  doc.setFontSize(20);
+  doc.text(reportName, 14, 22);
+  doc.setFontSize(10);
+  doc.text(`Period: ${period}`, 14, 30);
+  doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, 36);
+
+  const tableData = data.map(line => [
+    line.account,
+    `R ${line.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`
+  ]);
+
+  autoTable(doc, {
+    head: [['Account', 'Amount (ZAR)']],
+    body: tableData,
+    startY: 45,
+    styles: { fontSize: 9, cellPadding: 3 },
+    headStyles: { fillColor: [34, 139, 34], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 248, 248] },
+    didParseCell: (cellData) => {
+      const rowIndex = cellData.row.index;
+      const line = data[rowIndex];
+      if (line?.type === 'subtotal' || line?.type === 'total' || line?.type === 'final') {
+        cellData.cell.styles.fontStyle = 'bold';
+        cellData.cell.styles.fillColor = [240, 240, 240];
+      }
+    }
+  });
+
+  doc.save(`${filename}.pdf`);
+};
