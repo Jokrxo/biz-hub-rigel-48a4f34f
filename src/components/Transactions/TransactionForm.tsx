@@ -102,17 +102,26 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       return;
     }
     
+    // Match account_type with the selected element
     const filtered = accounts.filter(acc => {
       const type = acc.account_type.toLowerCase();
       const elem = element.toLowerCase();
-      // More precise matching
-      return type === elem || type.startsWith(elem) || type.includes(elem);
+      
+      // Check if type contains the element keyword
+      // For example: "Asset - Current" contains "asset"
+      return type.includes(elem);
     });
     
     setFilteredAccounts(filtered);
     
-    // Log for debugging
-    console.log(`Filtered ${filtered.length} accounts for element: ${element}`);
+    console.log(`Element: ${element}, Filtered ${filtered.length} accounts`);
+    if (filtered.length === 0) {
+      toast({ 
+        title: "No accounts found", 
+        description: `No accounts found for element: ${element}. Please check your chart of accounts.`,
+        variant: "destructive" 
+      });
+    }
   };
 
   const handleSubmit = async () => {

@@ -1,13 +1,13 @@
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
-import { TrialBalanceManager } from "@/components/TrialBalance/TrialBalanceManager";
+import { TrialBalanceAutoGenerate } from "@/components/TrialBalance/TrialBalanceAutoGenerate";
 import SEO from "@/components/SEO";
 
 export default function TrialBalancePage() {
   return (
     <>
-      <SEO title="Trial Balance | SA Finance Manager" description="Manage your trial balance entries" />
+      <SEO title="Trial Balance | SA Finance Manager" description="Auto-generated trial balance from transactions" />
       <DashboardLayout>
-        <TrialBalanceManager />
+        <TrialBalanceAutoGenerate />
       </DashboardLayout>
     </>
   );

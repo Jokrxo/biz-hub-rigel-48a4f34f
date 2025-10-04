@@ -624,6 +624,87 @@ export type Database = {
           },
         ]
       }
+      purchase_order_items: {
+        Row: {
+          amount: number
+          created_at: string | null
+          description: string
+          id: string
+          purchase_order_id: string
+          quantity: number
+          tax_rate: number
+          unit_price: number
+        }
+        Insert: {
+          amount?: number
+          created_at?: string | null
+          description: string
+          id?: string
+          purchase_order_id: string
+          quantity?: number
+          tax_rate?: number
+          unit_price?: number
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          description?: string
+          id?: string
+          purchase_order_id?: string
+          quantity?: number
+          tax_rate?: number
+          unit_price?: number
+        }
+        Relationships: []
+      }
+      purchase_orders: {
+        Row: {
+          branch_id: string | null
+          company_id: string
+          created_at: string | null
+          id: string
+          notes: string | null
+          po_date: string
+          po_number: string
+          status: string
+          subtotal: number
+          supplier_id: string
+          tax_amount: number
+          total_amount: number
+          updated_at: string | null
+        }
+        Insert: {
+          branch_id?: string | null
+          company_id: string
+          created_at?: string | null
+          id?: string
+          notes?: string | null
+          po_date: string
+          po_number: string
+          status?: string
+          subtotal?: number
+          supplier_id: string
+          tax_amount?: number
+          total_amount?: number
+          updated_at?: string | null
+        }
+        Update: {
+          branch_id?: string | null
+          company_id?: string
+          created_at?: string | null
+          id?: string
+          notes?: string | null
+          po_date?: string
+          po_number?: string
+          status?: string
+          subtotal?: number
+          supplier_id?: string
+          tax_amount?: number
+          total_amount?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       quote_items: {
         Row: {
           amount: number
