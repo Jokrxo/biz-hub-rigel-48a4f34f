@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Download, FileText, Mail } from "lucide-react";
+import { Plus, Download, FileText, Mail, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
@@ -109,6 +109,29 @@ export default function InvoicesPage() {
         due_date: "",
         total_amount: "",
       });
+      loadInvoices();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!isAdmin && !isAccountant) {
+      toast({ title: "Permission denied", variant: "destructive" });
+      return;
+    }
+    
+    if (!confirm("Are you sure you want to delete this invoice?")) return;
+    
+    try {
+      // Delete related invoice_items first
+      await supabase.from("invoice_items").delete().eq("invoice_id", id);
+      
+      // Delete invoice
+      const { error } = await supabase.from("invoices").delete().eq("id", id);
+      if (error) throw error;
+      
+      toast({ title: "Success", description: "Invoice deleted successfully" });
       loadInvoices();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -258,6 +281,11 @@ export default function InvoicesPage() {
                             <Button size="sm" variant="outline" onClick={() => handleSendEmail(invoice)} disabled={!invoice.customer_email}>
                               <Mail className="h-3 w-3" />
                             </Button>
+                            {canEdit && (
+                              <Button size="sm" variant="outline" onClick={() => handleDelete(invoice.id)} className="text-destructive hover:bg-destructive/10">
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>

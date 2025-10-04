@@ -94,14 +94,25 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
   };
 
   const handleElementChange = (element: string) => {
-    setForm({ ...form, element });
+    setForm({ ...form, element, debitAccount: "", creditAccount: "" });
     
     // Filter accounts based on selected element
+    if (!element) {
+      setFilteredAccounts(accounts);
+      return;
+    }
+    
     const filtered = accounts.filter(acc => {
       const type = acc.account_type.toLowerCase();
-      return type.includes(element.toLowerCase());
+      const elem = element.toLowerCase();
+      // More precise matching
+      return type === elem || type.startsWith(elem) || type.includes(elem);
     });
+    
     setFilteredAccounts(filtered);
+    
+    // Log for debugging
+    console.log(`Filtered ${filtered.length} accounts for element: ${element}`);
   };
 
   const handleSubmit = async () => {

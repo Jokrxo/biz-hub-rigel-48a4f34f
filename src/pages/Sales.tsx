@@ -2,7 +2,7 @@ import { useState } from "react";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { SalesOverview } from "@/components/Sales/SalesOverview";
+import { SalesOverviewReal } from "@/components/Sales/SalesOverviewReal";
 import { SalesInvoices } from "@/components/Sales/SalesInvoices";
 import { SalesQuotes } from "@/components/Sales/SalesQuotes";
 import { SalesProducts } from "@/components/Sales/SalesProducts";
@@ -29,7 +29,7 @@ export default function SalesPage() {
             </TabsList>
 
             <TabsContent value="overview">
-              <SalesOverview />
+              <SalesOverviewReal />
             </TabsContent>
 
             <TabsContent value="invoices">

@@ -3,7 +3,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/context/AuthContext";
-import { Bell, Menu, Search, Plus, LogOut } from "lucide-react";
+import { Bell, Menu, Search, Plus, LogOut, Building2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface DashboardHeaderProps {
   onMenuClick: () => void;
@@ -11,12 +13,45 @@ interface DashboardHeaderProps {
 
 const UserMenu = () => {
   const { user, logout } = useAuth();
+  const [companyName, setCompanyName] = useState("");
+
+  useEffect(() => {
+    loadCompanyInfo();
+  }, []);
+
+  const loadCompanyInfo = async () => {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .single();
+
+      if (profile) {
+        const { data: company } = await supabase
+          .from("companies")
+          .select("name")
+          .eq("id", profile.company_id)
+          .single();
+
+        if (company) setCompanyName(company.name);
+      }
+    } catch (error) {
+      console.error("Error loading company:", error);
+    }
+  };
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" className="flex flex-col items-end">
+          {companyName && (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Building2 className="h-3 w-3" />
+              {companyName}
+            </span>
+          )}
           <span className="text-sm font-medium">{user?.user_metadata?.name || user?.email}</span>
-          <span className="text-xs text-muted-foreground">{user?.email}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">

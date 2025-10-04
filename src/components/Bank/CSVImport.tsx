@@ -12,6 +12,7 @@ import { useAuth } from "@/context/AuthContext";
 interface BankAccount {
   id: string;
   account_name: string;
+  current_balance: number;
 }
 
 interface CSVImportProps {
@@ -61,26 +62,30 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
-        .eq("user_id", user?.id)
+        .eq("user_id", user!.id)
         .single();
 
       if (!profile) throw new Error("Profile not found");
 
-      // Map CSV to transactions
-      const transactions = rows.map(row => {
+      // Map CSV rows to transactions - skip header row
+      const transactions = rows.slice(1).map(row => {
         const amount = parseFloat(row.Amount || row.amount || "0");
-        const isDebit = amount < 0;
         
         return {
           company_id: profile.company_id,
           user_id: user!.id,
           transaction_date: row.Date || row.date || new Date().toISOString().split("T")[0],
           description: row.Description || row.description || "Bank transaction",
-          reference_number: row.Reference || row.reference || "",
-          total_amount: Math.abs(amount),
+          reference_number: row.Reference || row.reference || null,
+          total_amount: amount,
           status: "approved",
         };
-      });
+      }).filter(tx => tx.total_amount !== 0);
+
+      if (transactions.length === 0) {
+        toast({ title: "Warning", description: "No valid transactions found in CSV" });
+        return;
+      }
 
       const { error } = await supabase
         .from("transactions")
@@ -88,7 +93,20 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
 
       if (error) throw error;
 
-      toast({ title: "Success", description: `Imported ${transactions.length} transactions` });
+      // Update bank balance
+      const totalChange = transactions.reduce((sum, tx) => sum + tx.total_amount, 0);
+      const bank = bankAccounts.find(b => b.id === selectedBank);
+      if (bank) {
+        await supabase
+          .from("bank_accounts")
+          .update({ current_balance: bank.current_balance + totalChange })
+          .eq("id", selectedBank);
+      }
+
+      toast({ 
+        title: "Success", 
+        description: `Imported ${transactions.length} transactions successfully` 
+      });
       setOpen(false);
       setFile(null);
       setSelectedBank("");

@@ -30,6 +30,8 @@ export default function FixedAssetsPage() {
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [disposalDialogOpen, setDisposalDialogOpen] = useState(false);
+  const [selectedAsset, setSelectedAsset] = useState<FixedAsset | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
@@ -39,6 +41,11 @@ export default function FixedAssetsPage() {
     cost: "",
     purchase_date: "",
     useful_life_years: "5",
+  });
+
+  const [disposalData, setDisposalData] = useState({
+    disposal_date: new Date().toISOString().split("T")[0],
+    disposal_amount: "",
   });
 
   useEffect(() => {
@@ -131,6 +138,40 @@ export default function FixedAssetsPage() {
 
   const calculateNetBookValue = (asset: FixedAsset) => {
     return asset.cost - asset.accumulated_depreciation;
+  };
+
+  const handleDispose = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAsset) return;
+
+    try {
+      const nbv = calculateNetBookValue(selectedAsset);
+      const disposalAmount = parseFloat(disposalData.disposal_amount);
+      
+      if (disposalAmount > nbv) {
+        if (!confirm(`Disposal amount (R ${disposalAmount.toLocaleString()}) exceeds Net Book Value (R ${nbv.toLocaleString()}). This will result in a gain. Continue?`)) {
+          return;
+        }
+      }
+
+      const { error } = await supabase
+        .from("fixed_assets")
+        .update({
+          status: "disposed",
+          disposal_date: disposalData.disposal_date,
+        })
+        .eq("id", selectedAsset.id);
+
+      if (error) throw error;
+
+      toast({ title: "Success", description: "Asset disposed successfully" });
+      setDisposalDialogOpen(false);
+      setSelectedAsset(null);
+      setDisposalData({ disposal_date: new Date().toISOString().split("T")[0], disposal_amount: "" });
+      loadAssets();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
   };
 
   const canEdit = isAdmin || isAccountant;
@@ -234,6 +275,7 @@ export default function FixedAssetsPage() {
                       <TableHead className="text-right">Accumulated Depreciation</TableHead>
                       <TableHead className="text-right">Net Book Value</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -249,6 +291,20 @@ export default function FixedAssetsPage() {
                             {asset.status}
                           </span>
                         </TableCell>
+                        <TableCell>
+                          {asset.status === 'active' && canEdit && (
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              onClick={() => {
+                                setSelectedAsset(asset);
+                                setDisposalDialogOpen(true);
+                              }}
+                            >
+                              Dispose
+                            </Button>
+                          )}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -256,6 +312,70 @@ export default function FixedAssetsPage() {
               )}
             </CardContent>
           </Card>
+          
+          {/* Disposal Dialog */}
+          <Dialog open={disposalDialogOpen} onOpenChange={setDisposalDialogOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Dispose Fixed Asset</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleDispose} className="space-y-4">
+                {selectedAsset && (
+                  <>
+                    <div className="p-4 bg-muted rounded-lg space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-sm font-medium">Asset:</span>
+                        <span className="text-sm">{selectedAsset.description}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm font-medium">Original Cost:</span>
+                        <span className="text-sm">R {selectedAsset.cost.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-sm font-medium">Accumulated Depreciation:</span>
+                        <span className="text-sm">R {selectedAsset.accumulated_depreciation.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between border-t pt-2">
+                        <span className="font-bold">Net Book Value:</span>
+                        <span className="font-bold text-primary">R {calculateNetBookValue(selectedAsset).toLocaleString()}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Disposal Date</Label>
+                      <Input
+                        type="date"
+                        value={disposalData.disposal_date}
+                        onChange={(e) => setDisposalData({ ...disposalData, disposal_date: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <Label>Disposal Amount (R)</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={disposalData.disposal_amount}
+                        onChange={(e) => setDisposalData({ ...disposalData, disposal_amount: e.target.value })}
+                        placeholder="Amount received from sale"
+                        required
+                      />
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {disposalData.disposal_amount && (
+                        <p>
+                          {parseFloat(disposalData.disposal_amount) > calculateNetBookValue(selectedAsset)
+                            ? `Gain on disposal: R ${(parseFloat(disposalData.disposal_amount) - calculateNetBookValue(selectedAsset)).toLocaleString()}`
+                            : `Loss on disposal: R ${(calculateNetBookValue(selectedAsset) - parseFloat(disposalData.disposal_amount)).toLocaleString()}`
+                          }
+                        </p>
+                      )}
+                    </div>
+                    <Button type="submit" className="w-full bg-gradient-primary">Confirm Disposal</Button>
+                  </>
+                )}
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
       </DashboardLayout>
     </>
