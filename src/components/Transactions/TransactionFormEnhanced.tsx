@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import React from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,26 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info } from "lucide-react";
 import { z } from "zod";
+
+class DialogErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error?: any }>{
+  constructor(props: any){
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error: any){ return { hasError: true, error }; }
+  componentDidCatch(error: any, info: any){ console.error('Transaction dialog error:', error, info); }
+  render(){
+    if(this.state.hasError){
+      return (
+        <div className="p-4 border rounded-md bg-destructive/10">
+          <p className="text-sm">Something went wrong opening the transaction form. Please refresh and try again.</p>
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
+}
+
 
 interface Account {
   id: string;
@@ -291,7 +312,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       if (form.element === 'expense' || form.element === 'asset' || form.element === 'liability') {
         // For expenses, assets, and liabilities: Credit side (payment from)
         const creditAccount = credits.find(acc => 
-          keywords.some(kw => acc.account_name.toLowerCase().includes(kw.trim()))
+          keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
         );
         if (creditAccount) {
           setForm(prev => ({ ...prev, creditAccount: creditAccount.id }));
@@ -299,7 +320,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       } else if (form.element === 'income' || form.element === 'equity') {
         // For income and equity: Debit side (payment to)
         const debitAccount = debits.find(acc => 
-          keywords.some(kw => acc.account_name.toLowerCase().includes(kw.trim()))
+          keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
         );
         if (debitAccount) {
           setForm(prev => ({ ...prev, debitAccount: debitAccount.id }));
@@ -387,8 +408,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       // Add VAT entry if applicable
       if (vatAmount > 0 && vatRate > 0) {
         const vatAccount = accounts.find(acc => 
-          acc.account_name.toLowerCase().includes('vat') || 
-          acc.account_name.toLowerCase().includes('tax')
+          (acc.account_name || '').toLowerCase().includes('vat') || 
+          (acc.account_name || '').toLowerCase().includes('tax')
         );
         
         if (vatAccount) {
@@ -451,8 +472,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogErrorBoundary>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
           <DialogTitle className="text-2xl flex items-center gap-2">
             Smart Double-Entry Transaction
             <Badge variant="outline">Automated Accounting Logic</Badge>
@@ -748,6 +770,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           </Button>
         </DialogFooter>
       </DialogContent>
+      </DialogErrorBoundary>
     </Dialog>
   );
 };
