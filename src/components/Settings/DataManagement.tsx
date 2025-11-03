@@ -8,7 +8,6 @@ import { AlertTriangle, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
-import { useRoles } from "@/hooks/use-roles";
 
 export const DataManagement = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -16,7 +15,6 @@ export const DataManagement = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
-  const { isAdmin } = useRoles();
 
   const handleClearAllData = async () => {
     if (password !== "Admin123") {
@@ -94,18 +92,6 @@ export const DataManagement = () => {
       setIsDeleting(false);
     }
   };
-
-  if (!isAdmin) {
-    return (
-      <Card>
-        <CardContent className="py-8">
-          <p className="text-center text-muted-foreground">
-            You don't have permission to access data management.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
 
   return (
     <Card>
