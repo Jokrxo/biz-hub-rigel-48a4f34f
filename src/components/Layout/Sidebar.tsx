@@ -34,7 +34,6 @@ const navItems = [
   { icon: Building2, label: "Fixed Assets", href: "/fixed-assets" },
   { icon: Calculator, label: "Trial Balance", href: "/trial-balance" },
   { icon: TrendingUp, label: "Financial Reports", href: "/reports" },
-  { icon: PieChart, label: "Analytics", href: "/analytics" },
   { icon: Wallet, label: "Budget", href: "/budget" },
   { icon: Users, label: "Customers", href: "/customers" },
   { icon: Settings, label: "Settings", href: "/settings" },

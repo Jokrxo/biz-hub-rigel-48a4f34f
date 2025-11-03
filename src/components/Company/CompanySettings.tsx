@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Building2, Save } from "lucide-react";
+import { Building2, Save, Upload, Image as ImageIcon } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
@@ -23,6 +23,8 @@ interface CompanyData {
 
 export const CompanySettings = () => {
   const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [companyData, setCompanyData] = useState<CompanyData>({
     name: "",
     code: "",
@@ -55,11 +57,61 @@ export const CompanySettings = () => {
         .single();
 
       if (error) throw error;
-      if (data) setCompanyData(data);
+      if (data) {
+        setCompanyData(data);
+        setLogoUrl(data.logo_url);
+      }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      if (!e.target.files || e.target.files.length === 0) return;
+      
+      setUploading(true);
+      const file = e.target.files[0];
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const filePath = `${fileName}`;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .single();
+
+      if (!profile) throw new Error("Profile not found");
+
+      // Upload file
+      const { error: uploadError } = await supabase.storage
+        .from('company-logos')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('company-logos')
+        .getPublicUrl(filePath);
+
+      // Update company with logo URL
+      const { error: updateError } = await supabase
+        .from("companies")
+        .update({ logo_url: publicUrl })
+        .eq("id", profile.company_id);
+
+      if (updateError) throw updateError;
+
+      setLogoUrl(publicUrl);
+      toast({ title: "Success", description: "Logo uploaded successfully" });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -95,6 +147,33 @@ export const CompanySettings = () => {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="space-y-4">
+          <Label>Company Logo</Label>
+          <div className="flex items-center gap-4">
+            {logoUrl ? (
+              <div className="relative w-32 h-32 border rounded-lg overflow-hidden">
+                <img src={logoUrl} alt="Company Logo" className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div className="w-32 h-32 border-2 border-dashed rounded-lg flex items-center justify-center bg-muted">
+                <ImageIcon className="h-8 w-8 text-muted-foreground" />
+              </div>
+            )}
+            <div className="flex-1">
+              <Input
+                type="file"
+                accept="image/*"
+                onChange={handleLogoUpload}
+                disabled={uploading}
+                className="cursor-pointer"
+              />
+              <p className="text-sm text-muted-foreground mt-1">
+                Upload your company logo (PNG, JPG, max 2MB)
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <div>
             <Label>Company Name</Label>
