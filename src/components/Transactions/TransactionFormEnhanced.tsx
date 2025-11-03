@@ -13,25 +13,6 @@ import { supabase } from "@/lib/supabase";
 import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info } from "lucide-react";
 import { z } from "zod";
 
-class DialogErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error?: any }>{
-  constructor(props: any){
-    super(props);
-    this.state = { hasError: false };
-  }
-  static getDerivedStateFromError(error: any){ return { hasError: true, error }; }
-  componentDidCatch(error: any, info: any){ console.error('Transaction dialog error:', error, info); }
-  render(){
-    if(this.state.hasError){
-      return (
-        <div className="p-4 border rounded-md bg-destructive/10">
-          <p className="text-sm">Something went wrong opening the transaction form. Please refresh and try again.</p>
-        </div>
-      );
-    }
-    return this.props.children as any;
-  }
-}
-
 
 interface Account {
   id: string;
@@ -472,8 +453,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogErrorBoundary>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
           <DialogTitle className="text-2xl flex items-center gap-2">
             Smart Double-Entry Transaction
@@ -770,7 +750,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           </Button>
         </DialogFooter>
       </DialogContent>
-      </DialogErrorBoundary>
     </Dialog>
+
   );
 };
