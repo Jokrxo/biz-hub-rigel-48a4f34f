@@ -4,6 +4,7 @@ import { CompanySettings } from "@/components/Company/CompanySettings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GeneralSettings } from "@/components/Settings/GeneralSettings";
 import { AdministrationSettings } from "@/components/Settings/AdministrationSettings";
+import { DataManagement } from "@/components/Settings/DataManagement";
 
 export default function SettingsPage() {
   return (
@@ -17,10 +18,11 @@ export default function SettingsPage() {
           </div>
 
           <Tabs defaultValue="company" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="company">Company Settings</TabsTrigger>
               <TabsTrigger value="general">General Settings</TabsTrigger>
               <TabsTrigger value="administration">Administration</TabsTrigger>
+              <TabsTrigger value="data">Data Management</TabsTrigger>
             </TabsList>
             
             <TabsContent value="company" className="space-y-4">
@@ -33,6 +35,10 @@ export default function SettingsPage() {
             
             <TabsContent value="administration" className="space-y-4">
               <AdministrationSettings />
+            </TabsContent>
+            
+            <TabsContent value="data" className="space-y-4">
+              <DataManagement />
             </TabsContent>
           </Tabs>
         </div>
