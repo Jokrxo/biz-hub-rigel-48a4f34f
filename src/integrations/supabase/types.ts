@@ -1137,6 +1137,21 @@ export type Database = {
         }
         Returns: boolean
       }
+      generate_cash_flow: {
+        Args: {
+          _company_id: string
+          _period_end: string
+          _period_start: string
+        }
+        Returns: {
+          closing_cash: number
+          financing_activities: number
+          investing_activities: number
+          net_cash_flow: number
+          opening_cash: number
+          operating_activities: number
+        }[]
+      }
       get_user_company: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
@@ -1145,6 +1160,23 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      initialize_company_coa: {
+        Args: { _company_id: string }
+        Returns: undefined
+      }
+      validate_trial_balance: {
+        Args: {
+          _company_id: string
+          _period_end: string
+          _period_start: string
+        }
+        Returns: {
+          difference: number
+          is_balanced: boolean
+          total_credits: number
+          total_debits: number
+        }[]
       }
     }
     Enums: {
