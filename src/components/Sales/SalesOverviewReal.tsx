@@ -22,6 +22,21 @@ export const SalesOverviewReal = () => {
 
   useEffect(() => {
     loadSalesData();
+
+    // Real-time updates
+    const channel = supabase
+      .channel('sales-overview-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        loadSalesData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => {
+        loadSalesData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const loadSalesData = async () => {
