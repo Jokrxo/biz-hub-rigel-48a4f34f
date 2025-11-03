@@ -67,18 +67,21 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
 
       if (!profile) throw new Error("Profile not found");
 
-      // Map CSV rows to transactions - skip header row
-      const transactions = rows.slice(1).map(row => {
+      // Map CSV rows to transactions
+      const transactions = rows.map(row => {
         const amount = parseFloat(row.Amount || row.amount || "0");
         
         return {
           company_id: profile.company_id,
           user_id: user!.id,
+          bank_account_id: selectedBank,
           transaction_date: row.Date || row.date || new Date().toISOString().split("T")[0],
           description: row.Description || row.description || "Bank transaction",
           reference_number: row.Reference || row.reference || null,
-          total_amount: amount,
-          status: "approved",
+          total_amount: Math.abs(amount),
+          status: "pending",
+          transaction_type: amount >= 0 ? "income" : "expense",
+          category: "Bank Import",
         };
       }).filter(tx => tx.total_amount !== 0);
 
@@ -87,26 +90,39 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
         return;
       }
 
-      const { error } = await supabase
-        .from("transactions")
-        .insert(transactions);
+      // Check for duplicates before inserting
+      let imported = 0;
+      let duplicates = 0;
+      let errors = 0;
 
-      if (error) throw error;
+      for (const tx of transactions) {
+        const { data: isDuplicate } = await supabase.rpc("check_duplicate_transaction", {
+          _company_id: profile.company_id,
+          _bank_account_id: selectedBank,
+          _transaction_date: tx.transaction_date,
+          _total_amount: tx.total_amount,
+          _description: tx.description,
+        });
 
-      // Update bank balance
-      const totalChange = transactions.reduce((sum, tx) => sum + tx.total_amount, 0);
-      const bank = bankAccounts.find(b => b.id === selectedBank);
-      if (bank) {
-        await supabase
-          .from("bank_accounts")
-          .update({ current_balance: bank.current_balance + totalChange })
-          .eq("id", selectedBank);
+        if (isDuplicate) {
+          duplicates++;
+          continue;
+        }
+
+        const { error } = await supabase.from("transactions").insert(tx);
+        if (error) {
+          console.error("Import error:", error);
+          errors++;
+        } else {
+          imported++;
+        }
       }
 
       toast({ 
-        title: "Success", 
-        description: `Imported ${transactions.length} transactions successfully` 
+        title: "Import Complete", 
+        description: `✓ ${imported} imported | ⚠ ${duplicates} duplicates skipped${errors > 0 ? ` | ✗ ${errors} errors` : ""}` 
       });
+      
       setOpen(false);
       setFile(null);
       setSelectedBank("");

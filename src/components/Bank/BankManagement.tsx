@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Plus, Building2, TrendingUp, TrendingDown } from "lucide-react";
 import { CSVImport } from "./CSVImport";
+import { BankReconciliation } from "./BankReconciliation";
 
 interface BankAccount {
   id: string;
@@ -113,8 +115,8 @@ export const BankManagement = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Bank Accounts</h1>
-          <p className="text-muted-foreground mt-1">Manage your business bank accounts and transactions</p>
+          <h1 className="text-3xl font-bold">Bank Management</h1>
+          <p className="text-muted-foreground mt-1">Manage bank accounts, import statements, and reconcile transactions</p>
         </div>
         <div className="flex gap-3">
           <CSVImport bankAccounts={banks} onImportComplete={loadBanks} />
@@ -214,54 +216,67 @@ export const BankManagement = () => {
         </Card>
       </div>
 
-      <Card className="card-professional">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-primary" />
-            Bank Accounts
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="text-center py-8">Loading...</div>
-          ) : banks.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No bank accounts yet. Add your first bank account to get started.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Account Name</TableHead>
-                  <TableHead>Bank</TableHead>
-                  <TableHead>Account Number</TableHead>
-                  <TableHead className="text-right">Opening Balance</TableHead>
-                  <TableHead className="text-right">Current Balance</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {banks.map((bank) => (
-                  <TableRow key={bank.id}>
-                    <TableCell className="font-medium">{bank.account_name}</TableCell>
-                    <TableCell>{bank.bank_name}</TableCell>
-                    <TableCell className="font-mono">{bank.account_number}</TableCell>
-                    <TableCell className="text-right font-mono">
-                      R {bank.opening_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell className="text-right font-mono font-bold text-primary">
-                      R {bank.current_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell>
-                      {/* Actions can be added here */}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="accounts" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <TabsTrigger value="accounts">Bank Accounts</TabsTrigger>
+          <TabsTrigger value="reconciliation">Reconciliation</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="accounts" className="space-y-4">
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Building2 className="h-5 w-5 text-primary" />
+                Bank Accounts
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="text-center py-8">Loading...</div>
+              ) : banks.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No bank accounts yet. Add your first bank account to get started.
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account Name</TableHead>
+                      <TableHead>Bank</TableHead>
+                      <TableHead>Account Number</TableHead>
+                      <TableHead className="text-right">Opening Balance</TableHead>
+                      <TableHead className="text-right">Current Balance</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {banks.map((bank) => (
+                      <TableRow key={bank.id}>
+                        <TableCell className="font-medium">{bank.account_name}</TableCell>
+                        <TableCell>{bank.bank_name}</TableCell>
+                        <TableCell className="font-mono">{bank.account_number}</TableCell>
+                        <TableCell className="text-right font-mono">
+                          R {bank.opening_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-primary">
+                          R {bank.current_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell>
+                          {/* Actions can be added here */}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="reconciliation">
+          <BankReconciliation bankAccounts={banks} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };
