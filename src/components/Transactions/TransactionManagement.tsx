@@ -49,6 +49,7 @@ export const TransactionManagement = () => {
         .from("transactions")
         .select(`
           *,
+          bank_account:bank_accounts(bank_name, account_number),
           entries:transaction_entries(
             id,
             account_id,
@@ -78,8 +79,9 @@ export const TransactionManagement = () => {
       id: t.id,
       date: t.transaction_date,
       description: t.description,
-      type: t.total_amount >= 0 ? "Income" : "Expense",
-      category: "—",
+      type: (t as any).transaction_type || (t.total_amount >= 0 ? "Income" : "Expense"),
+      category: (t as any).category || "—",
+      bank: (t as any).bank_account ? `${(t as any).bank_account.bank_name} (${(t as any).bank_account.account_number})` : "—",
       amount: Math.abs(t.total_amount),
       vatAmount: Math.abs(t.total_amount) * 0.15,
       reference: t.reference_number || "—",
@@ -245,6 +247,7 @@ export const TransactionManagement = () => {
                 <TableRow>
                   <TableHead className="w-32"><Button variant="ghost" className="gap-1 p-0 h-auto font-medium">Date <ArrowUpDown className="h-3 w-3" /></Button></TableHead>
                   <TableHead>Description</TableHead>
+                  <TableHead className="w-32">Bank</TableHead>
                   <TableHead className="w-20">Type</TableHead>
                   <TableHead className="w-32">Category</TableHead>
                   <TableHead className="text-right w-32">Amount</TableHead>
@@ -257,7 +260,8 @@ export const TransactionManagement = () => {
                 {derived.filtered.map((transaction) => (
                   <TableRow key={transaction.id} className="hover:bg-muted/50">
                     <TableCell className="font-medium"><div className="flex items-center gap-2"><Calendar className="h-4 w-4 text-muted-foreground" />{transaction.date}</div></TableCell>
-                    <TableCell><div><div className="font-medium">{transaction.description}</div><div className="text-sm text-muted-foreground">{transaction.id} • {transaction.reference}</div></div></TableCell>
+                    <TableCell><div><div className="font-medium">{transaction.description}</div><div className="text-sm text-muted-foreground">{transaction.reference}</div></div></TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{transaction.bank}</TableCell>
                     <TableCell><Badge variant={transaction.type === "Income" ? "default" : "secondary"} className={transaction.type === "Income" ? "bg-primary" : ""}>{transaction.type}</Badge></TableCell>
                     <TableCell className="text-sm">{transaction.category}</TableCell>
                     <TableCell className="text-right font-mono"><span className={transaction.type === "Income" ? "text-primary" : "text-muted-foreground"}>R {transaction.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></TableCell>
