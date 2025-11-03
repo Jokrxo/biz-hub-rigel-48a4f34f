@@ -13,10 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 
 const schema = z.object({
   email: z.string().trim().email("Enter a valid email"),
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, "Include letters and numbers"),
+  password: z.string().min(1, "Password is required"),
   remember: z.boolean().default(false),
 });
 
@@ -48,13 +45,13 @@ export default function Login() {
     <>
       <SEO title="Login | ApexAccounts" description="Secure login to ApexAccounts enterprise dashboard" canonical={window.location.href} />
       <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
-        {/* Fixed Background Image */}
-        <div className="absolute inset-0 bg-[url('/src/assets/professional-finance-bg.jpg')] bg-cover bg-center bg-fixed" />
-        <div className="absolute inset-0 bg-gradient-to-br from-background/95 via-background/90 to-background/95" />
+        {/* Background Image */}
+        <div className="absolute inset-0 bg-[url('/src/assets/professional-finance-bg.jpg')] bg-cover bg-center" />
+        <div className="absolute inset-0 bg-gradient-to-br from-background/90 via-background/85 to-background/90" />
         
-        <article className="w-full max-w-md rounded-lg border border-border bg-card/98 shadow-2xl p-8 relative z-10">
+        <article className="w-full max-w-md rounded-lg border border-border bg-card/95 shadow-2xl p-8 relative z-10">
           <header className="mb-8 text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4 animate-glow">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4">
               <span className="text-3xl font-bold text-primary-foreground">A</span>
             </div>
             <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">ApexAccounts</h1>

@@ -14,10 +14,7 @@ const schema = z
   .object({
     name: z.string().trim().min(2, "Enter your name"),
     email: z.string().trim().email("Enter a valid email"),
-    password: z
-      .string()
-      .min(8, "Password must be at least 8 characters")
-      .regex(/^(?=.*[A-Za-z])(?=.*\d).+$/, "Include letters and numbers"),
+    password: z.string().min(1, "Password is required"),
     confirm: z.string(),
   })
   .refine((data) => data.password === data.confirm, { message: "Passwords do not match", path: ["confirm"] });
@@ -47,12 +44,14 @@ export default function Signup() {
   return (
     <>
       <SEO title="Sign Up | ApexAccounts" description="Create your ApexAccounts enterprise account" canonical={window.location.href} />
-      <main className="min-h-screen bg-gradient-to-br from-primary/5 via-accent/5 to-background flex items-center justify-center p-6 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=1920&h=1080&fit=crop')] bg-cover bg-center opacity-5" />
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-accent/10 backdrop-blur-3xl" />
-        <article className="w-full max-w-md rounded-lg border border-border bg-card/95 backdrop-blur-sm shadow-elegant p-8 relative z-10 animate-float">
+      <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
+        {/* Background Image */}
+        <div className="absolute inset-0 bg-[url('/src/assets/sa-finance-hero.jpg')] bg-cover bg-center" />
+        <div className="absolute inset-0 bg-gradient-to-br from-background/90 via-background/85 to-background/90" />
+        
+        <article className="w-full max-w-md rounded-lg border border-border bg-card/95 shadow-2xl p-8 relative z-10">
           <header className="mb-8 text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4 animate-glow">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4">
               <span className="text-3xl font-bold text-primary-foreground">A</span>
             </div>
             <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">ApexAccounts</h1>
