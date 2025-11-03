@@ -161,10 +161,6 @@ export const TransactionManagement = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-foreground">Transaction Management</h1>
-          <p className="text-muted-foreground mt-1">Manage all your business transactions and financial entries</p>
-        </div>
         <Button className="bg-gradient-primary hover:opacity-90" onClick={() => { setEditData(null); setOpen(true); }}>
           <Plus className="h-4 w-4 mr-2" />
           New Transaction
