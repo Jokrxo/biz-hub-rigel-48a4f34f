@@ -80,14 +80,23 @@ export const PurchaseOrdersManagement = () => {
 
       setSuppliers(suppliersData || []);
 
-      // Load purchase orders
+      // Load purchase orders with supplier details
       const { data: ordersData } = await supabase
         .from("purchase_orders")
-        .select("*, suppliers(name)")
+        .select(`
+          *,
+          supplier:suppliers(name)
+        `)
         .eq("company_id", profile.company_id)
         .order("created_at", { ascending: false });
 
-      setOrders(ordersData || []);
+      // Map the data to match expected structure
+      const mappedOrders = (ordersData || []).map(order => ({
+        ...order,
+        suppliers: order.supplier
+      }));
+
+      setOrders(mappedOrders as any);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
