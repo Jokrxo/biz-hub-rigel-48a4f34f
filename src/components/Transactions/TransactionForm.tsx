@@ -31,12 +31,13 @@ interface TransactionFormProps {
   editData?: any;
 }
 
-const ACCOUNTING_ELEMENTS = [
-  { value: "assets", label: "Assets" },
-  { value: "liabilities", label: "Liabilities" },
-  { value: "equity", label: "Equity" },
-  { value: "income", label: "Income" },
-  { value: "expenses", label: "Expenses" }
+const TRANSACTION_TYPES = [
+  { value: "income", label: "Income Received", debitTypes: ["asset"], creditTypes: ["revenue"] },
+  { value: "expense", label: "Expense Paid", debitTypes: ["expense"], creditTypes: ["asset"] },
+  { value: "asset_purchase", label: "Asset Purchase", debitTypes: ["asset"], creditTypes: ["asset", "liability"] },
+  { value: "liability_payment", label: "Liability Payment", debitTypes: ["liability"], creditTypes: ["asset"] },
+  { value: "transfer", label: "Transfer", debitTypes: ["asset"], creditTypes: ["asset"] },
+  { value: "other", label: "Other", debitTypes: ["asset", "liability", "equity", "revenue", "expense"], creditTypes: ["asset", "liability", "equity", "revenue", "expense"] }
 ];
 
 export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: TransactionFormProps) => {
@@ -44,7 +45,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-  const [filteredAccounts, setFilteredAccounts] = useState<Account[]>([]);
+  const [debitAccounts, setDebitAccounts] = useState<Account[]>([]);
+  const [creditAccounts, setCreditAccounts] = useState<Account[]>([]);
   const [autoClassification, setAutoClassification] = useState<{ type: string; category: string } | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   
@@ -53,7 +55,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     description: "",
     reference: "",
     bankAccount: "",
-    element: "",
+    transactionType: "",
     debitAccount: "",
     creditAccount: "",
     amount: "",
@@ -73,7 +75,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         description: editData.description || "",
         reference: editData.reference_number || "",
         bankAccount: editData.bank_account_id || "",
-        element: "",
+        transactionType: "",
         debitAccount: "",
         creditAccount: "",
         amount: editData.total_amount?.toString() || "",
@@ -130,7 +132,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       if (bankError) throw bankError;
 
       setAccounts(accountsData || []);
-      setFilteredAccounts(accountsData || []);
+      setDebitAccounts(accountsData || []);
+      setCreditAccounts(accountsData || []);
       setBankAccounts(bankData || []);
 
       if (!bankData || bankData.length === 0) {
@@ -188,26 +191,35 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     }
   };
 
-  const handleElementChange = (element: string) => {
-    setForm({ ...form, element, debitAccount: "", creditAccount: "" });
+  const handleTransactionTypeChange = (txType: string) => {
+    setForm({ ...form, transactionType: txType, debitAccount: "", creditAccount: "" });
     
-    if (!element) {
-      setFilteredAccounts(accounts);
+    if (!txType) {
+      setDebitAccounts(accounts);
+      setCreditAccounts(accounts);
       return;
     }
     
-    const filtered = accounts.filter(acc => {
+    const selectedType = TRANSACTION_TYPES.find(t => t.value === txType);
+    if (!selectedType) return;
+    
+    const debitFiltered = accounts.filter(acc => {
       const type = acc.account_type.toLowerCase();
-      const elem = element.toLowerCase();
-      return type.includes(elem);
+      return selectedType.debitTypes.some(dt => type.includes(dt));
     });
     
-    setFilteredAccounts(filtered);
+    const creditFiltered = accounts.filter(acc => {
+      const type = acc.account_type.toLowerCase();
+      return selectedType.creditTypes.some(ct => type.includes(ct));
+    });
     
-    if (filtered.length === 0) {
+    setDebitAccounts(debitFiltered);
+    setCreditAccounts(creditFiltered);
+    
+    if (debitFiltered.length === 0 || creditFiltered.length === 0) {
       toast({ 
-        title: "Chart of Account missing", 
-        description: `No accounts found for ${element}. Please check your chart of accounts.`,
+        title: "Chart of Accounts Missing", 
+        description: `Please add accounts for this transaction type in Chart of Accounts.`,
         variant: "destructive" 
       });
     }
@@ -299,6 +311,28 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
 
       if (entriesError) throw entriesError;
 
+      // Update bank account balance
+      const debitAccountData = accounts.find(a => a.id === form.debitAccount);
+      const creditAccountData = accounts.find(a => a.id === form.creditAccount);
+      
+      // If bank account is debited (receiving money), increase balance
+      if (debitAccountData && debitAccountData.account_type.toLowerCase().includes('asset') && debitAccountData.account_name.toLowerCase().includes('bank')) {
+        await supabase.rpc('update_bank_balance', {
+          _bank_account_id: form.bankAccount,
+          _amount: totalAmount,
+          _operation: 'add'
+        });
+      }
+      
+      // If bank account is credited (paying money), decrease balance
+      if (creditAccountData && creditAccountData.account_type.toLowerCase().includes('asset') && creditAccountData.account_name.toLowerCase().includes('bank')) {
+        await supabase.rpc('update_bank_balance', {
+          _bank_account_id: form.bankAccount,
+          _amount: totalAmount,
+          _operation: 'subtract'
+        });
+      }
+
       toast({ 
         title: "✓ Transaction Posted", 
         description: `Transaction created and posted to ledger${autoClassification ? ` (${autoClassification.category})` : ''}` 
@@ -313,7 +347,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         description: "",
         reference: "",
         bankAccount: "",
-        element: "",
+        transactionType: "",
         debitAccount: "",
         creditAccount: "",
         amount: "",
@@ -410,17 +444,26 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           )}
 
           <div>
-            <Label>Accounting Element *</Label>
-            <Select value={form.element} onValueChange={handleElementChange}>
+            <Label>Transaction Type *</Label>
+            <Select value={form.transactionType} onValueChange={handleTransactionTypeChange}>
               <SelectTrigger>
-                <SelectValue placeholder="Select element" />
+                <SelectValue placeholder="Select transaction type" />
               </SelectTrigger>
               <SelectContent>
-                {ACCOUNTING_ELEMENTS.map(el => (
-                  <SelectItem key={el.value} value={el.value}>{el.label}</SelectItem>
+                {TRANSACTION_TYPES.map(tt => (
+                  <SelectItem key={tt.value} value={tt.value}>{tt.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {form.transactionType && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {form.transactionType === 'income' && '💰 Dr: Bank Account | Cr: Income Account'}
+                {form.transactionType === 'expense' && '💸 Dr: Expense Account | Cr: Bank Account'}
+                {form.transactionType === 'asset_purchase' && '🏢 Dr: Asset | Cr: Bank/Payable'}
+                {form.transactionType === 'liability_payment' && '💳 Dr: Liability | Cr: Bank'}
+                {form.transactionType === 'transfer' && '🔄 Dr: Receiving Account | Cr: Sending Account'}
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
@@ -431,9 +474,9 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                   <SelectValue placeholder="Select debit account" />
                 </SelectTrigger>
                 <SelectContent>
-                  {filteredAccounts.map(acc => (
+                  {debitAccounts.map(acc => (
                     <SelectItem key={acc.id} value={acc.id}>
-                      {acc.account_code} - {acc.account_name}
+                      {acc.account_code} - {acc.account_name} [{acc.account_type}]
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -447,9 +490,9 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                   <SelectValue placeholder="Select credit account" />
                 </SelectTrigger>
                 <SelectContent>
-                  {filteredAccounts.map(acc => (
+                  {creditAccounts.map(acc => (
                     <SelectItem key={acc.id} value={acc.id}>
-                      {acc.account_code} - {acc.account_name}
+                      {acc.account_code} - {acc.account_name} [{acc.account_type}]
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -500,10 +543,11 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           )}
 
           <div className="text-xs text-muted-foreground p-3 bg-muted/30 rounded">
-            <p className="font-semibold mb-1">✓ Double-Entry Validation:</p>
+            <p className="font-semibold mb-1">✓ Double-Entry & Bank Balance:</p>
             <ul className="list-disc list-inside space-y-1">
-              <li>Debit and Credit must be selected</li>
+              <li>Debit and Credit must be selected from valid account types</li>
               <li>Both entries will post the same amount</li>
+              <li>Bank balance will be updated automatically (Dr = Add, Cr = Subtract)</li>
               <li>Transaction will update Trial Balance automatically</li>
             </ul>
           </div>
