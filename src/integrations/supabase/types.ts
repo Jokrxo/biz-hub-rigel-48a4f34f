@@ -42,6 +42,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "account_categories_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "trial_balance_summary"
+            referencedColumns: ["account_id"]
+          },
+          {
             foreignKeyName: "account_categories_category_id_fkey"
             columns: ["category_id"]
             isOneToOne: false
@@ -57,9 +64,11 @@ export type Database = {
           bank_name: string
           company_id: string
           created_at: string
+          currency: string | null
           current_balance: number
           id: string
           opening_balance: number
+          status: string | null
           updated_at: string
         }
         Insert: {
@@ -68,9 +77,11 @@ export type Database = {
           bank_name: string
           company_id: string
           created_at?: string
+          currency?: string | null
           current_balance?: number
           id?: string
           opening_balance?: number
+          status?: string | null
           updated_at?: string
         }
         Update: {
@@ -79,9 +90,11 @@ export type Database = {
           bank_name?: string
           company_id?: string
           created_at?: string
+          currency?: string | null
           current_balance?: number
           id?: string
           opening_balance?: number
+          status?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -375,6 +388,8 @@ export type Database = {
           created_at: string
           id: string
           is_active: boolean
+          is_system: boolean | null
+          normal_balance: string | null
           parent_account_id: string | null
           updated_at: string
         }
@@ -386,6 +401,8 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          is_system?: boolean | null
+          normal_balance?: string | null
           parent_account_id?: string | null
           updated_at?: string
         }
@@ -397,6 +414,8 @@ export type Database = {
           created_at?: string
           id?: string
           is_active?: boolean
+          is_system?: boolean | null
+          normal_balance?: string | null
           parent_account_id?: string | null
           updated_at?: string
         }
@@ -414,6 +433,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "chart_of_accounts"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chart_of_accounts_parent_account_id_fkey"
+            columns: ["parent_account_id"]
+            isOneToOne: false
+            referencedRelation: "trial_balance_summary"
+            referencedColumns: ["account_id"]
           },
         ]
       }
@@ -1215,6 +1241,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "transaction_entries_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "trial_balance_summary"
+            referencedColumns: ["account_id"]
+          },
+          {
             foreignKeyName: "transaction_entries_transaction_id_fkey"
             columns: ["transaction_id"]
             isOneToOne: false
@@ -1380,7 +1413,28 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      trial_balance_summary: {
+        Row: {
+          account_code: string | null
+          account_id: string | null
+          account_name: string | null
+          account_type: string | null
+          balance: number | null
+          company_id: string | null
+          normal_balance: string | null
+          total_credits: number | null
+          total_debits: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chart_of_accounts_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
       auto_classify_transaction: {
