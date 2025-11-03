@@ -1469,6 +1469,20 @@ export type Database = {
           operating_activities: number
         }[]
       }
+      get_account_suggestions: {
+        Args: {
+          _company_id: string
+          _side: string
+          _transaction_element: string
+        }
+        Returns: {
+          account_code: string
+          account_id: string
+          account_name: string
+          account_type: string
+          normal_balance: string
+        }[]
+      }
       get_user_company: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
@@ -1487,6 +1501,19 @@ export type Database = {
         Returns: undefined
       }
       update_budget_actuals: { Args: never; Returns: undefined }
+      validate_transaction_before_post: {
+        Args: {
+          _company_id: string
+          _credit_account_id: string
+          _credit_amount: number
+          _debit_account_id: string
+          _debit_amount: number
+        }
+        Returns: {
+          error_message: string
+          is_valid: boolean
+        }[]
+      }
       validate_trial_balance: {
         Args: {
           _company_id: string

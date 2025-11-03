@@ -8,7 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { AlertTriangle, CheckCircle2, Building2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Building2, AlertCircle } from "lucide-react";
 
 interface Account {
   id: string;
@@ -32,12 +32,11 @@ interface TransactionFormProps {
 }
 
 const TRANSACTION_TYPES = [
-  { value: "income", label: "Income Received", debitTypes: ["asset"], creditTypes: ["revenue"] },
-  { value: "expense", label: "Expense Paid", debitTypes: ["expense"], creditTypes: ["asset"] },
-  { value: "asset_purchase", label: "Asset Purchase", debitTypes: ["asset"], creditTypes: ["asset", "liability"] },
-  { value: "liability_payment", label: "Liability Payment", debitTypes: ["liability"], creditTypes: ["asset"] },
-  { value: "transfer", label: "Transfer", debitTypes: ["asset"], creditTypes: ["asset"] },
-  { value: "other", label: "Other", debitTypes: ["asset", "liability", "equity", "revenue", "expense"], creditTypes: ["asset", "liability", "equity", "revenue", "expense"] }
+  { value: "expense", label: "Expense Payment", icon: "💸", description: "Record expense (Dr Expense / Cr Bank or Payable)" },
+  { value: "income", label: "Income Received", icon: "💰", description: "Record income (Dr Bank or Receivable / Cr Revenue)" },
+  { value: "asset", label: "Asset Purchase", icon: "🏢", description: "Buy fixed asset (Dr Asset / Cr Bank or Payable)" },
+  { value: "liability", label: "Liability Payment", icon: "💳", description: "Pay liability (Dr Liability / Cr Bank)" },
+  { value: "equity", label: "Capital Contribution", icon: "💎", description: "Owner investment (Dr Bank / Cr Capital)" }
 ];
 
 export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: TransactionFormProps) => {
@@ -61,6 +60,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     amount: "",
     vatRate: "15"
   });
+  const [companyId, setCompanyId] = useState<string>("");
+  const [validationError, setValidationError] = useState<string>("");
 
   useEffect(() => {
     if (open) {
@@ -191,63 +192,71 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     }
   };
 
-  const handleTransactionTypeChange = (txType: string) => {
+  const handleTransactionTypeChange = async (txType: string) => {
     setForm({ ...form, transactionType: txType, debitAccount: "", creditAccount: "" });
     
     if (!txType) {
-      setDebitAccounts(accounts);
-      setCreditAccounts(accounts);
+      setDebitAccounts([]);
+      setCreditAccounts([]);
       return;
     }
     
-    const selectedType = TRANSACTION_TYPES.find(t => t.value === txType);
-    if (!selectedType) return;
-    
-    const debitFiltered = accounts.filter(acc => {
-      const type = acc.account_type.toLowerCase();
-      return selectedType.debitTypes.some(dt => type.includes(dt));
-    });
-    
-    const creditFiltered = accounts.filter(acc => {
-      const type = acc.account_type.toLowerCase();
-      return selectedType.creditTypes.some(ct => type.includes(ct));
-    });
-    
-    setDebitAccounts(debitFiltered);
-    setCreditAccounts(creditFiltered);
-    
-    if (debitFiltered.length === 0 || creditFiltered.length === 0) {
-      toast({ 
-        title: "Chart of Accounts Missing", 
-        description: `Please add accounts for this transaction type in Chart of Accounts.`,
-        variant: "destructive" 
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (!profile?.company_id) return;
+
+      // Get smart account suggestions from database
+      const { data: debitSuggestions } = await supabase.rpc('get_account_suggestions', {
+        _company_id: profile.company_id,
+        _transaction_element: txType,
+        _side: 'debit'
       });
+
+      const { data: creditSuggestions } = await supabase.rpc('get_account_suggestions', {
+        _company_id: profile.company_id,
+        _transaction_element: txType,
+        _side: 'credit'
+      });
+
+      setDebitAccounts(debitSuggestions || []);
+      setCreditAccounts(creditSuggestions || []);
+
+      if ((!debitSuggestions || debitSuggestions.length === 0) || 
+          (!creditSuggestions || creditSuggestions.length === 0)) {
+        toast({ 
+          title: "Chart of Accounts Missing", 
+          description: `Please add accounts for this transaction type in Chart of Accounts.`,
+          variant: "destructive" 
+        });
+      }
+    } catch (error: any) {
+      console.error("Error loading account suggestions:", error);
+      toast({ title: "Error", description: "Failed to load account suggestions", variant: "destructive" });
     }
   };
 
   const handleSubmit = async () => {
     try {
       setLoading(true);
+      setValidationError("");
 
-      // Validation
+      // Basic validation
       if (!form.description || !form.bankAccount || !form.debitAccount || !form.creditAccount || !form.amount) {
         toast({ title: "Missing fields", description: "Please fill all required fields", variant: "destructive" });
         return;
       }
 
-      if (duplicateWarning) {
-        const confirmed = confirm("⚠️ Duplicate Transaction Detected!\n\nA similar transaction already exists. Do you want to proceed anyway?");
-        if (!confirmed) return;
-      }
-
       const amount = parseFloat(form.amount);
       if (isNaN(amount) || amount <= 0) {
         toast({ title: "Invalid amount", description: "Amount must be greater than 0", variant: "destructive" });
-        return;
-      }
-
-      if (form.debitAccount === form.creditAccount) {
-        toast({ title: "Invalid accounts", description: "Debit and credit accounts must be different", variant: "destructive" });
         return;
       }
 
@@ -263,7 +272,28 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         .eq("user_id", user.id)
         .single();
 
-      if (!profile) throw new Error("Profile not found");
+      if (!profile?.company_id) throw new Error("Profile not found");
+
+      // Enhanced validation using RPC
+      const { data: validation } = await supabase.rpc('validate_transaction_before_post', {
+        _company_id: profile.company_id,
+        _debit_account_id: form.debitAccount,
+        _credit_account_id: form.creditAccount,
+        _debit_amount: totalAmount,
+        _credit_amount: totalAmount
+      });
+
+      if (validation && validation.length > 0 && !validation[0].is_valid) {
+        setValidationError(validation[0].error_message);
+        toast({ title: "Validation Error", description: validation[0].error_message, variant: "destructive" });
+        return;
+      }
+
+      // Check duplicates
+      if (duplicateWarning) {
+        const confirmed = confirm("⚠️ Duplicate Transaction Detected!\n\nA similar transaction already exists. Do you want to proceed anyway?");
+        if (!confirmed) return;
+      }
 
       // Create transaction header with bank and classification
       const { data: transaction, error: txError } = await supabase
@@ -273,10 +303,10 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           user_id: user.id,
           bank_account_id: form.bankAccount,
           transaction_date: form.date,
-          description: form.description,
-          reference_number: form.reference || null,
+          description: form.description.trim(),
+          reference_number: form.reference?.trim() || null,
           total_amount: totalAmount,
-          transaction_type: autoClassification?.type || null,
+          transaction_type: form.transactionType,
           category: autoClassification?.category || null,
           status: "pending"
         })
@@ -292,7 +322,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           account_id: form.debitAccount,
           debit: totalAmount,
           credit: 0,
-          description: form.description,
+          description: form.description.trim(),
           status: "pending"
         },
         {
@@ -300,7 +330,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           account_id: form.creditAccount,
           debit: 0,
           credit: totalAmount,
-          description: form.description,
+          description: form.description.trim(),
           status: "pending"
         }
       ];
@@ -333,11 +363,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         });
       }
 
-      toast({ 
-        title: "✓ Transaction Posted", 
-        description: `Transaction created and posted to ledger${autoClassification ? ` (${autoClassification.category})` : ''}` 
-      });
-      
+      toast({ title: "Success", description: "Transaction posted successfully with validated double-entry" });
       onOpenChange(false);
       onSuccess();
       
@@ -355,6 +381,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       });
       setAutoClassification(null);
       setDuplicateWarning(false);
+      setValidationError("");
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -443,6 +470,16 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             </div>
           )}
 
+          {validationError && (
+            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-2">
+              <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
+              <div>
+                <p className="font-semibold text-destructive">Validation Error</p>
+                <p className="text-sm text-muted-foreground">{validationError}</p>
+              </div>
+            </div>
+          )}
+
           <div>
             <Label>Transaction Type *</Label>
             <Select value={form.transactionType} onValueChange={handleTransactionTypeChange}>
@@ -451,17 +488,15 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
               </SelectTrigger>
               <SelectContent>
                 {TRANSACTION_TYPES.map(tt => (
-                  <SelectItem key={tt.value} value={tt.value}>{tt.label}</SelectItem>
+                  <SelectItem key={tt.value} value={tt.value}>
+                    {tt.icon} {tt.label}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             {form.transactionType && (
               <p className="text-xs text-muted-foreground mt-1">
-                {form.transactionType === 'income' && '💰 Dr: Bank Account | Cr: Income Account'}
-                {form.transactionType === 'expense' && '💸 Dr: Expense Account | Cr: Bank Account'}
-                {form.transactionType === 'asset_purchase' && '🏢 Dr: Asset | Cr: Bank/Payable'}
-                {form.transactionType === 'liability_payment' && '💳 Dr: Liability | Cr: Bank'}
-                {form.transactionType === 'transfer' && '🔄 Dr: Receiving Account | Cr: Sending Account'}
+                {TRANSACTION_TYPES.find(t => t.value === form.transactionType)?.description}
               </p>
             )}
           </div>
