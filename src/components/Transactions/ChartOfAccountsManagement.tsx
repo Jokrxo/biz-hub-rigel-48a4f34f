@@ -22,71 +22,155 @@ interface Account {
 
 const SA_CHART_OF_ACCOUNTS = [
   // Assets (1000-1999)
-  { code: "1000", name: "Cash on Hand", type: "Asset" },
-  { code: "1010", name: "Petty Cash", type: "Asset" },
-  { code: "1100", name: "Bank - Current Account", type: "Asset" },
-  { code: "1110", name: "Bank - Savings Account", type: "Asset" },
-  { code: "1200", name: "Accounts Receivable", type: "Asset" },
-  { code: "1210", name: "Allowance for Doubtful Debts", type: "Asset" },
-  { code: "1300", name: "Inventory - Raw Materials", type: "Asset" },
-  { code: "1310", name: "Inventory - Finished Goods", type: "Asset" },
-  { code: "1400", name: "Prepaid Expenses", type: "Asset" },
-  { code: "1500", name: "Property, Plant & Equipment", type: "Asset" },
-  { code: "1510", name: "Accumulated Depreciation - PPE", type: "Asset" },
-  { code: "1600", name: "Motor Vehicles", type: "Asset" },
-  { code: "1610", name: "Accumulated Depreciation - Vehicles", type: "Asset" },
-  { code: "1700", name: "Furniture & Fixtures", type: "Asset" },
-  { code: "1710", name: "Accumulated Depreciation - Furniture", type: "Asset" },
-  { code: "1800", name: "Computer Equipment", type: "Asset" },
-  { code: "1810", name: "Accumulated Depreciation - Computers", type: "Asset" },
+  { code: "1000", name: "Cash on Hand", type: "asset" },
+  { code: "1010", name: "Petty Cash", type: "asset" },
+  { code: "1020", name: "Cash Float", type: "asset" },
+  { code: "1100", name: "Standard Bank - Current Account", type: "asset" },
+  { code: "1110", name: "FNB - Current Account", type: "asset" },
+  { code: "1120", name: "ABSA - Current Account", type: "asset" },
+  { code: "1130", name: "Nedbank - Current Account", type: "asset" },
+  { code: "1140", name: "Capitec - Current Account", type: "asset" },
+  { code: "1150", name: "Bank - Savings Account", type: "asset" },
+  { code: "1160", name: "Bank - Investment Account", type: "asset" },
+  { code: "1200", name: "Accounts Receivable", type: "asset" },
+  { code: "1210", name: "Allowance for Doubtful Debts", type: "asset" },
+  { code: "1220", name: "Notes Receivable", type: "asset" },
+  { code: "1230", name: "Interest Receivable", type: "asset" },
+  { code: "1300", name: "Inventory - Raw Materials", type: "asset" },
+  { code: "1310", name: "Inventory - Work in Progress", type: "asset" },
+  { code: "1320", name: "Inventory - Finished Goods", type: "asset" },
+  { code: "1330", name: "Inventory - Consumables", type: "asset" },
+  { code: "1340", name: "Inventory - Spare Parts", type: "asset" },
+  { code: "1400", name: "Prepaid Expenses", type: "asset" },
+  { code: "1410", name: "Prepaid Rent", type: "asset" },
+  { code: "1420", name: "Prepaid Insurance", type: "asset" },
+  { code: "1430", name: "Deposits Paid", type: "asset" },
+  { code: "1500", name: "Land", type: "asset" },
+  { code: "1510", name: "Buildings", type: "asset" },
+  { code: "1520", name: "Accumulated Depreciation - Buildings", type: "asset" },
+  { code: "1530", name: "Plant & Machinery", type: "asset" },
+  { code: "1540", name: "Accumulated Depreciation - Plant", type: "asset" },
+  { code: "1600", name: "Motor Vehicles", type: "asset" },
+  { code: "1610", name: "Accumulated Depreciation - Vehicles", type: "asset" },
+  { code: "1700", name: "Furniture & Fixtures", type: "asset" },
+  { code: "1710", name: "Accumulated Depreciation - Furniture", type: "asset" },
+  { code: "1800", name: "Computer Equipment", type: "asset" },
+  { code: "1810", name: "Accumulated Depreciation - Computers", type: "asset" },
+  { code: "1820", name: "Computer Software", type: "asset" },
+  { code: "1830", name: "Accumulated Amortization - Software", type: "asset" },
+  { code: "1900", name: "Goodwill", type: "asset" },
+  { code: "1910", name: "Patents & Trademarks", type: "asset" },
+  { code: "1920", name: "Long-term Investments", type: "asset" },
   
   // Liabilities (2000-2999)
-  { code: "2000", name: "Accounts Payable", type: "Liability" },
-  { code: "2100", name: "VAT Payable (Output)", type: "Liability" },
-  { code: "2110", name: "VAT Receivable (Input)", type: "Liability" },
-  { code: "2200", name: "PAYE Payable", type: "Liability" },
-  { code: "2210", name: "UIF Payable", type: "Liability" },
-  { code: "2220", name: "SDL Payable", type: "Liability" },
-  { code: "2300", name: "Short-term Loan", type: "Liability" },
-  { code: "2400", name: "Long-term Loan", type: "Liability" },
-  { code: "2500", name: "Credit Card Payable", type: "Liability" },
+  { code: "2000", name: "Accounts Payable", type: "liability" },
+  { code: "2010", name: "Trade Creditors", type: "liability" },
+  { code: "2100", name: "VAT Output (15%)", type: "liability" },
+  { code: "2110", name: "VAT Input", type: "liability" },
+  { code: "2120", name: "VAT Control Account", type: "liability" },
+  { code: "2200", name: "PAYE Payable", type: "liability" },
+  { code: "2210", name: "UIF Payable", type: "liability" },
+  { code: "2220", name: "SDL Payable (Skills Development Levy)", type: "liability" },
+  { code: "2230", name: "Provident Fund Payable", type: "liability" },
+  { code: "2240", name: "Medical Aid Payable", type: "liability" },
+  { code: "2250", name: "Pension Fund Payable", type: "liability" },
+  { code: "2300", name: "Short-term Loan", type: "liability" },
+  { code: "2310", name: "Bank Overdraft", type: "liability" },
+  { code: "2320", name: "Credit Card Payable", type: "liability" },
+  { code: "2400", name: "Long-term Loan", type: "liability" },
+  { code: "2410", name: "Mortgage Payable", type: "liability" },
+  { code: "2420", name: "Vehicle Finance", type: "liability" },
+  { code: "2500", name: "Accrued Expenses", type: "liability" },
+  { code: "2510", name: "Accrued Salaries", type: "liability" },
+  { code: "2520", name: "Accrued Interest", type: "liability" },
+  { code: "2600", name: "Deferred Revenue", type: "liability" },
+  { code: "2700", name: "Provisions", type: "liability" },
   
   // Equity (3000-3999)
-  { code: "3000", name: "Owner's Capital", type: "Equity" },
-  { code: "3100", name: "Retained Earnings", type: "Equity" },
-  { code: "3200", name: "Current Year Earnings", type: "Equity" },
-  { code: "3300", name: "Drawings", type: "Equity" },
+  { code: "3000", name: "Owner's Capital", type: "equity" },
+  { code: "3100", name: "Share Capital", type: "equity" },
+  { code: "3200", name: "Retained Earnings", type: "equity" },
+  { code: "3300", name: "Current Year Earnings", type: "equity" },
+  { code: "3400", name: "Drawings", type: "equity" },
+  { code: "3500", name: "Dividends Declared", type: "equity" },
   
-  // Income (4000-4999)
-  { code: "4000", name: "Sales Revenue", type: "Income" },
-  { code: "4100", name: "Service Revenue", type: "Income" },
-  { code: "4200", name: "Interest Income", type: "Income" },
-  { code: "4300", name: "Other Income", type: "Income" },
-  { code: "4400", name: "Rental Income", type: "Income" },
+  // Revenue/Income (4000-4999)
+  { code: "4000", name: "Sales Revenue - Local", type: "revenue" },
+  { code: "4010", name: "Sales Revenue - Export", type: "revenue" },
+  { code: "4100", name: "Service Revenue", type: "revenue" },
+  { code: "4110", name: "Consulting Revenue", type: "revenue" },
+  { code: "4120", name: "Professional Fees", type: "revenue" },
+  { code: "4200", name: "Interest Income", type: "revenue" },
+  { code: "4210", name: "Dividend Income", type: "revenue" },
+  { code: "4300", name: "Other Income", type: "revenue" },
+  { code: "4310", name: "Sundry Income", type: "revenue" },
+  { code: "4400", name: "Rental Income", type: "revenue" },
+  { code: "4500", name: "Commission Income", type: "revenue" },
+  { code: "4600", name: "Discount Received", type: "revenue" },
+  { code: "4700", name: "Foreign Exchange Gain", type: "revenue" },
   
   // Cost of Sales (5000-5999)
-  { code: "5000", name: "Cost of Goods Sold", type: "Expense" },
-  { code: "5100", name: "Purchases", type: "Expense" },
-  { code: "5200", name: "Freight & Delivery", type: "Expense" },
+  { code: "5000", name: "Cost of Goods Sold", type: "expense" },
+  { code: "5100", name: "Purchases - Local", type: "expense" },
+  { code: "5110", name: "Purchases - Import", type: "expense" },
+  { code: "5200", name: "Freight & Delivery Inwards", type: "expense" },
+  { code: "5300", name: "Direct Labour", type: "expense" },
+  { code: "5400", name: "Manufacturing Overheads", type: "expense" },
+  { code: "5500", name: "Inventory Adjustments", type: "expense" },
+  { code: "5600", name: "Opening Stock", type: "expense" },
+  { code: "5700", name: "Closing Stock", type: "expense" },
   
   // Operating Expenses (6000-6999)
-  { code: "6000", name: "Salaries & Wages", type: "Expense" },
-  { code: "6100", name: "Rent Expense", type: "Expense" },
-  { code: "6200", name: "Utilities - Electricity", type: "Expense" },
-  { code: "6210", name: "Utilities - Water", type: "Expense" },
-  { code: "6300", name: "Telephone & Internet", type: "Expense" },
-  { code: "6400", name: "Insurance", type: "Expense" },
-  { code: "6500", name: "Motor Vehicle Expenses", type: "Expense" },
-  { code: "6600", name: "Fuel & Oil", type: "Expense" },
-  { code: "6700", name: "Repairs & Maintenance", type: "Expense" },
-  { code: "6800", name: "Office Supplies", type: "Expense" },
-  { code: "6900", name: "Bank Charges", type: "Expense" },
-  { code: "6910", name: "Professional Fees", type: "Expense" },
-  { code: "6920", name: "Advertising & Marketing", type: "Expense" },
-  { code: "6930", name: "Training & Development", type: "Expense" },
-  { code: "6940", name: "Travel & Accommodation", type: "Expense" },
-  { code: "6950", name: "Depreciation Expense", type: "Expense" },
-  { code: "6960", name: "Bad Debts", type: "Expense" },
+  { code: "6000", name: "Salaries & Wages", type: "expense" },
+  { code: "6010", name: "Management Salaries", type: "expense" },
+  { code: "6020", name: "Staff Salaries", type: "expense" },
+  { code: "6030", name: "Overtime", type: "expense" },
+  { code: "6040", name: "Bonuses", type: "expense" },
+  { code: "6050", name: "Commission Paid", type: "expense" },
+  { code: "6100", name: "Rent Expense", type: "expense" },
+  { code: "6110", name: "Rates & Taxes", type: "expense" },
+  { code: "6120", name: "Levies", type: "expense" },
+  { code: "6200", name: "Utilities - Electricity", type: "expense" },
+  { code: "6210", name: "Utilities - Water", type: "expense" },
+  { code: "6220", name: "Utilities - Gas", type: "expense" },
+  { code: "6300", name: "Telephone & Internet", type: "expense" },
+  { code: "6310", name: "Postage & Courier", type: "expense" },
+  { code: "6400", name: "Insurance - General", type: "expense" },
+  { code: "6410", name: "Insurance - Vehicle", type: "expense" },
+  { code: "6420", name: "Insurance - Public Liability", type: "expense" },
+  { code: "6500", name: "Motor Vehicle Expenses", type: "expense" },
+  { code: "6510", name: "Vehicle Maintenance", type: "expense" },
+  { code: "6520", name: "Vehicle License", type: "expense" },
+  { code: "6600", name: "Fuel & Oil", type: "expense" },
+  { code: "6700", name: "Repairs & Maintenance - Building", type: "expense" },
+  { code: "6710", name: "Repairs & Maintenance - Equipment", type: "expense" },
+  { code: "6800", name: "Office Supplies", type: "expense" },
+  { code: "6810", name: "Stationery & Printing", type: "expense" },
+  { code: "6820", name: "Cleaning & Hygiene", type: "expense" },
+  { code: "6900", name: "Bank Charges", type: "expense" },
+  { code: "6910", name: "Accounting Fees", type: "expense" },
+  { code: "6920", name: "Legal Fees", type: "expense" },
+  { code: "6930", name: "Consulting Fees", type: "expense" },
+  { code: "6940", name: "Audit Fees", type: "expense" },
+  { code: "7000", name: "Advertising & Marketing", type: "expense" },
+  { code: "7010", name: "Website & Digital Marketing", type: "expense" },
+  { code: "7020", name: "Promotions", type: "expense" },
+  { code: "7100", name: "Training & Development", type: "expense" },
+  { code: "7110", name: "Staff Welfare", type: "expense" },
+  { code: "7120", name: "Recruitment", type: "expense" },
+  { code: "7200", name: "Travel & Accommodation", type: "expense" },
+  { code: "7210", name: "Meals & Entertainment", type: "expense" },
+  { code: "7300", name: "Subscriptions & Memberships", type: "expense" },
+  { code: "7310", name: "Licenses & Permits", type: "expense" },
+  { code: "7400", name: "Depreciation Expense", type: "expense" },
+  { code: "7410", name: "Amortization Expense", type: "expense" },
+  { code: "7500", name: "Bad Debts", type: "expense" },
+  { code: "7510", name: "Provision for Bad Debts", type: "expense" },
+  { code: "7600", name: "Donations & Sponsorships", type: "expense" },
+  { code: "7700", name: "Security Services", type: "expense" },
+  { code: "7800", name: "Interest Expense", type: "expense" },
+  { code: "7900", name: "Foreign Exchange Loss", type: "expense" },
+  { code: "8000", name: "Sundry Expenses", type: "expense" },
 ];
 
 export const ChartOfAccountsManagement = () => {
@@ -102,7 +186,7 @@ export const ChartOfAccountsManagement = () => {
   const [formData, setFormData] = useState({
     account_code: "",
     account_name: "",
-    account_type: "Asset",
+    account_type: "asset",
   });
 
   useEffect(() => {
@@ -229,7 +313,7 @@ export const ChartOfAccountsManagement = () => {
 
       setIsDialogOpen(false);
       setEditingAccount(null);
-      setFormData({ account_code: "", account_name: "", account_type: "Asset" });
+      setFormData({ account_code: "", account_name: "", account_type: "asset" });
       loadAccounts();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -286,11 +370,11 @@ export const ChartOfAccountsManagement = () => {
   });
 
   const accountsByType = {
-    Asset: filteredAccounts.filter(a => a.account_type === "Asset").length,
-    Liability: filteredAccounts.filter(a => a.account_type === "Liability").length,
-    Equity: filteredAccounts.filter(a => a.account_type === "Equity").length,
-    Income: filteredAccounts.filter(a => a.account_type === "Income").length,
-    Expense: filteredAccounts.filter(a => a.account_type === "Expense").length,
+    Assets: filteredAccounts.filter(a => a.account_type === "asset").length,
+    Liabilities: filteredAccounts.filter(a => a.account_type === "liability").length,
+    Equity: filteredAccounts.filter(a => a.account_type === "equity").length,
+    Revenue: filteredAccounts.filter(a => a.account_type === "revenue").length,
+    Expenses: filteredAccounts.filter(a => a.account_type === "expense").length,
   };
 
   return (
@@ -308,7 +392,7 @@ export const ChartOfAccountsManagement = () => {
             <DialogTrigger asChild>
               <Button className="bg-gradient-primary" onClick={() => {
                 setEditingAccount(null);
-                setFormData({ account_code: "", account_name: "", account_type: "Asset" });
+                setFormData({ account_code: "", account_name: "", account_type: "asset" });
               }}>
                 <Plus className="h-4 w-4 mr-2" />
                 Add Account
@@ -319,37 +403,37 @@ export const ChartOfAccountsManagement = () => {
                 <DialogTitle>{editingAccount ? "Edit Account" : "Add New Account"}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
-                <div>
-                  <Label>Account Code *</Label>
-                  <Input
-                    value={formData.account_code}
-                    onChange={(e) => setFormData({ ...formData, account_code: e.target.value })}
-                    placeholder="e.g., 1000"
-                  />
-                </div>
-                <div>
-                  <Label>Account Name *</Label>
-                  <Input
-                    value={formData.account_name}
-                    onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
-                    placeholder="e.g., Cash on Hand"
-                  />
-                </div>
-                <div>
-                  <Label>Account Type *</Label>
-                  <Select value={formData.account_type} onValueChange={(val) => setFormData({ ...formData, account_type: val })}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Asset">Asset</SelectItem>
-                      <SelectItem value="Liability">Liability</SelectItem>
-                      <SelectItem value="Equity">Equity</SelectItem>
-                      <SelectItem value="Income">Income</SelectItem>
-                      <SelectItem value="Expense">Expense</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+            <div>
+              <Label>Account Code *</Label>
+              <Input
+                value={formData.account_code}
+                onChange={(e) => setFormData({ ...formData, account_code: e.target.value })}
+                placeholder="e.g., 1000"
+              />
+            </div>
+            <div>
+              <Label>Account Name *</Label>
+              <Input
+                value={formData.account_name}
+                onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
+                placeholder="e.g., Cash on Hand"
+              />
+            </div>
+            <div>
+              <Label>Account Type *</Label>
+              <Select value={formData.account_type} onValueChange={(val) => setFormData({ ...formData, account_type: val })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="asset">Asset</SelectItem>
+                  <SelectItem value="liability">Liability</SelectItem>
+                  <SelectItem value="equity">Equity</SelectItem>
+                  <SelectItem value="revenue">Revenue</SelectItem>
+                  <SelectItem value="expense">Expense</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
@@ -396,7 +480,7 @@ export const ChartOfAccountsManagement = () => {
                 <SelectItem value="asset">Asset</SelectItem>
                 <SelectItem value="liability">Liability</SelectItem>
                 <SelectItem value="equity">Equity</SelectItem>
-                <SelectItem value="income">Income</SelectItem>
+                <SelectItem value="revenue">Revenue</SelectItem>
                 <SelectItem value="expense">Expense</SelectItem>
               </SelectContent>
             </Select>
