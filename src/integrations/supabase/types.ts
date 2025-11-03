@@ -86,6 +86,110 @@ export type Database = {
         }
         Relationships: []
       }
+      bill_items: {
+        Row: {
+          amount: number
+          bill_id: string
+          created_at: string | null
+          description: string
+          id: string
+          quantity: number
+          tax_rate: number
+          unit_price: number
+        }
+        Insert: {
+          amount?: number
+          bill_id: string
+          created_at?: string | null
+          description: string
+          id?: string
+          quantity?: number
+          tax_rate?: number
+          unit_price?: number
+        }
+        Update: {
+          amount?: number
+          bill_id?: string
+          created_at?: string | null
+          description?: string
+          id?: string
+          quantity?: number
+          tax_rate?: number
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bill_items_bill_id_fkey"
+            columns: ["bill_id"]
+            isOneToOne: false
+            referencedRelation: "bills"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bills: {
+        Row: {
+          bill_date: string
+          bill_number: string
+          company_id: string
+          created_at: string
+          due_date: string | null
+          id: string
+          notes: string | null
+          status: string
+          subtotal: number
+          supplier_id: string
+          tax_amount: number
+          total_amount: number
+          updated_at: string
+        }
+        Insert: {
+          bill_date: string
+          bill_number: string
+          company_id: string
+          created_at?: string
+          due_date?: string | null
+          id?: string
+          notes?: string | null
+          status?: string
+          subtotal?: number
+          supplier_id: string
+          tax_amount?: number
+          total_amount?: number
+          updated_at?: string
+        }
+        Update: {
+          bill_date?: string
+          bill_number?: string
+          company_id?: string
+          created_at?: string
+          due_date?: string | null
+          id?: string
+          notes?: string | null
+          status?: string
+          subtotal?: number
+          supplier_id?: string
+          tax_amount?: number
+          total_amount?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bills_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bills_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       branches: {
         Row: {
           address: string | null
@@ -286,6 +390,56 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "customers_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      expenses: {
+        Row: {
+          amount: number
+          category: string
+          company_id: string
+          created_at: string
+          description: string
+          expense_date: string
+          id: string
+          reference: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          category: string
+          company_id: string
+          created_at?: string
+          description: string
+          expense_date: string
+          id?: string
+          reference?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          category?: string
+          company_id?: string
+          created_at?: string
+          description?: string
+          expense_date?: string
+          id?: string
+          reference?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "expenses_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"

@@ -5,8 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { Plus, Receipt, Trash2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
@@ -19,7 +20,8 @@ interface Expense {
   amount: number;
   expense_date: string;
   category: string;
-  reference: string;
+  reference: string | null;
+  status: string;
 }
 
 export const ExpensesManagement = () => {
@@ -40,6 +42,18 @@ export const ExpensesManagement = () => {
 
   useEffect(() => {
     loadExpenses();
+
+    // Real-time updates
+    const channel = supabase
+      .channel('expenses-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => {
+        loadExpenses();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const loadExpenses = async () => {
@@ -48,20 +62,18 @@ export const ExpensesManagement = () => {
         .from("profiles")
         .select("company_id")
         .eq("user_id", user?.id)
-        .single();
+        .maybeSingle();
 
       if (!profile) return;
 
-      // For now, use transactions table (proper expenses table can be created later)
       const { data, error } = await supabase
-        .from("transactions")
+        .from("expenses")
         .select("*")
         .eq("company_id", profile.company_id)
-        .order("transaction_date", { ascending: false })
-        .limit(100);
+        .order("expense_date", { ascending: false });
 
       if (error) throw error;
-      setExpenses([]);
+      setExpenses(data || []);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -83,27 +95,64 @@ export const ExpensesManagement = () => {
         .eq("user_id", user?.id)
         .single();
 
-      const { error } = await supabase.from("transactions").insert({
+      const { error } = await supabase.from("expenses").insert({
         company_id: profile!.company_id,
         user_id: user!.id,
-        transaction_date: formData.expense_date,
+        expense_date: formData.expense_date,
         description: formData.description,
-        reference_number: formData.reference || null,
-        total_amount: parseFloat(formData.amount),
-        status: "pending",
+        amount: parseFloat(formData.amount),
+        category: formData.category,
+        reference: formData.reference || null,
+        status: "pending"
       });
 
       if (error) throw error;
 
       toast({ title: "Success", description: "Expense recorded successfully" });
       setDialogOpen(false);
-      setFormData({
-        description: "",
-        amount: "",
-        expense_date: new Date().toISOString().split("T")[0],
-        category: "",
-        reference: "",
-      });
+      resetForm();
+      loadExpenses();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      description: "",
+      amount: "",
+      expense_date: new Date().toISOString().split("T")[0],
+      category: "",
+      reference: "",
+    });
+  };
+
+  const deleteExpense = async (id: string) => {
+    if (!confirm("Delete this expense?")) return;
+    try {
+      const { error } = await supabase.from("expenses").delete().eq("id", id);
+      if (error) throw error;
+      toast({ title: "Success", description: "Expense deleted" });
+      loadExpenses();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const approveExpense = async (id: string) => {
+    if (!isAdmin && !isAccountant) {
+      toast({ title: "Permission denied", variant: "destructive" });
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("expenses")
+        .update({ status: "approved" })
+        .eq("id", id);
+
+      if (error) throw error;
+      toast({ title: "Success", description: "Expense approved" });
       loadExpenses();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -118,6 +167,8 @@ export const ExpensesManagement = () => {
     "Insurance",
     "Marketing",
     "Professional Fees",
+    "Fuel & Transport",
+    "Salaries & Wages",
     "Other"
   ];
 
@@ -131,78 +182,10 @@ export const ExpensesManagement = () => {
           Expenses
         </CardTitle>
         {canEdit && (
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm" className="bg-gradient-primary">
-                <Plus className="h-4 w-4 mr-2" />
-                Record Expense
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Record Expense</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <Label>Description</Label>
-                  <Textarea
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="Describe the expense"
-                    required
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label>Amount (R)</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={formData.amount}
-                      onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                      required
-                    />
-                  </div>
-                  <div>
-                    <Label>Date</Label>
-                    <Input
-                      type="date"
-                      value={formData.expense_date}
-                      onChange={(e) => setFormData({ ...formData, expense_date: e.target.value })}
-                      required
-                    />
-                  </div>
-                </div>
-                <div>
-                  <Label>Category</Label>
-                  <Select value={formData.category} onValueChange={(val) => setFormData({ ...formData, category: val })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categories.map((cat) => (
-                        <SelectItem key={cat} value={cat}>
-                          {cat}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Reference (optional)</Label>
-                  <Input
-                    value={formData.reference}
-                    onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                    placeholder="e.g., Receipt #123"
-                  />
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-                  <Button type="submit" className="bg-gradient-primary">Record Expense</Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <Button size="sm" className="bg-gradient-primary" onClick={() => setDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Record Expense
+          </Button>
         )}
       </CardHeader>
       <CardContent>
@@ -221,22 +204,110 @@ export const ExpensesManagement = () => {
                 <TableHead>Category</TableHead>
                 <TableHead>Reference</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Status</TableHead>
+                {canEdit && <TableHead>Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
               {expenses.map((expense) => (
                 <TableRow key={expense.id}>
-                  <TableCell>{new Date(expense.expense_date).toLocaleDateString()}</TableCell>
+                  <TableCell>{new Date(expense.expense_date).toLocaleDateString('en-ZA')}</TableCell>
                   <TableCell className="font-medium">{expense.description}</TableCell>
                   <TableCell>{expense.category}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">{expense.reference || "-"}</TableCell>
-                  <TableCell className="text-right font-semibold">R {expense.amount.toLocaleString()}</TableCell>
+                  <TableCell className="text-right font-semibold">R {Number(expense.amount).toLocaleString('en-ZA')}</TableCell>
+                  <TableCell>
+                    <Badge variant={expense.status === 'approved' ? 'default' : expense.status === 'rejected' ? 'destructive' : 'secondary'}>
+                      {expense.status}
+                    </Badge>
+                  </TableCell>
+                  {canEdit && (
+                    <TableCell>
+                      <div className="flex gap-2">
+                        {expense.status === 'pending' && (
+                          <Button size="sm" variant="outline" onClick={() => approveExpense(expense.id)}>
+                            Approve
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" onClick={() => deleteExpense(expense.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
       </CardContent>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record Expense</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label>Description *</Label>
+              <Textarea
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Describe the expense"
+                required
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Amount (R) *</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={formData.amount}
+                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <Label>Date *</Label>
+                <Input
+                  type="date"
+                  value={formData.expense_date}
+                  onChange={(e) => setFormData({ ...formData, expense_date: e.target.value })}
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <Label>Category *</Label>
+              <Select value={formData.category} onValueChange={(val) => setFormData({ ...formData, category: val })} required>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat} value={cat}>
+                      {cat}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Reference (optional)</Label>
+              <Input
+                value={formData.reference}
+                onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
+                placeholder="e.g., Receipt #123"
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }}>Cancel</Button>
+              <Button type="submit" className="bg-gradient-primary">Record Expense</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 };
