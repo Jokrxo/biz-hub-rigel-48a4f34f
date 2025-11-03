@@ -856,6 +856,98 @@ export type Database = {
           },
         ]
       }
+      ledger_entries: {
+        Row: {
+          account_id: string
+          audit_notes: string | null
+          company_id: string
+          created_at: string | null
+          credit: number
+          debit: number
+          description: string
+          entry_date: string
+          entry_type: string
+          id: string
+          is_reversed: boolean | null
+          posted_at: string | null
+          posted_by: string | null
+          reference_id: string
+          reversed_at: string | null
+          reversed_by: string | null
+          transaction_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          account_id: string
+          audit_notes?: string | null
+          company_id: string
+          created_at?: string | null
+          credit?: number
+          debit?: number
+          description: string
+          entry_date: string
+          entry_type?: string
+          id?: string
+          is_reversed?: boolean | null
+          posted_at?: string | null
+          posted_by?: string | null
+          reference_id: string
+          reversed_at?: string | null
+          reversed_by?: string | null
+          transaction_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          account_id?: string
+          audit_notes?: string | null
+          company_id?: string
+          created_at?: string | null
+          credit?: number
+          debit?: number
+          description?: string
+          entry_date?: string
+          entry_type?: string
+          id?: string
+          is_reversed?: boolean | null
+          posted_at?: string | null
+          posted_by?: string | null
+          reference_id?: string
+          reversed_at?: string | null
+          reversed_by?: string | null
+          transaction_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ledger_entries_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_entries_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "trial_balance_summary"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "ledger_entries_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_entries_transaction_id_fkey"
+            columns: ["transaction_id"]
+            isOneToOne: false
+            referencedRelation: "transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           branch_id: string | null
@@ -1413,6 +1505,42 @@ export type Database = {
       }
     }
     Views: {
+      trial_balance_live: {
+        Row: {
+          account_code: string | null
+          account_id: string | null
+          account_name: string | null
+          account_type: string | null
+          balance: number | null
+          company_id: string | null
+          normal_balance: string | null
+          total_credits: number | null
+          total_debits: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ledger_entries_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "chart_of_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ledger_entries_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "trial_balance_summary"
+            referencedColumns: ["account_id"]
+          },
+          {
+            foreignKeyName: "ledger_entries_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       trial_balance_summary: {
         Row: {
           account_code: string | null
@@ -1496,11 +1624,23 @@ export type Database = {
         Args: { _company_id: string }
         Returns: undefined
       }
+      refresh_afs_cache: { Args: { _company_id: string }; Returns: undefined }
       update_bank_balance: {
         Args: { _amount: number; _bank_account_id: string; _operation: string }
         Returns: undefined
       }
       update_budget_actuals: { Args: never; Returns: undefined }
+      validate_accounting_equation: {
+        Args: { _company_id: string }
+        Returns: {
+          difference: number
+          error_message: string
+          is_valid: boolean
+          total_assets: number
+          total_equity: number
+          total_liabilities: number
+        }[]
+      }
       validate_transaction_before_post: {
         Args: {
           _company_id: string
