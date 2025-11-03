@@ -1541,42 +1541,6 @@ export type Database = {
           },
         ]
       }
-      trial_balance_secure: {
-        Row: {
-          account_code: string | null
-          account_id: string | null
-          account_name: string | null
-          account_type: string | null
-          balance: number | null
-          company_id: string | null
-          normal_balance: string | null
-          total_credits: number | null
-          total_debits: number | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "ledger_entries_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "chart_of_accounts"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "ledger_entries_account_id_fkey"
-            columns: ["account_id"]
-            isOneToOne: false
-            referencedRelation: "trial_balance_summary"
-            referencedColumns: ["account_id"]
-          },
-          {
-            foreignKeyName: "ledger_entries_company_id_fkey"
-            columns: ["company_id"]
-            isOneToOne: false
-            referencedRelation: "companies"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       trial_balance_summary: {
         Row: {
           account_code: string | null
@@ -1645,6 +1609,20 @@ export type Database = {
           account_name: string
           account_type: string
           normal_balance: string
+        }[]
+      }
+      get_trial_balance_for_company: {
+        Args: never
+        Returns: {
+          account_code: string
+          account_id: string
+          account_name: string
+          account_type: string
+          balance: number
+          company_id: string
+          normal_balance: string
+          total_credits: number
+          total_debits: number
         }[]
       }
       get_user_company: { Args: { _user_id: string }; Returns: string }

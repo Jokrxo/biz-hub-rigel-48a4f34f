@@ -308,6 +308,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       }
 
       // Create transaction header with bank and classification
+      // Status set to 'approved' to trigger automatic posting to ledger
       const { data: transaction, error: txError } = await supabase
         .from("transactions")
         .insert({
@@ -320,7 +321,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           total_amount: totalAmount,
           transaction_type: form.transactionType,
           category: autoClassification?.category || null,
-          status: "pending"
+          status: "approved"
         })
         .select()
         .single();
@@ -375,7 +376,13 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         });
       }
 
-      toast({ title: "Success", description: "Transaction posted successfully with validated double-entry" });
+      // Refresh AFS cache after successful posting
+      await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
+      
+      toast({ 
+        title: "Success", 
+        description: "Transaction posted successfully to ledger and AFS updated" 
+      });
       onOpenChange(false);
       onSuccess();
       
@@ -395,7 +402,22 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       setDuplicateWarning(false);
       setValidationError("");
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      console.error('Transaction posting error:', error);
+      
+      // Check if it's an AFS/accounting equation error
+      if (error.message?.includes('AFS Posting') || error.message?.includes('not balanced')) {
+        toast({ 
+          title: "Accounting Posting Error", 
+          description: error.message, 
+          variant: "destructive" 
+        });
+      } else {
+        toast({ 
+          title: "Error", 
+          description: error.message || "Failed to post transaction", 
+          variant: "destructive" 
+        });
+      }
     } finally {
       setLoading(false);
     }
