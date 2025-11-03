@@ -1,13 +1,13 @@
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
-import { FinancialReports } from "@/components/FinancialReports/FinancialReports";
+import { EnhancedFinancialReports } from "@/components/FinancialReports/EnhancedFinancialReports";
 import SEO from "@/components/SEO";
 
 export default function ReportsPage() {
   return (
     <>
-      <SEO title="Reports | SA Finance Manager" description="Financial reports and statements" />
+      <SEO title="Financial Reports | ApexAccounts" description="GAAP-compliant annual financial statements with drill-down capabilities" />
       <DashboardLayout>
-        <FinancialReports />
+        <EnhancedFinancialReports />
       </DashboardLayout>
     </>
   );
