@@ -225,6 +225,115 @@ export type Database = {
           },
         ]
       }
+      budget_periods: {
+        Row: {
+          company_id: string
+          created_at: string
+          end_date: string
+          id: string
+          period_name: string
+          period_type: string
+          start_date: string
+          status: string
+          total_actual: number
+          total_budget: number
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          end_date: string
+          id?: string
+          period_name: string
+          period_type: string
+          start_date: string
+          status?: string
+          total_actual?: number
+          total_budget?: number
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          end_date?: string
+          id?: string
+          period_name?: string
+          period_type?: string
+          start_date?: string
+          status?: string
+          total_actual?: number
+          total_budget?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budget_periods_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      budgets: {
+        Row: {
+          actual_amount: number
+          budget_month: number | null
+          budget_name: string
+          budget_year: number
+          budgeted_amount: number
+          category: string
+          company_id: string
+          created_at: string
+          id: string
+          notes: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          variance: number
+        }
+        Insert: {
+          actual_amount?: number
+          budget_month?: number | null
+          budget_name: string
+          budget_year: number
+          budgeted_amount?: number
+          category: string
+          company_id: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          variance?: number
+        }
+        Update: {
+          actual_amount?: number
+          budget_month?: number | null
+          budget_name?: string
+          budget_year?: number
+          budgeted_amount?: number
+          category?: string
+          company_id?: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          variance?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budgets_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       categories: {
         Row: {
           company_id: string
@@ -1319,6 +1428,7 @@ export type Database = {
         Args: { _company_id: string }
         Returns: undefined
       }
+      update_budget_actuals: { Args: never; Returns: undefined }
       validate_trial_balance: {
         Args: {
           _company_id: string

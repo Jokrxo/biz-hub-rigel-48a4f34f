@@ -13,7 +13,8 @@ import {
   PieChart,
   CreditCard,
   Building2,
-  Building
+  Building,
+  Wallet
 } from "lucide-react";
 
 interface SidebarProps {
@@ -34,6 +35,7 @@ const navItems = [
   { icon: Calculator, label: "Trial Balance", href: "/trial-balance" },
   { icon: TrendingUp, label: "Financial Reports", href: "/reports" },
   { icon: PieChart, label: "Analytics", href: "/analytics" },
+  { icon: Wallet, label: "Budget", href: "/budget" },
   { icon: Users, label: "Customers", href: "/customers" },
   { icon: Settings, label: "Settings", href: "/settings" },
 ];
