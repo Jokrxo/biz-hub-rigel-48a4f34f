@@ -522,8 +522,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                 </SelectTrigger>
                 <SelectContent>
                   {debitAccounts.map(acc => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {acc.account_code} - {acc.account_name} [{acc.account_type}]
+                    <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id}>
+                      {acc.account_code} - {acc.account_name} [{(acc as any).account_type ?? ""}]
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -538,8 +538,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                 </SelectTrigger>
                 <SelectContent>
                   {creditAccounts.map(acc => (
-                    <SelectItem key={acc.id} value={acc.id}>
-                      {acc.account_code} - {acc.account_name} [{acc.account_type}]
+                    <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id}>
+                      {acc.account_code} - {acc.account_name} [{(acc as any).account_type ?? ""}]
                     </SelectItem>
                   ))}
                 </SelectContent>
