@@ -10,6 +10,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { AlertCircle, CheckCircle2, Sparkles } from "lucide-react";
+import { z } from "zod";
 
 interface Account {
   id: string;
@@ -39,6 +40,29 @@ const ACCOUNTING_ELEMENTS = [
   { value: "income", label: "Income" },
   { value: "expense", label: "Expenses" }
 ];
+
+// Validation schema for transaction form
+const transactionSchema = z.object({
+  date: z.string().min(1, "Date is required"),
+  description: z.string()
+    .trim()
+    .min(1, "Description is required")
+    .max(500, "Description must be less than 500 characters"),
+  reference: z.string()
+    .trim()
+    .max(50, "Reference must be less than 50 characters")
+    .regex(/^[a-zA-Z0-9\-\/]*$/, "Reference can only contain letters, numbers, dashes, and slashes")
+    .optional()
+    .or(z.literal("")),
+  bankAccountId: z.string().min(1, "Bank account is required"),
+  element: z.string().min(1, "Accounting element is required"),
+  debitAccount: z.string().min(1, "Debit account is required"),
+  creditAccount: z.string().min(1, "Credit account is required"),
+  amount: z.string()
+    .min(1, "Amount is required")
+    .refine((val) => !isNaN(parseFloat(val)) && parseFloat(val) > 0, "Amount must be greater than 0"),
+  vatRate: z.string()
+});
 
 export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editData }: TransactionFormProps) => {
   const { toast } = useToast();
@@ -221,7 +245,19 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     try {
       setLoading(true);
 
-      // Validation
+      // Validation with zod schema
+      const validationResult = transactionSchema.safeParse(form);
+      
+      if (!validationResult.success) {
+        const firstError = validationResult.error.errors[0];
+        toast({ 
+          title: "Validation Error", 
+          description: firstError.message,
+          variant: "destructive" 
+        });
+        return;
+      }
+
       if (chartMissing) {
         toast({ 
           title: "Cannot proceed", 
@@ -237,11 +273,6 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           description: "A similar transaction already exists for this bank account, date, and amount.",
           variant: "destructive" 
         });
-        return;
-      }
-
-      if (!form.description || !form.debitAccount || !form.creditAccount || !form.amount) {
-        toast({ title: "Missing fields", description: "Please fill all required fields", variant: "destructive" });
         return;
       }
 
@@ -274,6 +305,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       if (!profile) throw new Error("Profile not found");
 
+      // Sanitize and trim inputs before saving
+      const sanitizedDescription = form.description.trim();
+      const sanitizedReference = form.reference ? form.reference.trim() : null;
+
       // Create transaction header
       const { data: transaction, error: txError } = await supabase
         .from("transactions")
@@ -281,8 +316,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           company_id: profile.company_id,
           user_id: user.id,
           transaction_date: form.date,
-          description: form.description,
-          reference_number: form.reference || null,
+          description: sanitizedDescription,
+          reference_number: sanitizedReference,
           total_amount: totalAmount,
           bank_account_id: form.bankAccountId || null,
           transaction_type: autoClassification?.type || null,
@@ -301,7 +336,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           account_id: form.debitAccount,
           debit: totalAmount,
           credit: 0,
-          description: form.description,
+          description: sanitizedDescription,
           status: "pending"
         },
         {
@@ -309,7 +344,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           account_id: form.creditAccount,
           debit: 0,
           credit: totalAmount,
-          description: form.description,
+          description: sanitizedDescription,
           status: "pending"
         }
       ];
@@ -415,23 +450,33 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           </div>
 
           <div>
-            <Label>Reference Number</Label>
+            <Label>Reference Number (max 50 chars, alphanumeric/-/ only)</Label>
             <Input
               value={form.reference}
               onChange={(e) => setForm({ ...form, reference: e.target.value })}
               placeholder="e.g. INV-001"
+              maxLength={50}
             />
+            {form.reference && !/^[a-zA-Z0-9\-\/]*$/.test(form.reference) && (
+              <p className="text-xs text-destructive mt-1">
+                Only letters, numbers, dashes (-), and slashes (/) allowed
+              </p>
+            )}
           </div>
 
-          <div>
-            <Label>Description *</Label>
-            <Textarea
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="Transaction description (e.g., 'Fuel purchase', 'Salary payment', 'Equipment purchase')"
-              rows={2}
-            />
-          </div>
+            <div>
+              <Label>Description * (max 500 characters)</Label>
+              <Textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Transaction description (e.g., 'Fuel purchase', 'Salary payment', 'Equipment purchase')"
+                rows={2}
+                maxLength={500}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                {form.description.length}/500 characters
+              </p>
+            </div>
 
           <div>
             <Label>Accounting Element *</Label>
