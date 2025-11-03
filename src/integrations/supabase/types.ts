@@ -1293,6 +1293,71 @@ export type Database = {
         }
         Relationships: []
       }
+      tax_periods: {
+        Row: {
+          company_id: string
+          created_at: string | null
+          id: string
+          locked_at: string | null
+          locked_by: string | null
+          paye_total: number | null
+          period_end: string
+          period_start: string
+          period_type: string
+          status: string
+          submission_date: string | null
+          submitted_by: string | null
+          updated_at: string | null
+          vat_input_total: number | null
+          vat_output_total: number | null
+          vat_payable: number | null
+        }
+        Insert: {
+          company_id: string
+          created_at?: string | null
+          id?: string
+          locked_at?: string | null
+          locked_by?: string | null
+          paye_total?: number | null
+          period_end: string
+          period_start: string
+          period_type: string
+          status?: string
+          submission_date?: string | null
+          submitted_by?: string | null
+          updated_at?: string | null
+          vat_input_total?: number | null
+          vat_output_total?: number | null
+          vat_payable?: number | null
+        }
+        Update: {
+          company_id?: string
+          created_at?: string | null
+          id?: string
+          locked_at?: string | null
+          locked_by?: string | null
+          paye_total?: number | null
+          period_end?: string
+          period_start?: string
+          period_type?: string
+          status?: string
+          submission_date?: string | null
+          submitted_by?: string | null
+          updated_at?: string | null
+          vat_input_total?: number | null
+          vat_output_total?: number | null
+          vat_payable?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tax_periods_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       transaction_entries: {
         Row: {
           account_id: string
@@ -1351,6 +1416,7 @@ export type Database = {
       transactions: {
         Row: {
           bank_account_id: string | null
+          base_amount: number | null
           branch_id: string | null
           category: string | null
           company_id: string
@@ -1359,14 +1425,19 @@ export type Database = {
           id: string
           reference_number: string | null
           status: string
+          tax_period_id: string | null
           total_amount: number
           transaction_date: string
           transaction_type: string | null
           updated_at: string
           user_id: string
+          vat_amount: number | null
+          vat_inclusive: boolean | null
+          vat_rate: number | null
         }
         Insert: {
           bank_account_id?: string | null
+          base_amount?: number | null
           branch_id?: string | null
           category?: string | null
           company_id: string
@@ -1375,14 +1446,19 @@ export type Database = {
           id?: string
           reference_number?: string | null
           status?: string
+          tax_period_id?: string | null
           total_amount?: number
           transaction_date: string
           transaction_type?: string | null
           updated_at?: string
           user_id: string
+          vat_amount?: number | null
+          vat_inclusive?: boolean | null
+          vat_rate?: number | null
         }
         Update: {
           bank_account_id?: string | null
+          base_amount?: number | null
           branch_id?: string | null
           category?: string | null
           company_id?: string
@@ -1391,11 +1467,15 @@ export type Database = {
           id?: string
           reference_number?: string | null
           status?: string
+          tax_period_id?: string | null
           total_amount?: number
           transaction_date?: string
           transaction_type?: string | null
           updated_at?: string
           user_id?: string
+          vat_amount?: number | null
+          vat_inclusive?: boolean | null
+          vat_rate?: number | null
         }
         Relationships: [
           {
@@ -1417,6 +1497,13 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_tax_period_id_fkey"
+            columns: ["tax_period_id"]
+            isOneToOne: false
+            referencedRelation: "tax_periods"
             referencedColumns: ["id"]
           },
         ]
@@ -1572,6 +1659,18 @@ export type Database = {
           transaction_type: string
         }[]
       }
+      calculate_vat_amounts: {
+        Args: {
+          _total_amount: number
+          _vat_inclusive: boolean
+          _vat_rate: number
+        }
+        Returns: {
+          base_amount: number
+          total_amount: number
+          vat_amount: number
+        }[]
+      }
       check_duplicate_transaction: {
         Args: {
           _bank_account_id: string
@@ -1639,6 +1738,16 @@ export type Database = {
         Returns: undefined
       }
       refresh_afs_cache: { Args: { _company_id: string }; Returns: undefined }
+      settle_vat_period: {
+        Args: { _tax_period_id: string }
+        Returns: {
+          message: string
+          success: boolean
+          vat_input: number
+          vat_output: number
+          vat_payable: number
+        }[]
+      }
       update_bank_balance: {
         Args: { _amount: number; _bank_account_id: string; _operation: string }
         Returns: undefined
