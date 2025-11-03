@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { TransactionForm } from "./TransactionForm";
+import { TransactionFormEnhanced } from "./TransactionFormEnhanced";
 import { exportTransactionsToExcel, exportTransactionsToPDF } from "@/lib/export-utils";
 
 interface Transaction {
@@ -18,7 +18,11 @@ interface Transaction {
   reference_number: string | null;
   total_amount: number;
   status: string;
+  bank_account_id: string | null;
+  transaction_type: string | null;
+  category: string | null;
   entries?: any[];
+  bank_accounts?: { account_name: string; bank_name: string } | null;
 }
 
 export const TransactionManagement = () => {
@@ -166,7 +170,7 @@ export const TransactionManagement = () => {
           New Transaction
         </Button>
         
-        <TransactionForm
+        <TransactionFormEnhanced
           open={open}
           onOpenChange={setOpen}
           onSuccess={load}
