@@ -652,7 +652,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     </SelectContent>
                   </Select>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Showing {selectedElement?.creditTypes.join('/')} accounts
+                    Showing {selectedElement?.creditTypes?.join('/')} accounts
                   </p>
                 </div>
               </div>
