@@ -287,18 +287,26 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     const keywords = paymentMethod.accountKeyword.split(',');
 
     // Auto-select based on element type and payment method
-    if (form.element === 'expense' || form.element === 'asset' || form.element === 'liability') {
-      // For expenses, assets, and liabilities: Credit side (payment from)
-      const creditAccount = credits.find(acc => 
-        keywords.some(kw => acc.account_name.toLowerCase().includes(kw.trim()))
-      );
-      if (creditAccount) setForm(prev => ({ ...prev, creditAccount: creditAccount.id }));
-    } else if (form.element === 'income' || form.element === 'equity') {
-      // For income and equity: Debit side (payment to)
-      const debitAccount = debits.find(acc => 
-        keywords.some(kw => acc.account_name.toLowerCase().includes(kw.trim()))
-      );
-      if (debitAccount) setForm(prev => ({ ...prev, debitAccount: debitAccount.id }));
+    try {
+      if (form.element === 'expense' || form.element === 'asset' || form.element === 'liability') {
+        // For expenses, assets, and liabilities: Credit side (payment from)
+        const creditAccount = credits.find(acc => 
+          keywords.some(kw => acc.account_name.toLowerCase().includes(kw.trim()))
+        );
+        if (creditAccount) {
+          setForm(prev => ({ ...prev, creditAccount: creditAccount.id }));
+        }
+      } else if (form.element === 'income' || form.element === 'equity') {
+        // For income and equity: Debit side (payment to)
+        const debitAccount = debits.find(acc => 
+          keywords.some(kw => acc.account_name.toLowerCase().includes(kw.trim()))
+        );
+        if (debitAccount) {
+          setForm(prev => ({ ...prev, debitAccount: debitAccount.id }));
+        }
+      }
+    } catch (error) {
+      console.error("Auto-select accounts error:", error);
     }
   };
 
@@ -438,6 +446,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const selectedElement = ACCOUNTING_ELEMENTS.find(e => e.value === form.element);
   const debitAccountName = debitAccounts.find(a => a.id === form.debitAccount)?.account_name;
   const creditAccountName = creditAccounts.find(a => a.id === form.creditAccount)?.account_name;
+
+  if (!open) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
