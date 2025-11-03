@@ -575,10 +575,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   <SelectContent>
                     {ACCOUNTING_ELEMENTS.map((elem) => (
                       <SelectItem key={elem.value} value={elem.value}>
-                        <div className="flex items-center gap-2">
-                          <elem.icon className="h-4 w-4" />
-                          {elem.label}
-                        </div>
+                        {elem.label}
                       </SelectItem>
                     ))}
                   </SelectContent>

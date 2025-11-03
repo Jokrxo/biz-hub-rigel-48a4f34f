@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { TransactionFormEnhanced } from "./TransactionFormEnhanced";
+import { TransactionForm } from "./TransactionForm";
 import { exportTransactionsToExcel, exportTransactionsToPDF } from "@/lib/export-utils";
 
 interface Transaction {
@@ -166,7 +166,7 @@ export const TransactionManagement = () => {
           New Transaction
         </Button>
         
-        <TransactionFormEnhanced
+        <TransactionForm
           open={open}
           onOpenChange={setOpen}
           onSuccess={load}
