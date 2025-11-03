@@ -248,9 +248,21 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       setLoading(true);
       setValidationError("");
 
-      // Basic validation
-      if (!form.description || !form.bankAccount || !form.debitAccount || !form.creditAccount || !form.amount) {
-        toast({ title: "Missing fields", description: "Please fill all required fields", variant: "destructive" });
+      // Basic validation with specific missing fields
+      const missingFields = [];
+      if (!form.bankAccount) missingFields.push("Bank Account");
+      if (!form.description) missingFields.push("Description");
+      if (!form.transactionType) missingFields.push("Transaction Type");
+      if (!form.debitAccount) missingFields.push("Debit Account");
+      if (!form.creditAccount) missingFields.push("Credit Account");
+      if (!form.amount) missingFields.push("Amount");
+      
+      if (missingFields.length > 0) {
+        toast({ 
+          title: "Missing Required Fields", 
+          description: `Please fill: ${missingFields.join(", ")}`, 
+          variant: "destructive" 
+        });
         return;
       }
 
