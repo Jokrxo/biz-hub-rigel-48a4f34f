@@ -962,7 +962,9 @@ export type Database = {
       }
       transactions: {
         Row: {
+          bank_account_id: string | null
           branch_id: string | null
+          category: string | null
           company_id: string
           created_at: string
           description: string
@@ -971,11 +973,14 @@ export type Database = {
           status: string
           total_amount: number
           transaction_date: string
+          transaction_type: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
+          bank_account_id?: string | null
           branch_id?: string | null
+          category?: string | null
           company_id: string
           created_at?: string
           description: string
@@ -984,11 +989,14 @@ export type Database = {
           status?: string
           total_amount?: number
           transaction_date: string
+          transaction_type?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
+          bank_account_id?: string | null
           branch_id?: string | null
+          category?: string | null
           company_id?: string
           created_at?: string
           description?: string
@@ -997,10 +1005,18 @@ export type Database = {
           status?: string
           total_amount?: number
           transaction_date?: string
+          transaction_type?: string | null
           updated_at?: string
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "transactions_bank_account_id_fkey"
+            columns: ["bank_account_id"]
+            isOneToOne: false
+            referencedRelation: "bank_accounts"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "transactions_branch_id_fkey"
             columns: ["branch_id"]
@@ -1104,10 +1120,24 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      get_user_company: {
-        Args: { _user_id: string }
-        Returns: string
+      auto_classify_transaction: {
+        Args: { _description: string }
+        Returns: {
+          category: string
+          transaction_type: string
+        }[]
       }
+      check_duplicate_transaction: {
+        Args: {
+          _bank_account_id: string
+          _company_id: string
+          _description: string
+          _total_amount: number
+          _transaction_date: string
+        }
+        Returns: boolean
+      }
+      get_user_company: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
           _company_id?: string
