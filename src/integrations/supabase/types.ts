@@ -1428,6 +1428,10 @@ export type Database = {
         Args: { _company_id: string }
         Returns: undefined
       }
+      update_bank_balance: {
+        Args: { _amount: number; _bank_account_id: string; _operation: string }
+        Returns: undefined
+      }
       update_budget_actuals: { Args: never; Returns: undefined }
       validate_trial_balance: {
         Args: {
