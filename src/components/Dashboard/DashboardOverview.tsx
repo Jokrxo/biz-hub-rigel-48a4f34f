@@ -54,19 +54,44 @@ export const DashboardOverview = () => {
   useEffect(() => {
     loadDashboardData();
     
-    // Set up real-time subscription for auto-updates
+    // Set up real-time subscription for auto-updates on ALL financial data
     const channel = supabase
-      .channel('dashboard-changes')
+      .channel('dashboard-realtime-updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
+        console.log('Transaction changed - updating dashboard...');
+        loadDashboardData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transaction_entries' }, () => {
+        console.log('Transaction entry changed - updating dashboard...');
         loadDashboardData();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_accounts' }, () => {
+        console.log('Bank account changed - updating dashboard...');
         loadDashboardData();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        console.log('Invoice changed - updating dashboard...');
         loadDashboardData();
       })
-      .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'fixed_assets' }, () => {
+        console.log('Fixed asset changed - updating dashboard...');
+        loadDashboardData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchase_orders' }, () => {
+        console.log('Purchase order changed - updating dashboard...');
+        loadDashboardData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => {
+        console.log('Quote changed - updating dashboard...');
+        loadDashboardData();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => {
+        console.log('Sale changed - updating dashboard...');
+        loadDashboardData();
+      })
+      .subscribe((status) => {
+        console.log('Dashboard real-time subscription status:', status);
+      });
 
     return () => {
       supabase.removeChannel(channel);
@@ -95,7 +120,9 @@ export const DashboardOverview = () => {
 
       if (!profile) return;
 
-      // Load transactions
+      console.log('Loading dashboard data for company:', profile.company_id);
+
+      // Load ALL transactions (not just approved) to calculate accurate totals
       const { data: transactions, error: txError } = await supabase
         .from("transactions")
         .select(`
@@ -104,17 +131,17 @@ export const DashboardOverview = () => {
             id,
             debit,
             credit,
-            chart_of_accounts(account_type)
+            chart_of_accounts(account_type, account_name)
           )
         `)
         .eq("company_id", profile.company_id)
-        .eq("status", "approved")
-        .order("transaction_date", { ascending: false })
-        .limit(5);
+        .order("transaction_date", { ascending: false });
 
       if (txError) throw txError;
 
-      // Calculate totals by account type
+      console.log('Loaded transactions:', transactions?.length);
+
+      // Calculate totals by account type from ALL transaction entries
       let assets = 0, liabilities = 0, equity = 0, income = 0, expenses = 0;
 
       transactions?.forEach(tx => {
@@ -136,7 +163,9 @@ export const DashboardOverview = () => {
         .select("current_balance")
         .eq("company_id", profile.company_id);
 
-      const bankBalance = banks?.reduce((sum, b) => sum + b.current_balance, 0) || 0;
+      const bankBalance = banks?.reduce((sum, b) => sum + Number(b.current_balance), 0) || 0;
+
+      console.log('Calculated metrics:', { assets, liabilities, equity, income, expenses, bankBalance });
 
       setMetrics({
         totalAssets: assets,
