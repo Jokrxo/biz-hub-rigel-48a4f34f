@@ -29,6 +29,7 @@ export const FinancialReports = () => {
   const [loading, setLoading] = useState(true);
   const [profitLossData, setProfitLossData] = useState<FinancialReportLine[]>([]);
   const [balanceSheetData, setBalanceSheetData] = useState<FinancialReportLine[]>([]);
+  const [cashFlowData, setCashFlowData] = useState<FinancialReportLine[]>([]);
   const [activeReport, setActiveReport] = useState<'pl' | 'bs' | 'cf'>('pl');
   const { toast } = useToast();
 
@@ -67,6 +68,7 @@ export const FinancialReports = () => {
       if (accounts) {
         generateProfitLoss(accounts);
         generateBalanceSheet(accounts);
+        await generateCashFlow(profile.company_id);
       }
     } catch (error) {
       console.error('Error loading financial data:', error);
@@ -232,10 +234,56 @@ export const FinancialReports = () => {
     setBalanceSheetData(bsData);
   };
 
+  const generateCashFlow = async (companyId: string) => {
+    try {
+      // Get date range (current year)
+      const currentYear = new Date().getFullYear();
+      const periodStart = `${currentYear}-01-01`;
+      const periodEnd = `${currentYear}-12-31`;
+
+      const { data, error } = await supabase
+        .rpc('generate_cash_flow', {
+          _company_id: companyId,
+          _period_start: periodStart,
+          _period_end: periodEnd
+        });
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const cf = data[0];
+        const cfData: FinancialReportLine[] = [
+          { account: 'CASH FLOW FROM OPERATING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Operating Activities', amount: cf.operating_activities || 0, type: 'income' },
+          { account: '', amount: 0, type: 'spacer' },
+          { account: 'CASH FLOW FROM INVESTING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Investing Activities', amount: cf.investing_activities || 0, type: 'expense' },
+          { account: '', amount: 0, type: 'spacer' },
+          { account: 'CASH FLOW FROM FINANCING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Financing Activities', amount: cf.financing_activities || 0, type: 'income' },
+          { account: '', amount: 0, type: 'spacer' },
+          { account: 'Net Cash Flow', amount: cf.net_cash_flow || 0, type: 'subtotal' },
+          { account: '', amount: 0, type: 'spacer' },
+          { account: 'Opening Cash Balance', amount: cf.opening_cash || 0, type: 'asset' },
+          { account: 'Net Cash Flow', amount: cf.net_cash_flow || 0, type: 'asset' },
+          { account: 'Closing Cash Balance', amount: cf.closing_cash || 0, type: 'final' },
+        ];
+        setCashFlowData(cfData);
+      }
+    } catch (error) {
+      console.error('Error generating cash flow:', error);
+      toast({
+        title: "Error",
+        description: "Failed to generate cash flow statement",
+        variant: "destructive"
+      });
+    }
+  };
+
   const handleExportPDF = () => {
-    const data = activeReport === 'pl' ? profitLossData : balanceSheetData;
-    const reportName = activeReport === 'pl' ? 'Profit & Loss Statement' : 'Balance Sheet';
-    const filename = activeReport === 'pl' ? 'profit_loss' : 'balance_sheet';
+    const data = activeReport === 'pl' ? profitLossData : activeReport === 'bs' ? balanceSheetData : cashFlowData;
+    const reportName = activeReport === 'pl' ? 'Profit & Loss Statement' : activeReport === 'bs' ? 'Balance Sheet' : 'Cash Flow Statement';
+    const filename = activeReport === 'pl' ? 'profit_loss' : activeReport === 'bs' ? 'balance_sheet' : 'cash_flow';
     
     exportFinancialReportToPDF(data, reportName, new Date().toLocaleDateString('en-ZA'), filename);
     toast({
@@ -245,9 +293,9 @@ export const FinancialReports = () => {
   };
 
   const handleExportExcel = () => {
-    const data = activeReport === 'pl' ? profitLossData : balanceSheetData;
-    const reportName = activeReport === 'pl' ? 'Profit & Loss' : 'Balance Sheet';
-    const filename = activeReport === 'pl' ? 'profit_loss' : 'balance_sheet';
+    const data = activeReport === 'pl' ? profitLossData : activeReport === 'bs' ? balanceSheetData : cashFlowData;
+    const reportName = activeReport === 'pl' ? 'Profit & Loss' : activeReport === 'bs' ? 'Balance Sheet' : 'Cash Flow';
+    const filename = activeReport === 'pl' ? 'profit_loss' : activeReport === 'bs' ? 'balance_sheet' : 'cash_flow';
     
     exportFinancialReportToExcel(data, reportName, filename);
     toast({
@@ -257,7 +305,7 @@ export const FinancialReports = () => {
   };
 
   const getCurrentData = () => {
-    return activeReport === 'pl' ? profitLossData : balanceSheetData;
+    return activeReport === 'pl' ? profitLossData : activeReport === 'bs' ? balanceSheetData : cashFlowData;
   };
 
   const getStats = () => {
@@ -385,6 +433,14 @@ export const FinancialReports = () => {
               >
                 <BarChart3 className="h-4 w-4 mr-2" />
                 Balance Sheet
+              </Button>
+              <Button
+                variant={activeReport === 'cf' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setActiveReport('cf')}
+              >
+                <Activity className="h-4 w-4 mr-2" />
+                Cash Flow
               </Button>
             </div>
           </div>
