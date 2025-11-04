@@ -21,9 +21,11 @@ import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { useNavigate } from "react-router-dom";
 
 export const DashboardOverview = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState({
     totalAssets: 0,
@@ -466,7 +468,11 @@ export const DashboardOverview = () => {
                 </div>
               ))}
             </div>
-            <Button variant="outline" className="w-full mt-4">
+            <Button 
+              variant="outline" 
+              className="w-full mt-4"
+              onClick={() => navigate('/transactions')}
+            >
               View All Transactions
             </Button>
           </CardContent>
@@ -511,13 +517,28 @@ export const DashboardOverview = () => {
             <div className="mt-6 space-y-2">
               <h4 className="font-medium text-foreground">Quick Actions</h4>
               <div className="grid gap-2">
-                <Button variant="outline" size="sm" className="justify-start">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="justify-start"
+                  onClick={() => navigate('/trial-balance')}
+                >
                   View Trial Balance
                 </Button>
-                <Button variant="outline" size="sm" className="justify-start">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="justify-start"
+                  onClick={() => navigate('/reports')}
+                >
                   Generate Reports
                 </Button>
-                <Button variant="outline" size="sm" className="justify-start">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="justify-start"
+                  onClick={() => navigate('/transactions')}
+                >
                   Add Transaction
                 </Button>
               </div>

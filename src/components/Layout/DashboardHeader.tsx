@@ -6,6 +6,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Bell, Menu, Search, Plus, LogOut, Building2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useNavigate } from "react-router-dom";
 
 interface DashboardHeaderProps {
   onMenuClick: () => void;
@@ -66,6 +67,8 @@ const UserMenu = () => {
 };
 
 export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
+  const navigate = useNavigate();
+
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
       <div className="flex items-center gap-4">
@@ -88,7 +91,10 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
       </div>
 
       <div className="flex items-center gap-4">
-        <Button className="bg-gradient-primary hover:opacity-90 transition-opacity">
+        <Button 
+          className="bg-gradient-primary hover:opacity-90 transition-opacity"
+          onClick={() => navigate('/transactions')}
+        >
           <Plus className="h-4 w-4 mr-2" />
           New Transaction
         </Button>

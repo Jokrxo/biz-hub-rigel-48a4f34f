@@ -13,7 +13,7 @@ const buttonVariants = cva(
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
         outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
+        ghost: "text-foreground hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
@@ -39,7 +39,14 @@ export interface ButtonProps
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
-    return <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />;
+    // Ensure gradient buttons have proper text color
+    const classNameStr = typeof className === 'string' ? className : '';
+    const isGradientButton = classNameStr.includes('bg-gradient-primary') || classNameStr.includes('gradient-primary');
+    const hasTextColor = classNameStr.includes('text-');
+    const finalClassName = isGradientButton && !hasTextColor 
+      ? cn(buttonVariants({ variant, size }), 'text-primary-foreground', className)
+      : buttonVariants({ variant, size, className });
+    return <Comp className={finalClassName} ref={ref} {...props} />;
   },
 );
 Button.displayName = "Button";

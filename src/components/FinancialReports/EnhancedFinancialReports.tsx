@@ -66,33 +66,16 @@ export const EnhancedFinancialReports = () => {
       if (!profile?.company_id) return;
       setCompanyId(profile.company_id);
 
-      // Fetch accounts with transaction entries in date range
-      const { data: accounts } = await supabase
-        .from('chart_of_accounts')
-        .select(`
-          id,
-          account_code,
-          account_name,
-          account_type,
-          normal_balance,
-          transaction_entries!inner (
-            debit,
-            credit,
-            transactions!inner (
-              transaction_date,
-              status
-            )
-          )
-        `)
-        .eq('company_id', profile.company_id)
-        .eq('is_active', true)
-        .gte('transaction_entries.transactions.transaction_date', periodStart)
-        .lte('transaction_entries.transactions.transaction_date', periodEnd)
-        .eq('transaction_entries.transactions.status', 'posted');
+      // Fetch trial balance data directly (all amounts flow from TB to AFS)
+      // Note: Date filtering should be handled at transaction level, but for AFS we use full TB
+      const { data: trialBalance, error: tbError } = await supabase
+        .rpc('get_trial_balance_for_company');
 
-      if (accounts) {
-        const pl = generateProfitLoss(accounts);
-        const bs = generateBalanceSheet(accounts);
+      if (tbError) throw tbError;
+
+      if (trialBalance) {
+        const pl = generateProfitLoss(trialBalance);
+        const bs = generateBalanceSheet(trialBalance);
         const cf = await generateCashFlow(profile.company_id);
         
         setReportData({
@@ -113,27 +96,26 @@ export const EnhancedFinancialReports = () => {
     }
   };
 
-  const generateProfitLoss = (accounts: any[]): any[] => {
+  const generateProfitLoss = (trialBalance: any[]): any[] => {
     const data: any[] = [];
     
-    // Revenue Section
+    // Revenue Section - use trial balance balances directly
     data.push({ type: 'header', account: 'REVENUE', amount: 0, accountId: null });
-    const revenue = accounts.filter(a => 
-      a.account_type.toLowerCase().includes('revenue') || 
-      a.account_type.toLowerCase().includes('income')
+    const revenue = trialBalance.filter(a => 
+      a.account_type.toLowerCase() === 'revenue' || 
+      a.account_type.toLowerCase() === 'income'
     );
     
     let totalRevenue = 0;
     revenue.forEach(acc => {
-      const total = acc.transaction_entries.reduce((sum: number, e: any) => 
-        sum + (e.credit || 0) - (e.debit || 0), 0
-      );
-      if (total !== 0) {
+      // Use balance from trial balance directly
+      const total = acc.balance || 0;
+      if (Math.abs(total) > 0.01) {
         data.push({ 
           type: 'income', 
           account: acc.account_name, 
           amount: total,
-          accountId: acc.id,
+          accountId: acc.account_id,
           accountCode: acc.account_code
         });
         totalRevenue += total;
@@ -141,22 +123,24 @@ export const EnhancedFinancialReports = () => {
     });
     data.push({ type: 'subtotal', account: 'Total Revenue', amount: totalRevenue, accountId: null });
 
-    // Cost of Sales
+    // Cost of Sales - use trial balance balances directly
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
     data.push({ type: 'header', account: 'COST OF SALES', amount: 0, accountId: null });
-    const cogs = accounts.filter(a => a.account_name.toLowerCase().includes('cost of') || a.account_code.startsWith('5000'));
+    const cogs = trialBalance.filter(a => 
+      a.account_type.toLowerCase() === 'expense' && 
+      (a.account_name.toLowerCase().includes('cost of') || a.account_code.startsWith('5000'))
+    );
     
     let totalCOGS = 0;
     cogs.forEach(acc => {
-      const total = acc.transaction_entries.reduce((sum: number, e: any) => 
-        sum + (e.debit || 0) - (e.credit || 0), 0
-      );
-      if (total !== 0) {
+      // Use balance from trial balance directly
+      const total = acc.balance || 0;
+      if (Math.abs(total) > 0.01) {
         data.push({ 
           type: 'expense', 
           account: acc.account_name, 
           amount: total,
-          accountId: acc.id,
+          accountId: acc.account_id,
           accountCode: acc.account_code
         });
         totalCOGS += total;
@@ -165,26 +149,25 @@ export const EnhancedFinancialReports = () => {
     data.push({ type: 'subtotal', account: 'Total Cost of Sales', amount: totalCOGS, accountId: null });
     data.push({ type: 'subtotal', account: 'Gross Profit', amount: totalRevenue - totalCOGS, accountId: null });
 
-    // Operating Expenses
+    // Operating Expenses - use trial balance balances directly
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
     data.push({ type: 'header', account: 'OPERATING EXPENSES', amount: 0, accountId: null });
-    const opex = accounts.filter(a => 
-      a.account_type.toLowerCase().includes('expense') && 
+    const opex = trialBalance.filter(a => 
+      a.account_type.toLowerCase() === 'expense' && 
       !a.account_name.toLowerCase().includes('cost of') &&
       !a.account_code.startsWith('5000')
     );
     
     let totalOpex = 0;
     opex.forEach(acc => {
-      const total = acc.transaction_entries.reduce((sum: number, e: any) => 
-        sum + (e.debit || 0) - (e.credit || 0), 0
-      );
-      if (total !== 0) {
+      // Use balance from trial balance directly
+      const total = acc.balance || 0;
+      if (Math.abs(total) > 0.01) {
         data.push({ 
           type: 'expense', 
           account: acc.account_name, 
           amount: total,
-          accountId: acc.id,
+          accountId: acc.account_id,
           accountCode: acc.account_code
         });
         totalOpex += total;
@@ -199,30 +182,29 @@ export const EnhancedFinancialReports = () => {
     return data;
   };
 
-  const generateBalanceSheet = (accounts: any[]): any[] => {
+  const generateBalanceSheet = (trialBalance: any[]): any[] => {
     const data: any[] = [];
 
-    // ASSETS
+    // ASSETS - use trial balance balances directly
     data.push({ type: 'header', account: 'ASSETS', amount: 0, accountId: null });
     
     // Current Assets
     data.push({ type: 'subheader', account: 'Current Assets', amount: 0, accountId: null });
-    const currentAssets = accounts.filter(a => 
-      a.account_type.toLowerCase().includes('asset') && 
-      parseInt(a.account_code) < 1500
+    const currentAssets = trialBalance.filter(a => 
+      a.account_type.toLowerCase() === 'asset' && 
+      parseInt(a.account_code || '0') < 1500
     );
     
     let totalCurrentAssets = 0;
     currentAssets.forEach(acc => {
-      const total = acc.transaction_entries.reduce((sum: number, e: any) => 
-        sum + (e.debit || 0) - (e.credit || 0), 0
-      );
-      if (total !== 0) {
+      // Use balance from trial balance directly
+      const total = acc.balance || 0;
+      if (Math.abs(total) > 0.01) {
         data.push({ 
           type: 'asset', 
           account: acc.account_name, 
           amount: total,
-          accountId: acc.id,
+          accountId: acc.account_id,
           accountCode: acc.account_code
         });
         totalCurrentAssets += total;
@@ -232,22 +214,21 @@ export const EnhancedFinancialReports = () => {
 
     // Fixed Assets
     data.push({ type: 'subheader', account: 'Fixed Assets', amount: 0, accountId: null });
-    const fixedAssets = accounts.filter(a => 
-      a.account_type.toLowerCase().includes('asset') && 
-      parseInt(a.account_code) >= 1500
+    const fixedAssets = trialBalance.filter(a => 
+      a.account_type.toLowerCase() === 'asset' && 
+      parseInt(a.account_code || '0') >= 1500
     );
     
     let totalFixedAssets = 0;
     fixedAssets.forEach(acc => {
-      const total = acc.transaction_entries.reduce((sum: number, e: any) => 
-        sum + (e.debit || 0) - (e.credit || 0), 0
-      );
-      if (total !== 0) {
+      // Use balance from trial balance directly
+      const total = acc.balance || 0;
+      if (Math.abs(total) > 0.01) {
         data.push({ 
           type: 'asset', 
           account: acc.account_name, 
           amount: total,
-          accountId: acc.id,
+          accountId: acc.account_id,
           accountCode: acc.account_code
         });
         totalFixedAssets += total;
@@ -256,22 +237,21 @@ export const EnhancedFinancialReports = () => {
     data.push({ type: 'subtotal', account: 'Total Fixed Assets', amount: totalFixedAssets, accountId: null });
     data.push({ type: 'total', account: 'TOTAL ASSETS', amount: totalCurrentAssets + totalFixedAssets, accountId: null });
 
-    // LIABILITIES & EQUITY
+    // LIABILITIES & EQUITY - use trial balance balances directly
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
     data.push({ type: 'header', account: 'LIABILITIES', amount: 0, accountId: null });
     
-    const liabilities = accounts.filter(a => a.account_type.toLowerCase().includes('liability'));
+    const liabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability');
     let totalLiabilities = 0;
     liabilities.forEach(acc => {
-      const total = acc.transaction_entries.reduce((sum: number, e: any) => 
-        sum + (e.credit || 0) - (e.debit || 0), 0
-      );
-      if (total !== 0) {
+      // Use balance from trial balance directly
+      const total = acc.balance || 0;
+      if (Math.abs(total) > 0.01) {
         data.push({ 
           type: 'liability', 
           account: acc.account_name, 
           amount: total,
-          accountId: acc.id,
+          accountId: acc.account_id,
           accountCode: acc.account_code
         });
         totalLiabilities += total;
@@ -282,18 +262,17 @@ export const EnhancedFinancialReports = () => {
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
     data.push({ type: 'header', account: 'EQUITY', amount: 0, accountId: null });
     
-    const equity = accounts.filter(a => a.account_type.toLowerCase().includes('equity'));
+    const equity = trialBalance.filter(a => a.account_type.toLowerCase() === 'equity');
     let totalEquity = 0;
     equity.forEach(acc => {
-      const total = acc.transaction_entries.reduce((sum: number, e: any) => 
-        sum + (e.credit || 0) - (e.debit || 0), 0
-      );
-      if (total !== 0) {
+      // Use balance from trial balance directly
+      const total = acc.balance || 0;
+      if (Math.abs(total) > 0.01) {
         data.push({ 
           type: 'equity', 
           account: acc.account_name, 
           amount: total,
-          accountId: acc.id,
+          accountId: acc.account_id,
           accountCode: acc.account_code
         });
         totalEquity += total;

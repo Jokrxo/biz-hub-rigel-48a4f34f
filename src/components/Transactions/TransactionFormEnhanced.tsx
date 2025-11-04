@@ -336,7 +336,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       const amount = parseFloat(form.amount);
       const vatRate = parseFloat(form.vatRate);
-      const vatAmount = (amount * vatRate) / (100 + vatRate); // VAT from inclusive amount
+      const vatAmount = vatRate > 0 ? (amount * vatRate) / (100 + vatRate) : 0; // VAT from inclusive amount
       const netAmount = amount - vatAmount;
 
       const { data: { user } } = await supabase.auth.getUser();
@@ -345,6 +345,24 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       // Sanitize inputs
       const sanitizedDescription = form.description.trim();
       const sanitizedReference = form.reference ? form.reference.trim() : null;
+
+      // Get VAT account if needed
+      let vatAccount = null;
+      if (vatAmount > 0 && vatRate > 0) {
+        vatAccount = accounts.find(acc => 
+          (acc.account_name || '').toLowerCase().includes('vat') || 
+          (acc.account_name || '').toLowerCase().includes('tax')
+        );
+        
+        if (!vatAccount) {
+          toast({ 
+            title: "VAT Account Missing", 
+            description: "Please create a VAT account in Chart of Accounts before adding VAT transactions.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+      }
 
       // Create transaction header
       const { data: transaction, error: txError } = await supabase
@@ -356,6 +374,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           description: sanitizedDescription,
           reference_number: sanitizedReference,
           total_amount: amount,
+          vat_rate: vatRate > 0 ? vatRate : null,
+          vat_amount: vatAmount > 0 ? vatAmount : null,
+          base_amount: netAmount,
+          vat_inclusive: vatRate > 0,
           bank_account_id: form.bankAccountId || null,
           transaction_type: form.element,
           category: autoClassification?.category || null,
@@ -364,45 +386,116 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         .select()
         .single();
 
-      if (txError) throw txError;
+      if (txError) {
+        console.error("Transaction insert error:", txError);
+        throw txError;
+      }
 
       // Create double-entry transaction entries
-      const entries = [
-        {
-          transaction_id: transaction.id,
-          account_id: form.debitAccount,
-          debit: netAmount,
-          credit: 0,
-          description: sanitizedDescription,
-          status: "pending"
-        },
-        {
-          transaction_id: transaction.id,
-          account_id: form.creditAccount,
-          debit: 0,
-          credit: netAmount,
-          description: sanitizedDescription,
-          status: "pending"
-        }
-      ];
+      // For VAT-inclusive transactions:
+      // - Expense: Dr Expense (net), Dr VAT Input (vat), Cr Bank (total)
+      // - Income: Dr Bank (total), Cr Income (net), Cr VAT Output (vat)
+      const entries: any[] = [];
 
-      // Add VAT entry if applicable
-      if (vatAmount > 0 && vatRate > 0) {
-        const vatAccount = accounts.find(acc => 
-          (acc.account_name || '').toLowerCase().includes('vat') || 
-          (acc.account_name || '').toLowerCase().includes('tax')
-        );
-        
-        if (vatAccount) {
-          entries.push({
-            transaction_id: transaction.id,
-            account_id: vatAccount.id,
-            debit: form.element === 'expense' ? vatAmount : 0,
-            credit: form.element === 'income' ? vatAmount : 0,
-            description: 'VAT',
-            status: "pending"
-          });
+      if (vatAmount > 0 && vatAccount) {
+        // VAT-inclusive transaction
+        if (form.element === 'expense') {
+          // Expense with VAT: Debit Expense (net), Debit VAT Input (vat), Credit Bank (total)
+          entries.push(
+            {
+              transaction_id: transaction.id,
+              account_id: form.debitAccount, // Expense account
+              debit: netAmount,
+              credit: 0,
+              description: sanitizedDescription,
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: vatAccount.id, // VAT Input account
+              debit: vatAmount,
+              credit: 0,
+              description: 'VAT Input',
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: form.creditAccount, // Bank account
+              debit: 0,
+              credit: amount, // Total amount
+              description: sanitizedDescription,
+              status: "pending"
+            }
+          );
+        } else if (form.element === 'income') {
+          // Income with VAT: Debit Bank (total), Credit Income (net), Credit VAT Output (vat)
+          entries.push(
+            {
+              transaction_id: transaction.id,
+              account_id: form.debitAccount, // Bank account
+              debit: amount, // Total amount
+              credit: 0,
+              description: sanitizedDescription,
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: form.creditAccount, // Income account
+              debit: 0,
+              credit: netAmount,
+              description: sanitizedDescription,
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: vatAccount.id, // VAT Output account
+              debit: 0,
+              credit: vatAmount,
+              description: 'VAT Output',
+              status: "pending"
+            }
+          );
+        } else {
+          // Other transaction types - treat as no VAT for now
+          entries.push(
+            {
+              transaction_id: transaction.id,
+              account_id: form.debitAccount,
+              debit: amount,
+              credit: 0,
+              description: sanitizedDescription,
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: form.creditAccount,
+              debit: 0,
+              credit: amount,
+              description: sanitizedDescription,
+              status: "pending"
+            }
+          );
         }
+      } else {
+        // No VAT - simple double entry
+        entries.push(
+          {
+            transaction_id: transaction.id,
+            account_id: form.debitAccount,
+            debit: amount,
+            credit: 0,
+            description: sanitizedDescription,
+            status: "pending"
+          },
+          {
+            transaction_id: transaction.id,
+            account_id: form.creditAccount,
+            debit: 0,
+            credit: amount,
+            description: sanitizedDescription,
+            status: "pending"
+          }
+        );
       }
 
       const { error: entriesError } = await supabase

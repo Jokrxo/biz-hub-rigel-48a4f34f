@@ -52,22 +52,15 @@ export const FinancialReports = () => {
 
       if (!profile?.company_id) return;
 
-      // Fetch chart of accounts with transaction entries
-      const { data: accounts } = await supabase
-        .from('chart_of_accounts')
-        .select(`
-          *,
-          transaction_entries (
-            debit,
-            credit
-          )
-        `)
-        .eq('company_id', profile.company_id)
-        .eq('is_active', true);
+      // Fetch trial balance data directly (all amounts flow from TB to AFS)
+      const { data: trialBalance, error: tbError } = await supabase
+        .rpc('get_trial_balance_for_company');
 
-      if (accounts) {
-        generateProfitLoss(accounts);
-        generateBalanceSheet(accounts);
+      if (tbError) throw tbError;
+
+      if (trialBalance) {
+        generateProfitLoss(trialBalance);
+        generateBalanceSheet(trialBalance);
         await generateCashFlow(profile.company_id);
       }
     } catch (error) {
@@ -82,20 +75,19 @@ export const FinancialReports = () => {
     }
   };
 
-  const generateProfitLoss = (accounts: any[]) => {
-    // Group by account type
-    const income = accounts.filter(a => a.account_type.toLowerCase().includes('income') || a.account_type.toLowerCase().includes('revenue'));
-    const expenses = accounts.filter(a => a.account_type.toLowerCase().includes('expense') || a.account_type.toLowerCase().includes('cost'));
+  const generateProfitLoss = (trialBalance: any[]) => {
+    // Group by account type - use trial balance balances directly
+    const income = trialBalance.filter(a => a.account_type.toLowerCase() === 'revenue' || a.account_type.toLowerCase() === 'income');
+    const expenses = trialBalance.filter(a => a.account_type.toLowerCase() === 'expense');
 
     const plData: FinancialReportLine[] = [];
 
-    // Calculate total income
+    // Calculate total income - use balance from trial balance directly
     let totalIncome = 0;
     income.forEach(account => {
-      const accountTotal = (account.transaction_entries || []).reduce((sum: number, entry: any) => 
-        sum + (entry.credit || 0) - (entry.debit || 0), 0
-      );
-      if (accountTotal !== 0) {
+      // For revenue accounts, balance is already calculated correctly
+      const accountTotal = account.balance || 0;
+      if (Math.abs(accountTotal) > 0.01) {
         plData.push({
           account: account.account_name,
           amount: accountTotal,
@@ -111,13 +103,12 @@ export const FinancialReports = () => {
       type: 'subtotal'
     });
 
-    // Calculate total expenses
+    // Calculate total expenses - use balance from trial balance directly
     let totalExpenses = 0;
     expenses.forEach(account => {
-      const accountTotal = (account.transaction_entries || []).reduce((sum: number, entry: any) => 
-        sum + (entry.debit || 0) - (entry.credit || 0), 0
-      );
-      if (accountTotal !== 0) {
+      // For expense accounts, balance is already calculated correctly
+      const accountTotal = account.balance || 0;
+      if (Math.abs(accountTotal) > 0.01) {
         plData.push({
           account: account.account_name,
           amount: accountTotal,
@@ -143,23 +134,22 @@ export const FinancialReports = () => {
     setProfitLossData(plData);
   };
 
-  const generateBalanceSheet = (accounts: any[]) => {
-    // Group by account type
-    const assets = accounts.filter(a => a.account_type.toLowerCase().includes('asset'));
-    const liabilities = accounts.filter(a => a.account_type.toLowerCase().includes('liability'));
-    const equity = accounts.filter(a => a.account_type.toLowerCase().includes('equity'));
+  const generateBalanceSheet = (trialBalance: any[]) => {
+    // Group by account type - use trial balance balances directly
+    const assets = trialBalance.filter(a => a.account_type.toLowerCase() === 'asset');
+    const liabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability');
+    const equity = trialBalance.filter(a => a.account_type.toLowerCase() === 'equity');
 
     const bsData: FinancialReportLine[] = [];
 
     bsData.push({ account: 'ASSETS', amount: 0, type: 'header' });
 
-    // Calculate total assets
+    // Calculate total assets - use balance from trial balance directly
     let totalAssets = 0;
     assets.forEach(account => {
-      const accountTotal = (account.transaction_entries || []).reduce((sum: number, entry: any) => 
-        sum + (entry.debit || 0) - (entry.credit || 0), 0
-      );
-      if (accountTotal !== 0) {
+      // For asset accounts, balance is already calculated correctly
+      const accountTotal = account.balance || 0;
+      if (Math.abs(accountTotal) > 0.01) {
         bsData.push({
           account: account.account_name,
           amount: accountTotal,
@@ -178,13 +168,12 @@ export const FinancialReports = () => {
     bsData.push({ account: '', amount: 0, type: 'spacer' });
     bsData.push({ account: 'LIABILITIES', amount: 0, type: 'header' });
 
-    // Calculate total liabilities
+    // Calculate total liabilities - use balance from trial balance directly
     let totalLiabilities = 0;
     liabilities.forEach(account => {
-      const accountTotal = (account.transaction_entries || []).reduce((sum: number, entry: any) => 
-        sum + (entry.credit || 0) - (entry.debit || 0), 0
-      );
-      if (accountTotal !== 0) {
+      // For liability accounts, balance is already calculated correctly
+      const accountTotal = account.balance || 0;
+      if (Math.abs(accountTotal) > 0.01) {
         bsData.push({
           account: account.account_name,
           amount: accountTotal,
@@ -203,13 +192,12 @@ export const FinancialReports = () => {
     bsData.push({ account: '', amount: 0, type: 'spacer' });
     bsData.push({ account: 'EQUITY', amount: 0, type: 'header' });
 
-    // Calculate total equity
+    // Calculate total equity - use balance from trial balance directly
     let totalEquity = 0;
     equity.forEach(account => {
-      const accountTotal = (account.transaction_entries || []).reduce((sum: number, entry: any) => 
-        sum + (entry.credit || 0) - (entry.debit || 0), 0
-      );
-      if (accountTotal !== 0) {
+      // For equity accounts, balance is already calculated correctly
+      const accountTotal = account.balance || 0;
+      if (Math.abs(accountTotal) > 0.01) {
         bsData.push({
           account: account.account_name,
           amount: accountTotal,

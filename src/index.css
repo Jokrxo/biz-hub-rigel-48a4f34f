@@ -128,10 +128,17 @@
 
   .gradient-primary {
     background: var(--gradient-primary);
+    color: hsl(var(--primary-foreground));
+  }
+
+  .bg-gradient-primary {
+    background: var(--gradient-primary) !important;
+    color: hsl(var(--primary-foreground)) !important;
   }
 
   .gradient-accent {
     background: var(--gradient-accent);
+    color: hsl(var(--accent-foreground));
   }
 }
 
