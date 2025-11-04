@@ -67,6 +67,20 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
 
       if (!profile) throw new Error("Profile not found");
 
+      // Validate that the selected bank account still exists
+      const { data: bankAccount, error: bankError } = await supabase
+        .from("bank_accounts")
+        .select("id")
+        .eq("id", selectedBank)
+        .eq("company_id", profile.company_id)
+        .single();
+
+      if (bankError || !bankAccount) {
+        toast({ title: "Error", description: "Selected bank account no longer exists. Please refresh the page and try again.", variant: "destructive" });
+        setSelectedBank("");
+        return;
+      }
+
       // Map CSV rows to transactions
       const transactions = rows.map(row => {
         const amount = parseFloat(row.Amount || row.amount || "0");
