@@ -146,11 +146,20 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
   useEffect(() => {
     if (editData && open) {
+      // Validate that bank_account_id exists in bankAccounts list when editing
+      let validBankAccountId = "";
+      if (editData.bank_account_id && bankAccounts.length > 0) {
+        const bankExists = bankAccounts.find(bank => bank.id === editData.bank_account_id);
+        if (bankExists) {
+          validBankAccountId = editData.bank_account_id;
+        }
+      }
+      
       setForm({
         date: editData.transaction_date || new Date().toISOString().slice(0, 10),
         description: editData.description || "",
         reference: editData.reference_number || "",
-        bankAccountId: editData.bank_account_id || "",
+        bankAccountId: validBankAccountId,
         element: "",
         paymentMethod: "bank",
         debitAccount: "",
@@ -159,7 +168,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         vatRate: "15"
       });
     }
-  }, [editData, open]);
+  }, [editData, open, bankAccounts]);
 
   useEffect(() => {
     if (form.description.length > 3) {
@@ -266,9 +275,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
   const checkDuplicate = async () => {
     try {
+      // Convert empty string to null for bank_account_id
+      const bankAccountId = form.bankAccountId && form.bankAccountId.trim() !== "" ? form.bankAccountId : null;
+      
       const { data, error } = await supabase.rpc('check_duplicate_transaction', {
         _company_id: companyId,
-        _bank_account_id: form.bankAccountId || null,
+        _bank_account_id: bankAccountId,
         _transaction_date: form.date,
         _total_amount: parseFloat(form.amount || "0"),
         _description: form.description
@@ -334,6 +346,22 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         return;
       }
 
+      // Validate bank account if provided
+      let bankAccountId = null;
+      if (form.bankAccountId && form.bankAccountId.trim() !== "") {
+        // Check if bank account exists in the loaded bank accounts list
+        const bankExists = bankAccounts.find(bank => bank.id === form.bankAccountId);
+        if (!bankExists) {
+          toast({ 
+            title: "Invalid Bank Account", 
+            description: "The selected bank account no longer exists. Please select a valid bank account or leave it empty.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+        bankAccountId = form.bankAccountId;
+      }
+
       const amount = parseFloat(form.amount);
       const vatRate = parseFloat(form.vatRate);
       const vatAmount = vatRate > 0 ? (amount * vatRate) / (100 + vatRate) : 0; // VAT from inclusive amount
@@ -378,7 +406,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           vat_amount: vatAmount > 0 ? vatAmount : null,
           base_amount: netAmount,
           vat_inclusive: vatRate > 0,
-          bank_account_id: form.bankAccountId || null,
+          bank_account_id: bankAccountId,
           transaction_type: form.element,
           category: autoClassification?.category || null,
           status: "pending"
@@ -505,20 +533,20 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       if (entriesError) throw entriesError;
 
       // Update bank balance if bank account is involved
-      if (form.bankAccountId) {
+      if (bankAccountId) {
         const debitAccount = accounts.find(a => a.id === form.debitAccount);
         const creditAccount = accounts.find(a => a.id === form.creditAccount);
 
         // Check if debit or credit account is a bank asset account
         if (debitAccount?.account_type === 'Asset' && debitAccount.account_name.toLowerCase().includes('bank')) {
           await supabase.rpc('update_bank_balance', {
-            _bank_account_id: form.bankAccountId,
+            _bank_account_id: bankAccountId,
             _amount: amount,
             _operation: 'add'
           });
         } else if (creditAccount?.account_type === 'Asset' && creditAccount.account_name.toLowerCase().includes('bank')) {
           await supabase.rpc('update_bank_balance', {
-            _bank_account_id: form.bankAccountId,
+            _bank_account_id: bankAccountId,
             _amount: amount,
             _operation: 'subtract'
           });
@@ -608,12 +636,16 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               
               <div>
                 <Label htmlFor="bankAccount">Bank Account (Optional)</Label>
-                <Select value={form.bankAccountId} onValueChange={(val) => setForm({ ...form, bankAccountId: val })}>
+                <Select value={form.bankAccountId || "__none__"} onValueChange={(val) => {
+                  // Convert "__none__" to empty string for form state
+                  const bankAccountValue = val === "__none__" ? "" : val;
+                  setForm({ ...form, bankAccountId: bankAccountValue });
+                }}>
                   <SelectTrigger id="bankAccount">
                     <SelectValue placeholder="Select bank account" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None</SelectItem>
+                    <SelectItem value="__none__">None</SelectItem>
                     {bankAccounts.map((bank) => (
                       <SelectItem key={bank.id} value={bank.id}>
                         {bank.bank_name} - {bank.account_number}

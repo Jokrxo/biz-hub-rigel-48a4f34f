@@ -71,11 +71,20 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
 
   useEffect(() => {
     if (editData) {
+      // Validate that bank_account_id exists in bankAccounts list when editing
+      let validBankAccount = "";
+      if (editData.bank_account_id && bankAccounts.length > 0) {
+        const bankExists = bankAccounts.find(bank => bank.id === editData.bank_account_id);
+        if (bankExists) {
+          validBankAccount = editData.bank_account_id;
+        }
+      }
+      
       setForm({
         date: editData.transaction_date || new Date().toISOString().slice(0, 10),
         description: editData.description || "",
         reference: editData.reference_number || "",
-        bankAccount: editData.bank_account_id || "",
+        bankAccount: validBankAccount,
         transactionType: "",
         debitAccount: "",
         creditAccount: "",
@@ -83,7 +92,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         vatRate: "15"
       });
     }
-  }, [editData]);
+  }, [editData, bankAccounts]);
 
   // Auto-classify when description changes
   useEffect(() => {
@@ -177,9 +186,12 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
 
       if (!profile) return;
 
+      // Convert empty string to null for bank_account_id
+      const bankAccountId = form.bankAccount && form.bankAccount.trim() !== "" ? form.bankAccount : null;
+      
       const { data, error } = await supabase.rpc("check_duplicate_transaction", {
         _company_id: profile.company_id,
-        _bank_account_id: form.bankAccount,
+        _bank_account_id: bankAccountId,
         _transaction_date: form.date,
         _total_amount: parseFloat(form.amount || "0"),
         _description: form.description
@@ -266,6 +278,22 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         return;
       }
 
+      // Validate bank account if provided
+      let bankAccountId = null;
+      if (form.bankAccount && form.bankAccount.trim() !== "") {
+        // Check if bank account exists in the loaded bank accounts list
+        const bankExists = bankAccounts.find(bank => bank.id === form.bankAccount);
+        if (!bankExists) {
+          toast({ 
+            title: "Invalid Bank Account", 
+            description: "The selected bank account no longer exists. Please select a valid bank account.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+        bankAccountId = form.bankAccount;
+      }
+
       const amount = parseFloat(form.amount);
       if (isNaN(amount) || amount <= 0) {
         toast({ title: "Invalid amount", description: "Amount must be greater than 0", variant: "destructive" });
@@ -314,7 +342,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         .insert({
           company_id: profile.company_id,
           user_id: user.id,
-          bank_account_id: form.bankAccount,
+          bank_account_id: bankAccountId,
           transaction_date: form.date,
           description: form.description.trim(),
           reference_number: form.reference?.trim() || null,
@@ -355,25 +383,27 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       if (entriesError) throw entriesError;
 
       // Update bank account balance
-      const debitAccountData = accounts.find(a => a.id === form.debitAccount);
-      const creditAccountData = accounts.find(a => a.id === form.creditAccount);
-      
-      // If bank account is debited (receiving money), increase balance
-      if (debitAccountData && debitAccountData.account_type.toLowerCase().includes('asset') && debitAccountData.account_name.toLowerCase().includes('bank')) {
-        await supabase.rpc('update_bank_balance', {
-          _bank_account_id: form.bankAccount,
-          _amount: totalAmount,
-          _operation: 'add'
-        });
-      }
-      
-      // If bank account is credited (paying money), decrease balance
-      if (creditAccountData && creditAccountData.account_type.toLowerCase().includes('asset') && creditAccountData.account_name.toLowerCase().includes('bank')) {
-        await supabase.rpc('update_bank_balance', {
-          _bank_account_id: form.bankAccount,
-          _amount: totalAmount,
-          _operation: 'subtract'
-        });
+      if (bankAccountId) {
+        const debitAccountData = accounts.find(a => a.id === form.debitAccount);
+        const creditAccountData = accounts.find(a => a.id === form.creditAccount);
+        
+        // If bank account is debited (receiving money), increase balance
+        if (debitAccountData && debitAccountData.account_type.toLowerCase().includes('asset') && debitAccountData.account_name.toLowerCase().includes('bank')) {
+          await supabase.rpc('update_bank_balance', {
+            _bank_account_id: bankAccountId,
+            _amount: totalAmount,
+            _operation: 'add'
+          });
+        }
+        
+        // If bank account is credited (paying money), decrease balance
+        if (creditAccountData && creditAccountData.account_type.toLowerCase().includes('asset') && creditAccountData.account_name.toLowerCase().includes('bank')) {
+          await supabase.rpc('update_bank_balance', {
+            _bank_account_id: bankAccountId,
+            _amount: totalAmount,
+            _operation: 'subtract'
+          });
+        }
       }
 
       // Refresh AFS cache after successful posting
