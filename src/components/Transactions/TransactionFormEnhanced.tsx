@@ -347,8 +347,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       }
 
       // Validate bank account if provided
-      let bankAccountId = null;
-      if (form.bankAccountId && form.bankAccountId.trim() !== "") {
+      let bankAccountId: string | null = null;
+      if (form.bankAccountId && form.bankAccountId.trim() !== "" && form.bankAccountId !== "__none__") {
         // Check if bank account exists in the loaded bank accounts list
         const bankExists = bankAccounts.find(bank => bank.id === form.bankAccountId);
         if (!bankExists) {
@@ -359,7 +359,22 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           });
           return;
         }
+        // Ensure it's a valid UUID format
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(form.bankAccountId)) {
+          toast({ 
+            title: "Invalid Bank Account ID", 
+            description: "Bank account ID format is invalid.", 
+            variant: "destructive" 
+          });
+          return;
+        }
         bankAccountId = form.bankAccountId;
+      }
+      
+      // Double-check: ensure we're sending null, not empty string
+      if (bankAccountId === "" || bankAccountId === "__none__") {
+        bankAccountId = null;
       }
 
       const amount = parseFloat(form.amount);
@@ -416,7 +431,59 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       if (txError) {
         console.error("Transaction insert error:", txError);
-        throw txError;
+        console.error("Attempted bank_account_id value:", bankAccountId);
+        console.error("Bank account ID type:", typeof bankAccountId);
+        
+        // Provide more helpful error messages
+        if (txError.message?.includes('bank_account_id_fkey') || txError.message?.includes('foreign key constraint')) {
+          toast({ 
+            title: "Bank Account Error", 
+            description: `The bank account reference is invalid. Please select a valid bank account or leave it empty. Error: ${txError.message}`, 
+            variant: "destructive" 
+          });
+        } else {
+          throw txError;
+        }
+        return;
+      }
+
+      // Validate account IDs before creating entries
+      if (!form.debitAccount || form.debitAccount.trim() === "") {
+        toast({ 
+          title: "Validation Error", 
+          description: "Debit account is required. Please select a debit account.", 
+          variant: "destructive" 
+        });
+        return;
+      }
+      
+      if (!form.creditAccount || form.creditAccount.trim() === "") {
+        toast({ 
+          title: "Validation Error", 
+          description: "Credit account is required. Please select a credit account.", 
+          variant: "destructive" 
+        });
+        return;
+      }
+      
+      // Validate UUID format for account IDs
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(form.debitAccount)) {
+        toast({ 
+          title: "Invalid Debit Account", 
+          description: "Debit account ID format is invalid.", 
+          variant: "destructive" 
+        });
+        return;
+      }
+      
+      if (!uuidRegex.test(form.creditAccount)) {
+        toast({ 
+          title: "Invalid Credit Account", 
+          description: "Credit account ID format is invalid.", 
+          variant: "destructive" 
+        });
+        return;
       }
 
       // Create double-entry transaction entries
@@ -425,7 +492,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       // - Income: Dr Bank (total), Cr Income (net), Cr VAT Output (vat)
       const entries: any[] = [];
 
-      if (vatAmount > 0 && vatAccount) {
+      if (vatAmount > 0 && vatAccount && vatAccount.id) {
         // VAT-inclusive transaction
         if (form.element === 'expense') {
           // Expense with VAT: Debit Expense (net), Debit VAT Input (vat), Credit Bank (total)
@@ -526,11 +593,36 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         );
       }
 
+      // Validate all entries have account_id before inserting
+      const invalidEntries = entries.filter(entry => !entry.account_id || entry.account_id.trim() === "");
+      if (invalidEntries.length > 0) {
+        console.error("Entries with missing account_id:", invalidEntries);
+        toast({ 
+          title: "Validation Error", 
+          description: "One or more transaction entries have missing account IDs. Please ensure all accounts are selected.", 
+          variant: "destructive" 
+        });
+        return;
+      }
+
       const { error: entriesError } = await supabase
         .from("transaction_entries")
         .insert(entries);
 
-      if (entriesError) throw entriesError;
+      if (entriesError) {
+        console.error("Transaction entries insert error:", entriesError);
+        console.error("Entries being inserted:", entries);
+        toast({ 
+          title: "Error Creating Transaction Entries", 
+          description: entriesError.message || "Failed to create transaction entries. Please check that all accounts are valid.", 
+          variant: "destructive" 
+        });
+        // Try to delete the transaction if entries failed
+        if (transaction?.id) {
+          await supabase.from("transactions").delete().eq("id", transaction.id);
+        }
+        return;
+      }
 
       // Update bank balance if bank account is involved
       if (bankAccountId) {
