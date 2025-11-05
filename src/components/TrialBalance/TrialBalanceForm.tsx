@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { TrialBalance } from '@/types/trial-balance';
 
 const schema = z.object({
@@ -22,12 +22,16 @@ type FormData = z.infer<typeof schema>;
 
 interface TrialBalanceFormProps {
   entry?: TrialBalance;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onSubmit: (data: FormData) => void;
   onCancel: () => void;
 }
 
 export const TrialBalanceForm: React.FC<TrialBalanceFormProps> = ({
   entry,
+  open,
+  onOpenChange,
   onSubmit,
   onCancel,
 }) => {
@@ -67,17 +71,26 @@ export const TrialBalanceForm: React.FC<TrialBalanceFormProps> = ({
     }
   };
 
+  const handleFormSubmit = (data: FormData) => {
+    onSubmit(data);
+    onOpenChange(false);
+  };
+
+  const handleCancel = () => {
+    onCancel();
+    onOpenChange(false);
+  };
+
   return (
-    <Card className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>{entry ? 'Edit Entry' : 'Add New Entry'}</CardTitle>
-          <CardDescription>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{entry ? 'Edit Entry' : 'Add New Entry'}</DialogTitle>
+          <DialogDescription>
             {entry ? 'Update trial balance entry' : 'Create a new trial balance entry'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
             <div>
               <Label htmlFor="account_code">Account Code</Label>
               <Input
@@ -140,17 +153,16 @@ export const TrialBalanceForm: React.FC<TrialBalanceFormProps> = ({
               </p>
             )}
 
-            <div className="flex gap-2 pt-4">
-              <Button type="submit" disabled={isSubmitting}>
-                {entry ? 'Update' : 'Create'}
-              </Button>
-              <Button type="button" variant="outline" onClick={onCancel}>
-                Cancel
-              </Button>
-            </div>
-          </form>
-        </CardContent>
-      </div>
-    </Card>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={handleCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {entry ? 'Update' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 };

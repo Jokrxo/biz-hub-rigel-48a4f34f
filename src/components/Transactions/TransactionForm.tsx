@@ -447,9 +447,20 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       ];
 
       // Validate all entries have account_id before inserting
-      const invalidEntries = entries.filter(entry => !entry.account_id || entry.account_id.trim() === "");
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      
+      const invalidEntries = entries.filter(entry => {
+        const accountId = entry.account_id;
+        return !accountId || 
+               (typeof accountId === 'string' && accountId.trim() === "") ||
+               accountId === null ||
+               accountId === undefined;
+      });
+      
       if (invalidEntries.length > 0) {
         console.error("Entries with missing account_id:", invalidEntries);
+        console.error("All entries:", entries);
+        console.error("Form state:", { debitAccount: form.debitAccount, creditAccount: form.creditAccount });
         toast({ 
           title: "Validation Error", 
           description: "One or more transaction entries have missing account IDs. Please ensure all accounts are selected.", 
@@ -458,16 +469,68 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         return;
       }
 
+      // Additional validation: ensure all account_ids are valid UUIDs
+      const entriesWithInvalidIds = entries.filter(entry => {
+        const accountId = entry.account_id;
+        if (!accountId || typeof accountId !== 'string') return true;
+        return !uuidRegex.test(accountId);
+      });
+      
+      if (entriesWithInvalidIds.length > 0) {
+        console.error("Entries with invalid account_id format:", entriesWithInvalidIds);
+        toast({ 
+          title: "Validation Error", 
+          description: "One or more transaction entries have invalid account ID format.", 
+          variant: "destructive" 
+        });
+        return;
+      }
+
+      // Final safety check: remove any null/undefined account_ids and ensure all are strings
+      const sanitizedEntries = entries.map(entry => {
+        if (!entry.account_id || entry.account_id === null || entry.account_id === undefined) {
+          throw new Error(`Invalid account_id found in entry: ${JSON.stringify(entry)}`);
+        }
+        // Ensure account_id is a string and not empty
+        const accountId = String(entry.account_id).trim();
+        if (!accountId || !uuidRegex.test(accountId)) {
+          throw new Error(`Invalid account_id format: ${accountId}`);
+        }
+        return {
+          ...entry,
+          account_id: accountId // Ensure it's a clean string
+        };
+      });
+
+      // Log entries before inserting for debugging
+      console.log("Inserting transaction entries:", sanitizedEntries.map(e => ({ 
+        account_id: e.account_id, 
+        debit: e.debit, 
+        credit: e.credit 
+      })));
+
       const { error: entriesError } = await supabase
         .from("transaction_entries")
-        .insert(entries);
+        .insert(sanitizedEntries);
 
       if (entriesError) {
         console.error("Transaction entries insert error:", entriesError);
-        console.error("Entries being inserted:", entries);
+        console.error("Error details:", JSON.stringify(entriesError, null, 2));
+        console.error("Sanitized entries that were inserted:", sanitizedEntries);
+        console.error("Original entries:", entries);
+        console.error("Form state at time of error:", { 
+          debitAccount: form.debitAccount, 
+          creditAccount: form.creditAccount 
+        });
+        
+        let errorMessage = entriesError.message || "Failed to create transaction entries.";
+        if (entriesError.message?.includes('account_id') && entriesError.message?.includes('null')) {
+          errorMessage = "Account ID is null. This should not happen. Please check the console for details.";
+        }
+        
         toast({ 
           title: "Error Creating Transaction Entries", 
-          description: entriesError.message || "Failed to create transaction entries. Please check that all accounts are valid.", 
+          description: errorMessage, 
           variant: "destructive" 
         });
         // Try to delete the transaction if entries failed

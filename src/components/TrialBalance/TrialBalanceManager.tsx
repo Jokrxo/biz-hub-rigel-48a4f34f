@@ -237,16 +237,18 @@ export const TrialBalanceManager: React.FC = () => {
         </CardContent>
       </Card>
 
-      {showForm && (
-        <TrialBalanceForm
-          onSubmit={handleCreate}
-          onCancel={() => setShowForm(false)}
-        />
-      )}
+      <TrialBalanceForm
+        open={showForm}
+        onOpenChange={setShowForm}
+        onSubmit={handleCreate}
+        onCancel={() => setShowForm(false)}
+      />
 
       {editingEntry && (
         <TrialBalanceForm
           entry={editingEntry}
+          open={!!editingEntry}
+          onOpenChange={(open) => !open && setEditingEntry(null)}
           onSubmit={handleUpdate}
           onCancel={() => setEditingEntry(null)}
         />
