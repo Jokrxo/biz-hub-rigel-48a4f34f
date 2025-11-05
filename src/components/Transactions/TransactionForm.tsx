@@ -446,8 +446,6 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         }
       ];
 
-      // Validate all entries have account_id before inserting
-      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       
       const invalidEntries = entries.filter(entry => {
         const accountId = entry.account_id;
