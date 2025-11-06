@@ -39,6 +39,7 @@ export const DashboardOverview = () => {
   const [chartData, setChartData] = useState<any[]>([]);
   const [expenseBreakdown, setExpenseBreakdown] = useState<any[]>([]);
   const [assetTrend, setAssetTrend] = useState<any[]>([]);
+  const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean }>({ hasCoa: true, hasBank: true });
   
   // Widget visibility settings
   const [widgets, setWidgets] = useState(() => {
@@ -159,11 +160,22 @@ export const DashboardOverview = () => {
         });
       });
 
-      // Load bank balance
-      const { data: banks } = await supabase
+      // First-run checks (minimal, clean system)
+      const { count: coaCount } = await supabase
+        .from('chart_of_accounts')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', profile.company_id)
+        .eq('is_active', true);
+
+      const { data: banksList } = await supabase
         .from("bank_accounts")
         .select("current_balance")
         .eq("company_id", profile.company_id);
+
+      setFirstRun({ hasCoa: (coaCount || 0) > 0, hasBank: (banksList || []).length > 0 });
+
+      // Load bank balance
+      const banks = banksList;
 
       const bankBalance = banks?.reduce((sum, b) => sum + Number(b.current_balance), 0) || 0;
 
@@ -270,6 +282,36 @@ export const DashboardOverview = () => {
   }
   return (
     <div className="space-y-6">
+      {/* First-run setup banner */}
+      {(!firstRun.hasCoa || !firstRun.hasBank) && (
+        <Card className="border-dashed">
+          <CardHeader>
+            <CardTitle className="text-sm font-medium">Welcome! Let’s set up your company</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="p-3 border rounded">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Chart of Accounts</span>
+                  <Badge variant={firstRun.hasCoa ? 'default' : 'outline'}>{firstRun.hasCoa ? 'Done' : 'Not set'}</Badge>
+                </div>
+                {!firstRun.hasCoa && (
+                  <Button className="mt-3" onClick={() => navigate('/transactions?tab=chart')}>Create Accounts</Button>
+                )}
+              </div>
+              <div className="p-3 border rounded">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium">Bank Account</span>
+                  <Badge variant={firstRun.hasBank ? 'default' : 'outline'}>{firstRun.hasBank ? 'Done' : 'Not set'}</Badge>
+                </div>
+                {!firstRun.hasBank && (
+                  <Button className="mt-3" onClick={() => navigate('/bank')}>Add Bank Account</Button>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>

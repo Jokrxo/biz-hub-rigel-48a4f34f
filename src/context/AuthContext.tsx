@@ -22,12 +22,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
       setLoading(false);
+      if (session?.user) {
+        void bootstrapProfileIfNeeded(session.user.id);
+      }
     });
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
       setLoading(false);
+      if (session?.user) {
+        void bootstrapProfileIfNeeded(session.user.id);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -36,6 +42,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
+  };
+
+  const generateUuid = () => {
+    try { return crypto.randomUUID(); } catch { /* fallback */ }
+    const tpl = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
+    return tpl.replace(/[xy]/g, c => {
+      const r = (Math.random() * 16) | 0;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  };
+
+  const bootstrapProfileIfNeeded = async (userId: string) => {
+    try {
+      // If profile exists, nothing to do
+      const { data: existing, error: profErr } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (profErr) return;
+      if (existing?.company_id) return;
+
+      // Create company id and profile
+      const newCompanyId = generateUuid();
+      await supabase.from('profiles').insert({ user_id: userId, company_id: newCompanyId }).throwOnError();
+      // Ensure admin role in user_roles
+      await supabase.from('user_roles').insert({ user_id: userId, company_id: newCompanyId, role: 'administrator' }).throwOnError();
+    } catch {
+      // non-fatal
+    }
   };
 
   const signup = async (name: string, email: string, password: string) => {
