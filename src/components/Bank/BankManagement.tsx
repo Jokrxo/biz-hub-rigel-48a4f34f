@@ -87,18 +87,111 @@ export const BankManagement = () => {
 
       const openingBalance = parseFloat(form.opening_balance || "0");
 
-      const { error } = await supabase
+      // Insert bank with zero balances to avoid DB triggers posting with missing account ids
+      const { data: insertedBank, error: bankErr } = await supabase
         .from("bank_accounts")
         .insert({
           company_id: profile.company_id,
           account_name: form.account_name,
           account_number: form.account_number,
           bank_name: form.bank_name,
-          opening_balance: openingBalance,
-          current_balance: openingBalance
-        });
+          opening_balance: 0,
+          current_balance: 0
+        })
+        .select("id, company_id, account_name")
+        .single();
 
-      if (error) throw error;
+      if (bankErr) throw bankErr;
+
+      // If opening balance provided, create an opening balance transaction with valid ledger accounts
+      if (openingBalance > 0 && insertedBank?.id) {
+        // Try to find a Bank asset ledger account
+        const { data: accountsList } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type")
+          .eq("company_id", profile.company_id)
+          .eq("is_active", true)
+          .order("account_code");
+
+        const findAccountBy = (type: string, nameIncludes: string) =>
+          (accountsList || []).find(a => a.account_type.toLowerCase() === type.toLowerCase() && (a.account_name || '').toLowerCase().includes(nameIncludes));
+
+        let bankLedger = findAccountBy('Asset', 'bank') || findAccountBy('Asset', 'cash');
+        let openingEquity = (accountsList || []).find(a => a.account_type.toLowerCase() === 'equity' && (a.account_name || '').toLowerCase().includes('opening'));
+
+        // If missing, create minimal accounts
+        const nextCode = (prefix: string) => {
+          const codes = (accountsList || [])
+            .map(a => parseInt(a.account_code, 10))
+            .filter(n => !isNaN(n));
+          const base = parseInt(prefix, 10);
+          let code = base;
+          while (codes.includes(code)) code += 1;
+          return String(code);
+        };
+
+        if (!bankLedger) {
+          const { data: newBankAcc, error: createBankAccErr } = await supabase
+            .from("chart_of_accounts")
+            .insert({
+              company_id: profile.company_id,
+              account_code: nextCode('1100'),
+              account_name: `Bank - ${form.account_name}`,
+              account_type: 'Asset',
+              is_active: true,
+            })
+            .select("id, account_code, account_name, account_type")
+            .single();
+          if (createBankAccErr) throw createBankAccErr;
+          bankLedger = newBankAcc as any;
+        }
+
+        if (!openingEquity) {
+          const { data: newEquity, error: createEquityErr } = await supabase
+            .from("chart_of_accounts")
+            .insert({
+              company_id: profile.company_id,
+              account_code: nextCode('3000'),
+              account_name: 'Opening Balance Equity',
+              account_type: 'Equity',
+              is_active: true,
+            })
+            .select("id, account_code, account_name, account_type")
+            .single();
+          if (createEquityErr) throw createEquityErr;
+          openingEquity = newEquity as any;
+        }
+
+        // Create transaction and entries
+        const { data: { user } } = await supabase.auth.getUser();
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: tx, error: txErr } = await supabase
+          .from("transactions")
+          .insert({
+            company_id: profile.company_id,
+            user_id: user?.id || '',
+            transaction_date: today,
+            description: `Opening balance for ${form.account_name}`,
+            reference_number: null,
+            total_amount: openingBalance,
+            bank_account_id: insertedBank.id,
+            transaction_type: 'equity',
+            status: 'approved'
+          })
+          .select("id")
+          .single();
+        if (txErr) throw txErr;
+
+        const entries = [
+          { transaction_id: tx.id, account_id: bankLedger.id, debit: openingBalance, credit: 0, description: 'Opening balance', status: 'pending' },
+          { transaction_id: tx.id, account_id: (openingEquity as any).id, debit: 0, credit: openingBalance, description: 'Opening balance', status: 'pending' },
+        ];
+        const { error: teErr } = await supabase.from("transaction_entries").insert(entries);
+        if (teErr) throw teErr;
+
+        // Update bank current balance
+        await supabase.rpc('update_bank_balance', { _bank_account_id: insertedBank.id, _amount: openingBalance, _operation: 'add' });
+      }
 
       toast({ title: "Success", description: "Bank account added successfully" });
       setOpen(false);
