@@ -137,7 +137,7 @@ export const BankManagement = () => {
               company_id: profile.company_id,
               account_code: nextCode('1100'),
               account_name: `Bank - ${form.account_name}`,
-              account_type: 'Asset',
+              account_type: 'asset',
               is_active: true,
             })
             .select("id, account_code, account_name, account_type")
@@ -153,7 +153,7 @@ export const BankManagement = () => {
               company_id: profile.company_id,
               account_code: nextCode('3000'),
               account_name: 'Opening Balance Equity',
-              account_type: 'Equity',
+              account_type: 'equity',
               is_active: true,
             })
             .select("id, account_code, account_name, account_type")

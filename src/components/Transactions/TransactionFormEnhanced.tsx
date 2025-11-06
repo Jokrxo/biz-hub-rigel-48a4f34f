@@ -18,7 +18,7 @@ interface Account {
   id: string;
   account_code: string;
   account_name: string;
-  account_type: 'Asset' | 'Liability' | 'Equity' | 'Income' | 'Expense';
+  account_type: string; // stored lowercase in DB: asset|liability|equity|income|expense
 }
 
 interface BankAccount {
@@ -41,40 +41,40 @@ const ACCOUNTING_ELEMENTS = [
     value: "expense", 
     label: "Expense Payment", 
     icon: TrendingDown, 
-    debitType: 'Expense', 
-    creditTypes: ['Asset', 'Liability'],
+    debitType: 'expense', 
+    creditTypes: ['asset', 'liability'],
     description: "Record business expenses (Dr Expense / Cr Bank or Payable)"
   },
   { 
     value: "income", 
     label: "Income Received", 
     icon: TrendingUp, 
-    debitType: 'Asset', 
-    creditTypes: ['Income'],
+    debitType: 'asset', 
+    creditTypes: ['income'],
     description: "Record income received (Dr Bank or Receivable / Cr Income)"
   },
   { 
     value: "asset", 
     label: "Asset Purchase", 
     icon: TrendingDown, 
-    debitType: 'Asset', 
-    creditTypes: ['Asset', 'Liability'],
+    debitType: 'asset', 
+    creditTypes: ['asset', 'liability'],
     description: "Record asset purchases (Dr Fixed Asset / Cr Bank or Payable)"
   },
   { 
     value: "liability", 
     label: "Liability Payment", 
     icon: TrendingDown, 
-    debitType: 'Liability', 
-    creditTypes: ['Asset'],
+    debitType: 'liability', 
+    creditTypes: ['asset'],
     description: "Record liability payments (Dr Liability / Cr Bank)"
   },
   { 
     value: "equity", 
     label: "Equity/Capital", 
     icon: TrendingUp, 
-    debitType: 'Asset', 
-    creditTypes: ['Equity'],
+    debitType: 'asset', 
+    creditTypes: ['equity'],
     description: "Record capital contributions (Dr Bank / Cr Capital)"
   }
 ];
@@ -196,11 +196,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     if (!config) return;
 
     // Filter debit accounts
-    const debits = accounts.filter(acc => acc.account_type === config.debitType);
+    const debits = accounts.filter(acc => (acc.account_type || '').toLowerCase() === config.debitType);
     setDebitAccounts(debits);
 
     // Filter credit accounts
-    const credits = accounts.filter(acc => config.creditTypes.includes(acc.account_type));
+    const credits = accounts.filter(acc => config.creditTypes.includes((acc.account_type || '').toLowerCase()));
     setCreditAccounts(credits);
 
     // Auto-select accounts based on element and payment method
@@ -506,8 +506,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       if (form.paymentMethod === 'bank') {
         const debitAcc = accounts.find(a => a.id === form.debitAccount);
         const creditAcc = accounts.find(a => a.id === form.creditAccount);
-        const isDebitBank = !!(debitAcc && debitAcc.account_type === 'Asset' && (debitAcc.account_name || '').toLowerCase().includes('bank'));
-        const isCreditBank = !!(creditAcc && creditAcc.account_type === 'Asset' && (creditAcc.account_name || '').toLowerCase().includes('bank'));
+        const isDebitBank = !!(debitAcc && (debitAcc.account_type || '').toLowerCase() === 'asset' && (debitAcc.account_name || '').toLowerCase().includes('bank'));
+        const isCreditBank = !!(creditAcc && (creditAcc.account_type || '').toLowerCase() === 'asset' && (creditAcc.account_name || '').toLowerCase().includes('bank'));
         if (!isDebitBank && !isCreditBank) {
           toast({ 
             title: "Select Bank Ledger Account", 
@@ -720,13 +720,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         const creditAccount = accounts.find(a => a.id === form.creditAccount);
 
         // Check if debit or credit account is a bank asset account
-        if (debitAccount?.account_type === 'Asset' && debitAccount.account_name.toLowerCase().includes('bank')) {
+        if ((debitAccount?.account_type || '').toLowerCase() === 'asset' && debitAccount.account_name.toLowerCase().includes('bank')) {
           await supabase.rpc('update_bank_balance', {
             _bank_account_id: bankAccountId,
             _amount: amount,
             _operation: 'add'
           });
-        } else if (creditAccount?.account_type === 'Asset' && creditAccount.account_name.toLowerCase().includes('bank')) {
+        } else if ((creditAccount?.account_type || '').toLowerCase() === 'asset' && creditAccount.account_name.toLowerCase().includes('bank')) {
           await supabase.rpc('update_bank_balance', {
             _bank_account_id: bankAccountId,
             _amount: amount,
