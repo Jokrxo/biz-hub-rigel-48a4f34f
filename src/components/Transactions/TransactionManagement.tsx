@@ -89,14 +89,15 @@ export const TransactionManagement = () => {
       amount: Math.abs(t.total_amount),
       vatAmount: Math.abs(t.total_amount) * 0.15,
       reference: t.reference_number || "—",
-      status: t.status === 'approved' ? 'Cleared' : t.status.charAt(0).toUpperCase() + t.status.slice(1)
+      statusKey: t.status, // raw DB status
+      statusLabel: t.status === 'approved' ? 'Posted' : t.status.charAt(0).toUpperCase() + t.status.slice(1)
     }));
 
     const filtered = tx.filter(transaction => {
       const matchesSearch = transaction.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
         transaction.reference.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesType = filterType === "all" || transaction.type.toLowerCase() === filterType.toLowerCase();
-      const matchesStatus = filterStatus === "all" || transaction.status.toLowerCase() === filterStatus.toLowerCase();
+      const matchesStatus = filterStatus === "all" || (transaction as any).statusKey.toLowerCase() === filterStatus.toLowerCase();
       return matchesSearch && matchesType && matchesStatus;
     });
 
@@ -222,9 +223,8 @@ export const TransactionManagement = () => {
               <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="cleared">Cleared</SelectItem>
+                <SelectItem value="approved">Posted</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
@@ -266,7 +266,7 @@ export const TransactionManagement = () => {
                     <TableCell className="text-sm">{transaction.category}</TableCell>
                     <TableCell className="text-right font-mono"><span className={transaction.type === "Income" ? "text-primary" : "text-muted-foreground"}>R {transaction.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></TableCell>
                     <TableCell className="text-right font-mono text-sm">R {transaction.vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell><Badge variant={transaction.status === "Cleared" ? "default" : "outline"} className={transaction.status === "Cleared" ? "bg-primary" : ""}>{transaction.status}</Badge></TableCell>
+                    <TableCell><Badge variant={(transaction as any).statusKey === "approved" ? "default" : "outline"} className={(transaction as any).statusKey === "approved" ? "bg-primary" : ""}>{(transaction as any).statusLabel}</Badge></TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
                         {transaction.status === "pending" && (
