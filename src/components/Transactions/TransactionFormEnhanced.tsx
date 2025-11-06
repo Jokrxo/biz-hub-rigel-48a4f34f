@@ -346,7 +346,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         return;
       }
 
-      // Validate bank account if provided
+      // Validate bank account if provided (and enforce when payment method is bank)
       let bankAccountId: string | null = null;
       if (form.bankAccountId && form.bankAccountId.trim() !== "" && form.bankAccountId !== "__none__") {
         // Check if bank account exists in the loaded bank accounts list
@@ -375,6 +375,16 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       // Double-check: ensure we're sending null, not empty string
       if (bankAccountId === "" || bankAccountId === "__none__") {
         bankAccountId = null;
+      }
+
+      // If payment method is bank, enforce that a valid bank account is selected
+      if (form.paymentMethod === 'bank' && !bankAccountId) {
+        toast({ 
+          title: "Bank Account Required", 
+          description: "For bank payments/receipts, please select a valid bank account.", 
+          variant: "destructive" 
+        });
+        return;
       }
 
       const amount = parseFloat(form.amount);
@@ -424,7 +434,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           bank_account_id: bankAccountId,
           transaction_type: form.element,
           category: autoClassification?.category || null,
-          status: "pending"
+          status: "approved"
         })
         .select()
         .single();
@@ -491,6 +501,22 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       // - Expense: Dr Expense (net), Dr VAT Input (vat), Cr Bank (total)
       // - Income: Dr Bank (total), Cr Income (net), Cr VAT Output (vat)
       const entries: any[] = [];
+
+      // If payment method is bank, ensure one side is a bank Asset account
+      if (form.paymentMethod === 'bank') {
+        const debitAcc = accounts.find(a => a.id === form.debitAccount);
+        const creditAcc = accounts.find(a => a.id === form.creditAccount);
+        const isDebitBank = !!(debitAcc && debitAcc.account_type === 'Asset' && (debitAcc.account_name || '').toLowerCase().includes('bank'));
+        const isCreditBank = !!(creditAcc && creditAcc.account_type === 'Asset' && (creditAcc.account_name || '').toLowerCase().includes('bank'));
+        if (!isDebitBank && !isCreditBank) {
+          toast({ 
+            title: "Select Bank Ledger Account", 
+            description: "When using bank payment method, either the debit or credit account must be a Bank (Asset) ledger account.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+      }
 
       if (vatAmount > 0 && vatAccount && vatAccount.id) {
         // VAT-inclusive transaction
@@ -672,6 +698,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         let errorMessage = entriesError.message || "Failed to create transaction entries.";
         if (entriesError.message?.includes('account_id') && entriesError.message?.includes('null')) {
           errorMessage = "Account ID is null. This should not happen. Please check the console for details.";
+        } else if (entriesError.message?.toLowerCase().includes('foreign key') || entriesError.message?.toLowerCase().includes('violates foreign key constraint')) {
+          errorMessage = "Invalid account selected. The account must exist in your Chart of Accounts.";
         }
         
         toast({ 
@@ -706,6 +734,18 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           });
         }
       }
+
+      // Refresh AFS/trial balance cache after posting
+      try {
+        const { data: profileForRefresh } = await supabase
+          .from("profiles")
+          .select("company_id")
+          .eq("user_id", user.id)
+          .single();
+        if (profileForRefresh?.company_id) {
+          await supabase.rpc('refresh_afs_cache', { _company_id: profileForRefresh.company_id });
+        }
+      } catch {}
 
       toast({ 
         title: "Success", 

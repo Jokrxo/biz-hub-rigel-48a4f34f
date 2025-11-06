@@ -426,6 +426,22 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         return;
       }
 
+      // Ensure at least one side is a Bank (Asset) ledger when a bank account is involved
+      if (bankAccountId) {
+        const debitAcc = accounts.find(a => a.id === form.debitAccount);
+        const creditAcc = accounts.find(a => a.id === form.creditAccount);
+        const isDebitBank = !!(debitAcc && (debitAcc.account_type || '').toLowerCase().includes('asset') && (debitAcc.account_name || '').toLowerCase().includes('bank'));
+        const isCreditBank = !!(creditAcc && (creditAcc.account_type || '').toLowerCase().includes('asset') && (creditAcc.account_name || '').toLowerCase().includes('bank'));
+        if (!isDebitBank && !isCreditBank) {
+          toast({ 
+            title: "Select Bank Ledger Account", 
+            description: "With a bank account selected, either the debit or credit must be a Bank (Asset) ledger account.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+      }
+
       // Create double-entry transaction entries
       const entries = [
         {
@@ -524,6 +540,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         let errorMessage = entriesError.message || "Failed to create transaction entries.";
         if (entriesError.message?.includes('account_id') && entriesError.message?.includes('null')) {
           errorMessage = "Account ID is null. This should not happen. Please check the console for details.";
+        } else if (entriesError.message?.toLowerCase().includes('foreign key') || entriesError.message?.toLowerCase().includes('violates foreign key constraint')) {
+          errorMessage = "Invalid account selected. The account must exist in your Chart of Accounts.";
         }
         
         toast({ 
