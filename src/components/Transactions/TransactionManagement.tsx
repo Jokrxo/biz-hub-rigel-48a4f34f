@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { TransactionForm } from "./TransactionForm";
+import { TransactionFormEnhanced as TransactionForm } from "./TransactionFormEnhanced";
 import { exportTransactionsToExcel, exportTransactionsToPDF } from "@/lib/export-utils";
 
 interface Transaction {

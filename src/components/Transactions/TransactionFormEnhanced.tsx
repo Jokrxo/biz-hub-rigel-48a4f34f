@@ -848,7 +848,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   <SelectTrigger id="bankAccount">
                     <SelectValue placeholder="Select bank account" />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" className="max-h-64 overflow-auto">
                     <SelectItem value="__none__">None</SelectItem>
                     {bankAccounts.map((bank) => (
                       <SelectItem key={bank.id} value={bank.id}>
@@ -952,7 +952,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     <SelectTrigger id="debitAccount">
                       <SelectValue placeholder="Select debit account" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent position="popper" className="max-h-64 overflow-auto">
                       {debitAccounts.map((acc) => (
                         <SelectItem key={acc.id} value={acc.id}>
                           {acc.account_code} - {acc.account_name}
@@ -971,7 +971,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     <SelectTrigger id="creditAccount">
                       <SelectValue placeholder="Select credit account" />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent position="popper" className="max-h-64 overflow-auto">
                       {creditAccounts.map((acc) => (
                         <SelectItem key={acc.id} value={acc.id}>
                           {acc.account_code} - {acc.account_name}
