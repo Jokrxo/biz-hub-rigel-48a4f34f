@@ -56,6 +56,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const bootstrapProfileIfNeeded = async (userId: string) => {
     try {
+      // If an invite is being processed, skip bootstrap
+      try { if (localStorage.getItem('pendingInvite')) return; } catch {}
       // If profile exists, nothing to do
       const { data: existing, error: profErr } = await supabase
         .from('profiles')

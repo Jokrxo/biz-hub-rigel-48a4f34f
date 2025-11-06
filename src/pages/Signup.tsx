@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useAuth } from "@/context/AuthContext";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import SEO from "@/components/SEO";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -25,6 +25,7 @@ export default function Signup() {
   const { user, signup } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const [params] = useSearchParams();
 
   useEffect(() => {
     if (user) navigate("/", { replace: true });
@@ -34,7 +35,30 @@ export default function Signup() {
 
   const onSubmit = async (values: FormValues) => {
     try {
+      const invite = params.get('invite');
+      if (invite) {
+        try { localStorage.setItem('pendingInvite', invite); } catch {}
+      }
       await signup(values.name, values.email, values.password);
+      // After signup, try to attach company via invite
+      if (invite) {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: inv } = await supabase
+              .from('invites')
+              .select('company_id, role, token')
+              .eq('token', invite)
+              .maybeSingle();
+            if (inv?.company_id) {
+              await supabase.from('profiles').upsert({ user_id: user.id, company_id: inv.company_id }).throwOnError();
+              await supabase.from('user_roles').upsert({ user_id: user.id, company_id: inv.company_id, role: inv.role }).throwOnError();
+              await supabase.from('invites').delete().eq('token', invite);
+            }
+          }
+        } catch {}
+        try { localStorage.removeItem('pendingInvite'); } catch {}
+      }
       navigate("/", { replace: true });
     } catch (e: any) {
       toast({ title: "Signup failed", description: e.message, variant: "destructive" });

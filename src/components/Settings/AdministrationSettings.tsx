@@ -33,6 +33,10 @@ export const AdministrationSettings = () => {
     lastName: "",
     role: "accountant" as const,
   });
+  // Invites
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("accountant");
+  const [pendingInvites, setPendingInvites] = useState<any[]>([]);
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
   const { isAdmin } = useRoles();
@@ -40,6 +44,7 @@ export const AdministrationSettings = () => {
   useEffect(() => {
     if (isAdmin) {
       loadUsers();
+      loadInvites();
     }
   }, [isAdmin]);
 
@@ -87,6 +92,24 @@ export const AdministrationSettings = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadInvites = async () => {
+    try {
+      // Get current company
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", currentUser?.id)
+        .single();
+      if (!profile) return;
+      const { data } = await supabase
+        .from('invites')
+        .select('email, role, token, expires_at')
+        .eq('company_id', profile.company_id)
+        .order('expires_at', { ascending: true });
+      setPendingInvites(data || []);
+    } catch {}
   };
 
   const handleCreateUser = async () => {
@@ -144,6 +167,33 @@ export const AdministrationSettings = () => {
       loadUsers();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const handleCreateInvite = async () => {
+    try {
+      if (!inviteEmail) throw new Error('Email is required');
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', currentUser?.id)
+        .single();
+      if (!profile) throw new Error('Company not found');
+      const token = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+      const expires = new Date();
+      expires.setDate(expires.getDate() + 7);
+      const { error } = await supabase
+        .from('invites')
+        .insert({ company_id: profile.company_id, email: inviteEmail, role: inviteRole, token, expires_at: expires.toISOString() });
+      if (error) throw error;
+      const link = `${window.location.origin}/signup?invite=${token}`;
+      await navigator.clipboard.writeText(link).catch(() => {});
+      toast({ title: 'Invite created', description: 'Link copied to clipboard' });
+      setInviteEmail("");
+      setInviteRole('accountant');
+      loadInvites();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
   };
 
@@ -309,6 +359,56 @@ export const AdministrationSettings = () => {
         </div>
       </CardHeader>
       <CardContent>
+        {/* Invite Section */}
+        <div className="mb-6 p-4 border rounded">
+          <div className="grid md:grid-cols-4 gap-3 items-end">
+            <div className="md:col-span-2">
+              <Label>Invite by Email</Label>
+              <Input placeholder="user@example.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+            </div>
+            <div>
+              <Label>Role</Label>
+              <Select value={inviteRole} onValueChange={setInviteRole as any}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="administrator">Administrator</SelectItem>
+                  <SelectItem value="accountant">Accountant</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Button className="w-full" onClick={handleCreateInvite}>Create Invite</Button>
+            </div>
+          </div>
+          {pendingInvites.length > 0 && (
+            <div className="mt-4">
+              <Label className="text-sm">Pending Invites</Label>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Expires</TableHead>
+                    <TableHead>Link</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pendingInvites.map((inv) => (
+                    <TableRow key={inv.token}>
+                      <TableCell>{inv.email}</TableCell>
+                      <TableCell>{inv.role}</TableCell>
+                      <TableCell>{new Date(inv.expires_at).toLocaleDateString('en-ZA')}</TableCell>
+                      <TableCell className="text-xs">
+                        {`${window.location.origin}/signup?invite=${inv.token}`}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </div>
         <Table>
           <TableHeader>
             <TableRow>
