@@ -195,12 +195,19 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     const config = ACCOUNTING_ELEMENTS.find(e => e.value === form.element);
     if (!config) return;
 
-    // Filter debit accounts
-    const debits = accounts.filter(acc => (acc.account_type || '').toLowerCase() === config.debitType);
-    setDebitAccounts(debits);
+    // Base filtered sets by element
+    let debits = accounts.filter(acc => (acc.account_type || '').toLowerCase() === config.debitType);
+    let credits = accounts.filter(acc => config.creditTypes.includes((acc.account_type || '').toLowerCase()));
 
-    // Filter credit accounts
-    const credits = accounts.filter(acc => config.creditTypes.includes((acc.account_type || '').toLowerCase()));
+    // Exclude the opposite side's currently selected account to avoid duplicates
+    if (form.creditAccount) {
+      debits = debits.filter(acc => acc.id !== form.creditAccount);
+    }
+    if (form.debitAccount) {
+      credits = credits.filter(acc => acc.id !== form.debitAccount);
+    }
+
+    setDebitAccounts(debits);
     setCreditAccounts(credits);
 
     // Auto-select accounts based on element and payment method
@@ -212,7 +219,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       debitAccount: prev.debitAccount || (debits[0]?.id || ""),
       creditAccount: prev.creditAccount || (credits[0]?.id || ""),
     }));
-  }, [form.element, form.paymentMethod, accounts]);
+  }, [form.element, form.paymentMethod, accounts, form.debitAccount, form.creditAccount]);
 
   const loadData = async () => {
     try {
@@ -948,7 +955,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="debitAccount">Debit Account *</Label>
-                  <Select value={form.debitAccount} onValueChange={(val) => setForm({ ...form, debitAccount: val })} disabled={debitAccounts.length === 0}>
+                  <Select value={form.debitAccount} onValueChange={(val) => {
+                    setForm({ ...form, debitAccount: val });
+                    // If the selected debit account is the same as the credit account, clear the credit account
+                    if (form.creditAccount === val) {
+                      setForm({ ...form, creditAccount: "" });
+                    }
+                  }} disabled={debitAccounts.length === 0}>
                     <SelectTrigger id="debitAccount">
                       <SelectValue placeholder="Select debit account" />
                     </SelectTrigger>
@@ -967,7 +980,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
                 <div>
                   <Label htmlFor="creditAccount">Credit Account *</Label>
-                  <Select value={form.creditAccount} onValueChange={(val) => setForm({ ...form, creditAccount: val })} disabled={creditAccounts.length === 0}>
+                  <Select value={form.creditAccount} onValueChange={(val) => {
+                    setForm({ ...form, creditAccount: val });
+                    // If the selected credit account is the same as the debit account, clear the debit account
+                    if (form.debitAccount === val) {
+                      setForm({ ...form, debitAccount: "" });
+                    }
+                  }} disabled={creditAccounts.length === 0}>
                     <SelectTrigger id="creditAccount">
                       <SelectValue placeholder="Select credit account" />
                     </SelectTrigger>
