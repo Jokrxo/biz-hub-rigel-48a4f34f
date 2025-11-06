@@ -405,6 +405,17 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         });
         return;
       }
+      // Ensure selected accounts exist in loaded Chart of Accounts
+      const debitExistsInChart = accounts.some(a => a.id === form.debitAccount);
+      const creditExistsInChart = accounts.some(a => a.id === form.creditAccount);
+      if (!debitExistsInChart || !creditExistsInChart) {
+        toast({
+          title: "Invalid Account",
+          description: "Selected accounts must exist in your Chart of Accounts.",
+          variant: "destructive"
+        });
+        return;
+      }
       
       // Validate UUID format for account IDs
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -644,11 +655,15 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
               <Building2 className="h-4 w-4" />
               Bank Account * (Company Isolation)
             </Label>
-            <Select value={form.bankAccount} onValueChange={(val) => setForm({ ...form, bankAccount: val })}>
+            <Select value={form.bankAccount || "__none__"} onValueChange={(val) => {
+              const bankAccountValue = val === "__none__" ? "" : val;
+              setForm({ ...form, bankAccount: bankAccountValue });
+            }}>
               <SelectTrigger>
                 <SelectValue placeholder="Select bank account" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="__none__">None</SelectItem>
                 {bankAccounts.map(bank => (
                   <SelectItem key={bank.id} value={bank.id}>
                     {bank.bank_name} - {bank.account_name} ({bank.account_number})

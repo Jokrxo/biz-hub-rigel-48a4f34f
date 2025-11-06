@@ -275,7 +275,11 @@ export const TransactionManagement = () => {
                             Allocate
                           </Button>
                         )}
-                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => { setEditData(transaction); setOpen(true); }}>
+                        <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => { 
+                          const full = items.find(i => i.id === transaction.id);
+                          setEditData(full || transaction);
+                          setOpen(true); 
+                        }}>
                           <Edit className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive" onClick={() => deleteTransaction(transaction.id)}>
