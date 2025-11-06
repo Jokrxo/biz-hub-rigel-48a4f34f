@@ -176,7 +176,7 @@ export const BankManagement = () => {
             total_amount: openingBalance,
             bank_account_id: insertedBank.id,
             transaction_type: 'equity',
-            status: 'approved'
+            status: 'pending'
           })
           .select("id")
           .single();
@@ -188,6 +188,9 @@ export const BankManagement = () => {
         ];
         const { error: teErr } = await supabase.from("transaction_entries").insert(entries);
         if (teErr) throw teErr;
+
+        // Now mark transaction approved
+        await supabase.from('transactions').update({ status: 'approved' }).eq('id', tx.id);
 
         // Update bank current balance
         await supabase.rpc('update_bank_balance', { _bank_account_id: insertedBank.id, _amount: openingBalance, _operation: 'add' });

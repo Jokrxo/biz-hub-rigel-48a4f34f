@@ -205,6 +205,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
     // Auto-select accounts based on element and payment method
     autoSelectAccounts(config, debits, credits);
+
+    // Fallback defaults: if not selected yet, choose the first available
+    setForm(prev => ({
+      ...prev,
+      debitAccount: prev.debitAccount || (debits[0]?.id || ""),
+      creditAccount: prev.creditAccount || (credits[0]?.id || ""),
+    }));
   }, [form.element, form.paymentMethod, accounts]);
 
   const loadData = async () => {
@@ -434,7 +441,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           bank_account_id: bankAccountId,
           transaction_type: form.element,
           category: autoClassification?.category || null,
-          status: "approved"
+          status: "pending"
         })
         .select()
         .single();
@@ -713,6 +720,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
         return;
       }
+
+      // Entries created successfully: mark transaction as approved
+      await supabase.from('transactions').update({ status: 'approved' }).eq('id', transaction.id);
 
       // Update bank balance if bank account is involved
       if (bankAccountId) {
