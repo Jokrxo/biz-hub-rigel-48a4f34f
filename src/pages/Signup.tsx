@@ -187,7 +187,7 @@ export default function Signup() {
                         </div>
                         <div className={`flex items-center gap-2 ${passwordChecks.hasSpecial ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
                           <span>{passwordChecks.hasSpecial ? '✓' : '○'}</span>
-                          <span>One special character (!@#$%^&*()_+-=[]{}|;:,.<>?)</span>
+                          <span>One special character (!@#$%^&*()_+-=[]{'{'}{'}'}|;:,.<>?)</span>
                         </div>
                       </div>
                     </FormDescription>
