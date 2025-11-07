@@ -123,12 +123,40 @@ export const CompanySettings = () => {
         .eq("user_id", user?.id)
         .single();
 
+      if (!profile) throw new Error("Profile not found");
+
+      // Only update fields that exist in the companies table
+      const updateData: any = {
+        name: companyData.name,
+        code: companyData.code,
+        email: companyData.email || null,
+        phone: companyData.phone || null,
+        address: companyData.address || null,
+      };
+
+      // Add optional fields if they exist in the table
+      if (companyData.default_currency) {
+        updateData.default_currency = companyData.default_currency;
+      }
+      if (companyData.business_type) {
+        updateData.business_type = companyData.business_type;
+      }
+      if (companyData.tax_number) {
+        updateData.tax_number = companyData.tax_number;
+      }
+      if (companyData.vat_number) {
+        updateData.vat_number = companyData.vat_number;
+      }
+
       const { error } = await supabase
         .from("companies")
-        .update(companyData)
-        .eq("id", profile!.company_id);
+        .update(updateData)
+        .eq("id", profile.company_id);
 
       if (error) throw error;
+
+      // Reload company data to show updated information
+      await loadCompanyData();
 
       toast({ title: "Success", description: "Company details updated successfully" });
     } catch (error: any) {
@@ -139,14 +167,68 @@ export const CompanySettings = () => {
   if (loading) return <div className="text-center py-8">Loading...</div>;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Building2 className="h-5 w-5 text-primary" />
-          Company Information
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <div className="space-y-6">
+      {/* Company Information Display Card */}
+      <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-primary" />
+            Company Overview
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Company Name</p>
+              <p className="text-lg font-semibold">{companyData.name || "Not set"}</p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">Company Code</p>
+              <p className="text-lg font-semibold">{companyData.code || "Not set"}</p>
+            </div>
+            {companyData.email && (
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Email</p>
+                <p className="text-lg">{companyData.email}</p>
+              </div>
+            )}
+            {companyData.phone && (
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Phone</p>
+                <p className="text-lg">{companyData.phone}</p>
+              </div>
+            )}
+            {companyData.address && (
+              <div className="md:col-span-2">
+                <p className="text-sm font-medium text-muted-foreground">Address</p>
+                <p className="text-lg">{companyData.address}</p>
+              </div>
+            )}
+            {companyData.business_type && (
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Business Type</p>
+                <p className="text-lg capitalize">{companyData.business_type.replace('_', ' ')}</p>
+              </div>
+            )}
+            {companyData.default_currency && (
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Currency</p>
+                <p className="text-lg">{companyData.default_currency}</p>
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Company Settings Form */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-primary" />
+            Edit Company Information
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
         <div className="space-y-4">
           <Label>Company Logo</Label>
           <div className="flex items-center gap-4">
@@ -280,5 +362,6 @@ export const CompanySettings = () => {
         </Button>
       </CardContent>
     </Card>
+    </div>
   );
 };

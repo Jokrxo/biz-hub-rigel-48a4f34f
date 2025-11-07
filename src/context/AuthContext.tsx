@@ -58,27 +58,108 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       // If an invite is being processed, skip bootstrap
       try { if (localStorage.getItem('pendingInvite')) return; } catch {}
-      // If profile exists, nothing to do
+      
+      // Check if profile exists
       const { data: existing, error: profErr } = await supabase
         .from('profiles')
         .select('company_id')
         .eq('user_id', userId)
         .maybeSingle();
+      
       if (profErr) return;
-      if (existing?.company_id) return;
+      
+      // If profile exists, check if it's using the DEFAULT company (shared company - privacy issue)
+      if (existing?.company_id) {
+        const { data: company } = await supabase
+          .from('companies')
+          .select('code')
+          .eq('id', existing.company_id)
+          .maybeSingle();
+        
+        // If user is assigned to DEFAULT company, create a new unique company for them
+        if (company?.code === 'DEFAULT') {
+          const newCompanyId = generateUuid();
+          const uniqueCode = `COMP-${newCompanyId.substring(0, 8).toUpperCase()}`;
+          
+          // Create new unique company
+          await supabase
+            .from('companies')
+            .insert({ 
+              id: newCompanyId, 
+              name: 'My Company', 
+              code: uniqueCode 
+            })
+            .throwOnError();
+          
+          // Update profile to use new company
+          await supabase
+            .from('profiles')
+            .update({ company_id: newCompanyId })
+            .eq('user_id', userId)
+            .throwOnError();
+          
+          // Update user_roles to use new company
+          await supabase
+            .from('user_roles')
+            .update({ company_id: newCompanyId })
+            .eq('user_id', userId)
+            .throwOnError();
+          
+          // Delete old role for DEFAULT company
+          await supabase
+            .from('user_roles')
+            .delete()
+            .eq('user_id', userId)
+            .eq('company_id', existing.company_id);
+        }
+        return;
+      }
 
-      // Create company id and profile
+      // Profile doesn't exist - create new unique company and profile
       const newCompanyId = generateUuid();
-      await supabase.from('profiles').insert({ user_id: userId, company_id: newCompanyId }).throwOnError();
+      const uniqueCode = `COMP-${newCompanyId.substring(0, 8).toUpperCase()}`;
+      
+      // Get user metadata for name
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      const userName = authUser?.user_metadata?.name || '';
+      const nameParts = userName.split(' ').filter(Boolean);
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+      
+      // Create unique company record
+      await supabase
+        .from('companies')
+        .insert({ 
+          id: newCompanyId, 
+          name: 'My Company', 
+          code: uniqueCode 
+        })
+        .throwOnError();
+      
+      // Create profile with unique company and user name
+      await supabase
+        .from('profiles')
+        .insert({ 
+          user_id: userId, 
+          company_id: newCompanyId,
+          first_name: firstName || null,
+          last_name: lastName || null,
+          email: authUser?.email || null
+        })
+        .throwOnError();
+      
       // Ensure admin role in user_roles
-      await supabase.from('user_roles').insert({ user_id: userId, company_id: newCompanyId, role: 'administrator' }).throwOnError();
+      await supabase
+        .from('user_roles')
+        .insert({ user_id: userId, company_id: newCompanyId, role: 'administrator' })
+        .throwOnError();
     } catch {
       // non-fatal
     }
   };
 
   const signup = async (name: string, email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ 
+    const { data, error } = await supabase.auth.signUp({ 
       email, 
       password,
       options: {
@@ -88,6 +169,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
     if (error) throw error;
+    
+    // Wait a moment for database triggers to complete, then bootstrap profile
+    // This ensures the user gets a unique company even if the trigger created a DEFAULT company
+    if (data?.user?.id) {
+      // Small delay to allow database trigger to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+      // Bootstrap will check and fix any DEFAULT company assignment
+      await bootstrapProfileIfNeeded(data.user.id);
+    }
   };
 
   const forgotPassword = async (email: string) => {

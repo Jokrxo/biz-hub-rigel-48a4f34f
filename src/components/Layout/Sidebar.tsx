@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "react-router-dom";
@@ -16,6 +17,8 @@ import {
   Building,
   Wallet
 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { supabase } from "@/lib/supabase";
 
 interface SidebarProps {
   open: boolean;
@@ -41,7 +44,56 @@ const navItems = [
 
 export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
   const location = useLocation();
-  
+  const { user } = useAuth();
+  const [userProfile, setUserProfile] = useState<{ name: string; role: string } | null>(null);
+
+  useEffect(() => {
+    const loadUserProfile = async () => {
+      if (!user?.id) return;
+
+      try {
+        // Get user profile
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("first_name, last_name, company_id")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (profile) {
+          // Get user role
+          const { data: roles } = await supabase
+            .from("user_roles")
+            .select("role")
+            .eq("user_id", user.id)
+            .eq("company_id", profile.company_id)
+            .maybeSingle();
+
+          const fullName = [profile.first_name, profile.last_name]
+            .filter(Boolean)
+            .join(" ") || user.email?.split("@")[0] || "User";
+          
+          const role = roles?.role || "User";
+
+          setUserProfile({ name: fullName, role });
+        } else {
+          // Fallback to email if no profile
+          setUserProfile({ 
+            name: user.email?.split("@")[0] || "User", 
+            role: "User" 
+          });
+        }
+      } catch (error) {
+        // Fallback to email if error
+        setUserProfile({ 
+          name: user.email?.split("@")[0] || "User", 
+          role: "User" 
+        });
+      }
+    };
+
+    loadUserProfile();
+  }, [user]);
+
   return (
     <aside
       className={cn(
@@ -94,11 +146,17 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
         {/* Footer */}
         <div className="border-t border-sidebar-border p-4">
           <div className={cn("flex items-center gap-3", !open && "justify-center")}>
-            <div className="h-8 w-8 rounded-full bg-gradient-accent" />
+            <div className="h-8 w-8 rounded-full bg-gradient-accent flex items-center justify-center text-sidebar-foreground font-semibold text-sm">
+              {userProfile?.name ? userProfile.name.charAt(0).toUpperCase() : "U"}
+            </div>
             {open && (
-              <div className="flex-1">
-                <p className="text-sm font-medium text-sidebar-foreground">John Doe</p>
-                <p className="text-xs text-sidebar-foreground/70">Accountant</p>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-sidebar-foreground truncate">
+                  {userProfile?.name || "User"}
+                </p>
+                <p className="text-xs text-sidebar-foreground/70 capitalize">
+                  {userProfile?.role || "User"}
+                </p>
               </div>
             )}
           </div>
