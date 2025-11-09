@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { Plus, Building2, TrendingUp, TrendingDown } from "lucide-react";
 import { CSVImport } from "./CSVImport";
+import { ConnectBank } from "./ConnectBank";
 import { BankReconciliation } from "./BankReconciliation";
 
 interface BankAccount {
@@ -33,9 +35,27 @@ export const BankManagement = () => {
     bank_name: "",
     opening_balance: ""
   });
+  const [branchCode, setBranchCode] = useState<string>("");
+  const [monthlyInflow, setMonthlyInflow] = useState(0);
+  const [monthlyOutflow, setMonthlyOutflow] = useState(0);
+
+  // South African bank list with common universal branch codes
+  const bankOptions = [
+    { value: "Absa", label: "Absa", branchCode: "632005" },
+    { value: "FNB", label: "FNB (First National Bank)", branchCode: "250655" },
+    { value: "Standard Bank", label: "Standard Bank", branchCode: "051001" },
+    { value: "Nedbank", label: "Nedbank", branchCode: "198765" },
+    { value: "Capitec", label: "Capitec", branchCode: "470010" },
+    { value: "Investec", label: "Investec", branchCode: "580105" },
+    { value: "TymeBank", label: "TymeBank", branchCode: "678910" },
+    { value: "Discovery Bank", label: "Discovery Bank", branchCode: "679000" },
+    { value: "African Bank", label: "African Bank", branchCode: "430000" },
+    { value: "Bidvest Bank", label: "Bidvest Bank", branchCode: "462005" },
+  ];
 
   useEffect(() => {
     loadBanks();
+    loadMonthlyFlow();
   }, []);
 
   const loadBanks = async () => {
@@ -64,6 +84,51 @@ export const BankManagement = () => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMonthlyFlow = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (!profile) return;
+
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+
+      const { data: txs, error } = await supabase
+        .from("transactions")
+        .select("total_amount, transaction_type, bank_account_id, status, transaction_date")
+        .eq("company_id", profile.company_id)
+        .gte("transaction_date", start)
+        .lte("transaction_date", end)
+        .in("status", ["pending", "approved"])
+        .not("bank_account_id", "is", null);
+
+      if (error) throw error;
+
+      const inflowTypes = ["income", "equity", "deposit", "transfer_in"];
+      const outflowTypes = ["expense", "withdrawal", "transfer_out"];
+
+      const inflow = (txs || [])
+        .filter(t => inflowTypes.includes(String(t.transaction_type).toLowerCase()))
+        .reduce((sum, t) => sum + Number(t.total_amount || 0), 0);
+      const outflow = (txs || [])
+        .filter(t => outflowTypes.includes(String(t.transaction_type).toLowerCase()))
+        .reduce((sum, t) => sum + Number(t.total_amount || 0), 0);
+
+      setMonthlyInflow(inflow);
+      setMonthlyOutflow(outflow);
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
 
@@ -138,6 +203,9 @@ export const BankManagement = () => {
               account_code: nextCode('1100'),
               account_name: `Bank - ${form.account_name}`,
               account_type: 'asset',
+              // Ensure classification as cash equivalent/current asset for SFP
+              is_cash_equivalent: true,
+              financial_statement_category: 'current_asset',
               is_active: true,
             })
             .select("id, account_code, account_name, account_type")
@@ -200,6 +268,7 @@ export const BankManagement = () => {
       setOpen(false);
       setForm({ account_name: "", account_number: "", bank_name: "", opening_balance: "" });
       loadBanks();
+      loadMonthlyFlow();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
@@ -215,7 +284,8 @@ export const BankManagement = () => {
           <p className="text-muted-foreground mt-1">Manage bank accounts, import statements, and reconcile transactions</p>
         </div>
         <div className="flex gap-3">
-          <CSVImport bankAccounts={banks} onImportComplete={loadBanks} />
+          <CSVImport bankAccounts={banks} onImportComplete={() => { loadBanks(); loadMonthlyFlow(); }} />
+          <ConnectBank />
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button className="bg-gradient-primary hover:opacity-90">
@@ -237,19 +307,42 @@ export const BankManagement = () => {
                 />
               </div>
               <div>
-                <Label>Bank Name *</Label>
-                <Input
+                <Label>Bank *</Label>
+                <Select
                   value={form.bank_name}
-                  onChange={(e) => setForm({ ...form, bank_name: e.target.value })}
-                  placeholder="e.g. First National Bank"
-                />
+                  onValueChange={(val) => {
+                    const selected = bankOptions.find(b => b.value === val);
+                    setForm({ ...form, bank_name: val });
+                    setBranchCode(selected?.branchCode || "");
+                    // Clear account number when changing bank selection
+                    if (!val) setForm(prev => ({ ...prev, account_number: "" }));
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select your bank" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {bankOptions.map((b) => (
+                      <SelectItem key={b.value} value={b.value}>
+                        {b.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+              {form.bank_name && (
+                <div>
+                  <Label>Branch Code</Label>
+                  <Input value={branchCode} readOnly placeholder="Auto-filled branch code" />
+                </div>
+              )}
               <div>
                 <Label>Account Number *</Label>
                 <Input
                   value={form.account_number}
                   onChange={(e) => setForm({ ...form, account_number: e.target.value })}
                   placeholder="e.g. 62123456789"
+                  disabled={!form.bank_name}
                 />
               </div>
               <div>
@@ -292,7 +385,7 @@ export const BankManagement = () => {
           <CardContent>
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-primary" />
-              <div className="text-2xl font-bold">R 0.00</div>
+              <div className="text-2xl font-bold">R {monthlyInflow.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
             </div>
             <p className="text-xs text-muted-foreground mt-1">Inflows</p>
           </CardContent>
@@ -305,7 +398,7 @@ export const BankManagement = () => {
           <CardContent>
             <div className="flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-destructive" />
-              <div className="text-2xl font-bold">R 0.00</div>
+              <div className="text-2xl font-bold">R {monthlyOutflow.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
             </div>
             <p className="text-xs text-muted-foreground mt-1">Outflows</p>
           </CardContent>

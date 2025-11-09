@@ -22,6 +22,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useNavigate } from "react-router-dom";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export const DashboardOverview = () => {
   const { toast } = useToast();
@@ -41,6 +42,10 @@ export const DashboardOverview = () => {
   const [assetTrend, setAssetTrend] = useState<any[]>([]);
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean }>({ hasCoa: true, hasBank: true });
   
+  // Date filter state
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  
   // Widget visibility settings
   const [widgets, setWidgets] = useState(() => {
     const saved = localStorage.getItem('dashboardWidgets');
@@ -56,7 +61,9 @@ export const DashboardOverview = () => {
 
   useEffect(() => {
     loadDashboardData();
-    
+  }, [selectedMonth, selectedYear]);
+
+  useEffect(() => {
     // Set up real-time subscription for auto-updates on ALL financial data
     const channel = supabase
       .channel('dashboard-realtime-updates')
@@ -125,7 +132,11 @@ export const DashboardOverview = () => {
 
       console.log('Loading dashboard data for company:', profile.company_id);
 
-      // Load ALL transactions (not just approved) to calculate accurate totals
+      // Calculate date range for selected month/year
+      const startDate = new Date(selectedYear, selectedMonth - 1, 1);
+      const endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
+
+      // Load transactions filtered by selected month/year
       const { data: transactions, error: txError } = await supabase
         .from("transactions")
         .select(`
@@ -138,6 +149,8 @@ export const DashboardOverview = () => {
           )
         `)
         .eq("company_id", profile.company_id)
+        .gte("transaction_date", startDate.toISOString())
+        .lte("transaction_date", endDate.toISOString())
         .order("transaction_date", { ascending: false });
 
       if (txError) throw txError;
@@ -321,9 +334,40 @@ export const DashboardOverview = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(parseInt(value))}>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">January</SelectItem>
+                <SelectItem value="2">February</SelectItem>
+                <SelectItem value="3">March</SelectItem>
+                <SelectItem value="4">April</SelectItem>
+                <SelectItem value="5">May</SelectItem>
+                <SelectItem value="6">June</SelectItem>
+                <SelectItem value="7">July</SelectItem>
+                <SelectItem value="8">August</SelectItem>
+                <SelectItem value="9">September</SelectItem>
+                <SelectItem value="10">October</SelectItem>
+                <SelectItem value="11">November</SelectItem>
+                <SelectItem value="12">December</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
+              <SelectTrigger className="w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(year => (
+                  <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <Badge variant="outline" className="gap-2">
             <Calendar className="h-4 w-4" />
-            {new Date().toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })}
+            {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })}
           </Badge>
           <Sheet>
             <SheetTrigger asChild>

@@ -19,10 +19,14 @@ export const TrialBalanceAutoGenerate = () => {
   const [entries, setEntries] = useState<TrialBalanceEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
+  
+  // Date filter state
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
   useEffect(() => {
     generateTrialBalance();
-  }, []);
+  }, [selectedMonth, selectedYear]);
 
   const generateTrialBalance = async () => {
     try {
@@ -38,7 +42,11 @@ export const TrialBalanceAutoGenerate = () => {
 
       if (!profile) return;
 
-      // Fetch all accounts with their transaction entries
+      // Calculate date range for selected month/year
+      const startDate = new Date(selectedYear, selectedMonth - 1, 1);
+      const endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
+
+      // Fetch accounts with transaction entries filtered by date range
       const { data: accounts, error } = await supabase
         .from("chart_of_accounts")
         .select(`
@@ -46,11 +54,16 @@ export const TrialBalanceAutoGenerate = () => {
           account_name,
           transaction_entries (
             debit,
-            credit
+            credit,
+            transactions!inner (
+              transaction_date
+            )
           )
         `)
         .eq("company_id", profile.company_id)
         .eq("is_active", true)
+        .gte("transaction_entries.transactions.transaction_date", startDate.toISOString())
+        .lte("transaction_entries.transactions.transaction_date", endDate.toISOString())
         .order("account_code");
 
       if (error) throw error;
@@ -62,10 +75,15 @@ export const TrialBalanceAutoGenerate = () => {
         let totalDebit = 0;
         let totalCredit = 0;
 
-        // Sum up all transaction entries
+        // Sum up transaction entries within the date range
         account.transaction_entries?.forEach((entry: any) => {
-          totalDebit += entry.debit || 0;
-          totalCredit += entry.credit || 0;
+          const txDateStr = entry.transactions?.transaction_date;
+          const txDate = txDateStr ? new Date(txDateStr) : null;
+          // If the entry has no transaction date, include it; otherwise enforce range
+          if (!txDate || (txDate >= startDate && txDate <= endDate)) {
+            totalDebit += entry.debit || 0;
+            totalCredit += entry.credit || 0;
+          }
         });
 
         // Only include accounts with non-zero balances
@@ -155,19 +173,56 @@ export const TrialBalanceAutoGenerate = () => {
           <h1 className="text-3xl font-bold">Trial Balance</h1>
           <p className="text-muted-foreground">Auto-generated from transaction entries</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={generateTrialBalance}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-          <Button variant="outline" onClick={handleExportExcel} disabled={entries.length === 0}>
-            <FileSpreadsheet className="h-4 w-4 mr-2" />
-            Export Excel
-          </Button>
-          <Button variant="outline" onClick={handleExportPDF} disabled={entries.length === 0}>
-            <FileText className="h-4 w-4 mr-2" />
-            Export PDF
-          </Button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(parseInt(value))}>
+              <SelectTrigger className="w-32">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="1">January</SelectItem>
+                <SelectItem value="2">February</SelectItem>
+                <SelectItem value="3">March</SelectItem>
+                <SelectItem value="4">April</SelectItem>
+                <SelectItem value="5">May</SelectItem>
+                <SelectItem value="6">June</SelectItem>
+                <SelectItem value="7">July</SelectItem>
+                <SelectItem value="8">August</SelectItem>
+                <SelectItem value="9">September</SelectItem>
+                <SelectItem value="10">October</SelectItem>
+                <SelectItem value="11">November</SelectItem>
+                <SelectItem value="12">December</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
+              <SelectTrigger className="w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(year => (
+                  <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Badge variant="outline" className="gap-2">
+            <Calendar className="h-4 w-4" />
+            {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })}
+          </Badge>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={generateTrialBalance}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </Button>
+            <Button variant="outline" onClick={handleExportExcel} disabled={entries.length === 0}>
+              <FileSpreadsheet className="h-4 w-4 mr-2" />
+              Export Excel
+            </Button>
+            <Button variant="outline" onClick={handleExportPDF} disabled={entries.length === 0}>
+              <FileText className="h-4 w-4 mr-2" />
+              Export PDF
+            </Button>
+          </div>
         </div>
       </div>
 

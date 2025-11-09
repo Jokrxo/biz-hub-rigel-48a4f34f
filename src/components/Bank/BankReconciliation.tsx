@@ -85,16 +85,151 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
 
     try {
       setLoading(true);
-      const { error } = await supabase
-        .from("transactions")
-        .update({ status: "posted" })
-        .in("id", Array.from(selectedTxs));
 
-      if (error) throw error;
+      // Load full transaction details for selected items
+      const { data: txs, error: txLoadErr } = await supabase
+        .from("transactions")
+        .select("id, company_id, transaction_date, description, total_amount, transaction_type, bank_account_id")
+        .in("id", Array.from(selectedTxs));
+      if (txLoadErr) throw txLoadErr;
+
+      if (!txs || txs.length === 0) {
+        toast({ title: "No transactions found", variant: "destructive" });
+        return;
+      }
+
+      // Helper: ensure required ledger accounts exist
+      const ensureAccounts = async (companyId: string, bankAccountId: string) => {
+        // Get bank account name for ledger naming
+        const { data: bankAcc } = await supabase
+          .from("bank_accounts")
+          .select("id, account_name")
+          .eq("id", bankAccountId)
+          .single();
+
+        const bankLedgerName = bankAcc?.account_name ? `Bank - ${bankAcc.account_name}` : "Bank - Main";
+
+        const { data: accountsList } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type, is_cash_equivalent, financial_statement_category")
+          .eq("company_id", companyId)
+          .eq("is_active", true)
+          .order("account_code");
+
+        const findByName = (name: string) => (accountsList || []).find(a => (a.account_name || "").toLowerCase() === name.toLowerCase());
+        const findByTypeIncludes = (type: string, includes: string) => (accountsList || []).find(a => (a.account_type || "").toLowerCase() === type.toLowerCase() && (a.account_name || "").toLowerCase().includes(includes));
+        const nextCode = (prefix: string) => {
+          const codes = (accountsList || [])
+            .map(a => parseInt(String(a.account_code), 10))
+            .filter(n => !isNaN(n));
+          let code = parseInt(prefix, 10);
+          while (codes.includes(code)) code += 1;
+          return String(code);
+        };
+
+        let bankLedger = findByName(bankLedgerName) || findByTypeIncludes('asset', 'bank') || findByTypeIncludes('asset', 'cash');
+        let uncIncome = findByName('Uncategorized Income') || findByTypeIncludes('income', 'uncategorized');
+        let uncExpense = findByName('Uncategorized Expense') || findByTypeIncludes('expense', 'uncategorized');
+
+        if (!bankLedger) {
+          const { data: newBankAcc, error: createBankErr } = await supabase
+            .from("chart_of_accounts")
+            .insert({
+              company_id: companyId,
+              account_code: nextCode('1100'),
+              account_name: bankLedgerName,
+              account_type: 'asset',
+              is_active: true,
+              // Ensure it appears under Cash and Cash Equivalents in SFP
+              is_cash_equivalent: true,
+              financial_statement_category: 'current_asset',
+            })
+            .select("id, account_code, account_name, account_type, is_cash_equivalent, financial_statement_category")
+            .single();
+          if (createBankErr) throw createBankErr;
+          bankLedger = newBankAcc as any;
+        } else {
+          // If existing, ensure classification as cash equivalent/current asset
+          if (!(bankLedger as any).is_cash_equivalent || (bankLedger as any).financial_statement_category !== 'current_asset') {
+            await supabase
+              .from("chart_of_accounts")
+              .update({ is_cash_equivalent: true, financial_statement_category: 'current_asset' })
+              .eq("id", (bankLedger as any).id);
+          }
+        }
+
+        if (!uncIncome) {
+          const { data: newInc } = await supabase
+            .from("chart_of_accounts")
+            .insert({ company_id: companyId, account_code: nextCode('4000'), account_name: 'Uncategorized Income', account_type: 'income', is_active: true })
+            .select("id, account_code, account_name, account_type")
+            .single();
+          uncIncome = newInc as any;
+        }
+
+        if (!uncExpense) {
+          const { data: newExp } = await supabase
+            .from("chart_of_accounts")
+            .insert({ company_id: companyId, account_code: nextCode('6000'), account_name: 'Uncategorized Expense', account_type: 'expense', is_active: true })
+            .select("id, account_code, account_name, account_type")
+            .single();
+          uncExpense = newExp as any;
+        }
+
+        return { bankLedger, uncIncome, uncExpense };
+      };
+
+      // Post each transaction to the ledger without VAT impact
+      for (const tx of txs) {
+        const { bankLedger, uncIncome, uncExpense } = await ensureAccounts(tx.company_id, tx.bank_account_id);
+
+        const description = tx.description || 'Bank statement import';
+        const amount = Number(tx.total_amount || 0);
+        const isInflow = String(tx.transaction_type).toLowerCase() === 'income' || String(tx.transaction_type).toLowerCase() === 'deposit' || String(tx.transaction_type).toLowerCase() === 'transfer_in';
+
+        // Insert ledger legs explicitly to ensure TB and SFP reflect cash
+        const legs = isInflow
+          ? [
+              { transaction_id: tx.id, account_id: (bankLedger as any).id, debit: amount, credit: 0, description, status: 'posted' },
+              { transaction_id: tx.id, account_id: (uncIncome as any).id, debit: 0, credit: amount, description, status: 'posted' },
+            ]
+          : [
+              { transaction_id: tx.id, account_id: (uncExpense as any).id, debit: amount, credit: 0, description, status: 'posted' },
+              { transaction_id: tx.id, account_id: (bankLedger as any).id, debit: 0, credit: amount, description, status: 'posted' },
+            ];
+
+        // Write to transaction_entries (for app detail views)
+        const { error: entryErr } = await supabase.from("transaction_entries").insert(legs);
+        if (entryErr) throw entryErr;
+
+        // Write to ledger_entries (for TB and Cash Flow reporting)
+        const ledgerLegs = legs.map(l => ({
+          company_id: tx.company_id,
+          account_id: l.account_id,
+          debit: l.debit,
+          credit: l.credit,
+          entry_date: tx.transaction_date,
+          is_reversed: false,
+          transaction_id: tx.id,
+          description: l.description,
+        }));
+        const { error: ledgerErr } = await supabase.from("ledger_entries").insert(ledgerLegs as any);
+        if (ledgerErr) throw ledgerErr;
+
+        // Update transaction status to approved to indicate fully posted
+        await supabase.from('transactions').update({ status: 'approved' }).eq('id', tx.id);
+
+        // Update bank running balance via RPC if available
+        try {
+          await supabase.rpc('update_bank_balance', { _bank_account_id: tx.bank_account_id, _amount: amount, _operation: isInflow ? 'add' : 'subtract' });
+        } catch (_) {
+          // Ignore if RPC not present
+        }
+      }
 
       toast({ 
         title: "Success", 
-        description: `Reconciled ${selectedTxs.size} transaction(s)` 
+        description: `Reconciled & posted ${selectedTxs.size} transaction(s) without VAT` 
       });
       setSelectedTxs(new Set());
       loadTransactions();
