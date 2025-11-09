@@ -14,6 +14,21 @@ import { CSVImport } from "./CSVImport";
 import { ConnectBank } from "./ConnectBank";
 import { BankReconciliation } from "./BankReconciliation";
 
+const bankOptions = [
+  { value: "ABSA", label: "ABSA Bank", branchCode: "632005" },
+  { value: "FNB", label: "First National Bank", branchCode: "250655" },
+  { value: "Standard Bank", label: "Standard Bank", branchCode: "051001" },
+  { value: "Nedbank", label: "Nedbank", branchCode: "198765" },
+  { value: "Capitec", label: "Capitec Bank", branchCode: "470010" },
+  { value: "Investec", label: "Investec Bank", branchCode: "580105" },
+  { value: "Discovery Bank", label: "Discovery Bank", branchCode: "679000" },
+  { value: "TymeBank", label: "TymeBank", branchCode: "678910" },
+  { value: "African Bank", label: "African Bank", branchCode: "430000" },
+  { value: "Bidvest Bank", label: "Bidvest Bank", branchCode: "462005" },
+  { value: "Sasfin Bank", label: "Sasfin Bank", branchCode: "683000" },
+  { value: "Mercantile Bank", label: "Mercantile Bank", branchCode: "450905" }
+];
+
 interface BankAccount {
   id: string;
   account_name: string;
@@ -36,27 +51,58 @@ export const BankManagement = () => {
     opening_balance: ""
   });
   const [branchCode, setBranchCode] = useState<string>("");
-  const [monthlyInflow, setMonthlyInflow] = useState(0);
-  const [monthlyOutflow, setMonthlyOutflow] = useState(0);
-
-  // South African bank list with common universal branch codes
-  const bankOptions = [
-    { value: "Absa", label: "Absa", branchCode: "632005" },
-    { value: "FNB", label: "FNB (First National Bank)", branchCode: "250655" },
-    { value: "Standard Bank", label: "Standard Bank", branchCode: "051001" },
-    { value: "Nedbank", label: "Nedbank", branchCode: "198765" },
-    { value: "Capitec", label: "Capitec", branchCode: "470010" },
-    { value: "Investec", label: "Investec", branchCode: "580105" },
-    { value: "TymeBank", label: "TymeBank", branchCode: "678910" },
-    { value: "Discovery Bank", label: "Discovery Bank", branchCode: "679000" },
-    { value: "African Bank", label: "African Bank", branchCode: "430000" },
-    { value: "Bidvest Bank", label: "Bidvest Bank", branchCode: "462005" },
-  ];
+  const [inflows, setInflows] = useState(0);
+  const [outflows, setOutflows] = useState(0);
 
   useEffect(() => {
     loadBanks();
-    loadMonthlyFlow();
+    loadMonthlyFlows();
   }, []);
+
+  const loadMonthlyFlows = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (!profile) return;
+
+      const today = new Date();
+      const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+      const endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString();
+
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('total_amount')
+        .eq('company_id', profile.company_id)
+        .gte('transaction_date', startDate)
+        .lte('transaction_date', endDate);
+
+      if (error) throw error;
+
+      let currentInflows = 0;
+      let currentOutflows = 0;
+
+      data.forEach(tx => {
+        if (tx.total_amount > 0) {
+          currentInflows += tx.total_amount;
+        } else {
+          currentOutflows += Math.abs(tx.total_amount);
+        }
+      });
+
+      setInflows(currentInflows);
+      setOutflows(currentOutflows);
+
+    } catch (error: any) {
+      toast({ title: "Error loading monthly flows", description: error.message, variant: "destructive" });
+    }
+  };
 
   const loadBanks = async () => {
     try {
@@ -84,51 +130,6 @@ export const BankManagement = () => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadMonthlyFlow = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user.id)
-        .single();
-
-      if (!profile) return;
-
-      const now = new Date();
-      const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
-
-      const { data: txs, error } = await supabase
-        .from("transactions")
-        .select("total_amount, transaction_type, bank_account_id, status, transaction_date")
-        .eq("company_id", profile.company_id)
-        .gte("transaction_date", start)
-        .lte("transaction_date", end)
-        .in("status", ["pending", "approved"])
-        .not("bank_account_id", "is", null);
-
-      if (error) throw error;
-
-      const inflowTypes = ["income", "equity", "deposit", "transfer_in"];
-      const outflowTypes = ["expense", "withdrawal", "transfer_out"];
-
-      const inflow = (txs || [])
-        .filter(t => inflowTypes.includes(String(t.transaction_type).toLowerCase()))
-        .reduce((sum, t) => sum + Number(t.total_amount || 0), 0);
-      const outflow = (txs || [])
-        .filter(t => outflowTypes.includes(String(t.transaction_type).toLowerCase()))
-        .reduce((sum, t) => sum + Number(t.total_amount || 0), 0);
-
-      setMonthlyInflow(inflow);
-      setMonthlyOutflow(outflow);
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
 
@@ -203,9 +204,6 @@ export const BankManagement = () => {
               account_code: nextCode('1100'),
               account_name: `Bank - ${form.account_name}`,
               account_type: 'asset',
-              // Ensure classification as cash equivalent/current asset for SFP
-              is_cash_equivalent: true,
-              financial_statement_category: 'current_asset',
               is_active: true,
             })
             .select("id, account_code, account_name, account_type")
@@ -268,7 +266,6 @@ export const BankManagement = () => {
       setOpen(false);
       setForm({ account_name: "", account_number: "", bank_name: "", opening_balance: "" });
       loadBanks();
-      loadMonthlyFlow();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
@@ -284,7 +281,7 @@ export const BankManagement = () => {
           <p className="text-muted-foreground mt-1">Manage bank accounts, import statements, and reconcile transactions</p>
         </div>
         <div className="flex gap-3">
-          <CSVImport bankAccounts={banks} onImportComplete={() => { loadBanks(); loadMonthlyFlow(); }} />
+          <CSVImport bankAccounts={banks} onImportComplete={loadBanks} />
           <ConnectBank />
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
@@ -385,7 +382,7 @@ export const BankManagement = () => {
           <CardContent>
             <div className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-primary" />
-              <div className="text-2xl font-bold">R {monthlyInflow.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+              <div className="text-2xl font-bold">R {inflows.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
             </div>
             <p className="text-xs text-muted-foreground mt-1">Inflows</p>
           </CardContent>
@@ -398,7 +395,7 @@ export const BankManagement = () => {
           <CardContent>
             <div className="flex items-center gap-2">
               <TrendingDown className="h-4 w-4 text-destructive" />
-              <div className="text-2xl font-bold">R {monthlyOutflow.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+              <div className="text-2xl font-bold">R {outflows.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
             </div>
             <p className="text-xs text-muted-foreground mt-1">Outflows</p>
           </CardContent>

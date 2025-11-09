@@ -90,7 +90,7 @@ export const TransactionManagement = () => {
       vatAmount: Math.abs(t.total_amount) * 0.15,
       reference: t.reference_number || "—",
       statusKey: t.status, // raw DB status
-      statusLabel: t.status === 'approved' ? 'Posted' : t.status.charAt(0).toUpperCase() + t.status.slice(1)
+      statusLabel: t.status === 'allocated' ? 'Allocated' : t.status === 'unallocated' ? 'Unallocated' : t.status.charAt(0).toUpperCase() + t.status.slice(1)
     }));
 
     const filtered = tx.filter(transaction => {
@@ -106,21 +106,21 @@ export const TransactionManagement = () => {
     return { filtered, totalIncome, totalExpenses };
   }, [items, searchTerm, filterType, filterStatus]);
 
-  const allocateTransaction = async (id: string) => {
+  const setTransactionStatus = async (id: string, status: 'allocated' | 'unallocated') => {
     try {
       const { error } = await supabase
         .from("transactions")
-        .update({ status: "approved" })
+        .update({ status })
         .eq("id", id);
 
       if (error) throw error;
 
       await supabase
         .from("transaction_entries")
-        .update({ status: "approved" })
+        .update({ status })
         .eq("transaction_id", id);
 
-      toast({ title: "Success", description: "Transaction allocated" });
+      toast({ title: "Success", description: `Transaction ${status}` });
       load();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -223,8 +223,8 @@ export const TransactionManagement = () => {
               <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="approved">Posted</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="allocated">Allocated</SelectItem>
+                <SelectItem value="unallocated">Unallocated</SelectItem>
                 <SelectItem value="rejected">Rejected</SelectItem>
               </SelectContent>
             </Select>
@@ -266,13 +266,19 @@ export const TransactionManagement = () => {
                     <TableCell className="text-sm">{transaction.category}</TableCell>
                     <TableCell className="text-right font-mono"><span className={transaction.type === "Income" ? "text-primary" : "text-muted-foreground"}>R {transaction.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></TableCell>
                     <TableCell className="text-right font-mono text-sm">R {transaction.vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell><Badge variant={(transaction as any).statusKey === "approved" ? "default" : "outline"} className={(transaction as any).statusKey === "approved" ? "bg-primary" : ""}>{(transaction as any).statusLabel}</Badge></TableCell>
+                    <TableCell><Badge variant={(transaction as any).statusKey === "allocated" ? "default" : "outline"} className={(transaction as any).statusKey === "allocated" ? "bg-primary" : ""}>{(transaction as any).statusLabel}</Badge></TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
-                        {transaction.status === "pending" && (
-                          <Button variant="ghost" size="sm" className="h-8 px-2 text-primary" onClick={() => allocateTransaction(transaction.id)}>
+                        {transaction.statusKey === "unallocated" && (
+                          <Button variant="ghost" size="sm" className="h-8 px-2 text-primary" onClick={() => setTransactionStatus(transaction.id, 'allocated')}>
                             <CheckCircle className="h-4 w-4 mr-1" />
                             Allocate
+                          </Button>
+                        )}
+                        {transaction.statusKey === "allocated" && (
+                          <Button variant="ghost" size="sm" className="h-8 px-2 text-destructive" onClick={() => setTransactionStatus(transaction.id, 'unallocated')}>
+                            <XCircle className="h-4 w-4 mr-1" />
+                            Unallocate
                           </Button>
                         )}
                         <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={() => { 

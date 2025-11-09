@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,7 +55,7 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
         .from("transactions")
         .select("*")
         .eq("bank_account_id", selectedBank)
-        .eq("status", "pending")
+        .eq("status", "unallocated")
         .order("transaction_date", { ascending: false });
 
       if (error) throw error;
@@ -217,7 +217,7 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
         if (ledgerErr) throw ledgerErr;
 
         // Update transaction status to approved to indicate fully posted
-        await supabase.from('transactions').update({ status: 'approved' }).eq('id', tx.id);
+        await supabase.from('transactions').update({ status: 'allocated' }).eq('id', tx.id);
 
         // Update bank running balance via RPC if available
         try {
@@ -400,14 +400,14 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
       {selectedBank && (
         <Card>
           <CardHeader>
-            <CardTitle>Pending Transactions ({transactions.length})</CardTitle>
+            <CardTitle>Unallocated Transactions ({transactions.length})</CardTitle>
           </CardHeader>
           <CardContent>
             {loading ? (
               <div className="text-center py-8">Loading transactions...</div>
             ) : transactions.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                No pending transactions to reconcile
+                No Unallocated Transactions to reconcile
               </div>
             ) : (
               <Table>
@@ -461,3 +461,5 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
     </div>
   );
 };
+
+

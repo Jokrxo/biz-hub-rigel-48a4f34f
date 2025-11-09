@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -8,6 +8,7 @@ import { Upload, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
+import Papa from 'papaparse';
 
 interface BankAccount {
   id: string;
@@ -20,6 +21,14 @@ interface CSVImportProps {
   onImportComplete: () => void;
 }
 
+// Define a type for our chart of accounts for easier access
+type ChartOfAccount = {
+  id: string;
+  account_name: string;
+  account_code: string;
+  account_type: string;
+};
+
 export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) => {
   const [open, setOpen] = useState(false);
   const [selectedBank, setSelectedBank] = useState("");
@@ -27,6 +36,35 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
   const [importing, setImporting] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
+  const [chartOfAccounts, setChartOfAccounts] = useState<ChartOfAccount[]>([]);
+
+  // Fetch Chart of Accounts on component mount
+  useEffect(() => {
+    const fetchChartOfAccounts = async () => {
+      if (user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("company_id")
+          .eq("user_id", user.id)
+          .single();
+
+        if (profile) {
+          const { data, error } = await supabase
+            .from('chart_of_accounts')
+            .select('id, account_name, account_code, account_type')
+            .eq('company_id', profile.company_id)
+            .eq('is_active', true);
+
+          if (error) {
+            toast({ title: "Error fetching accounts", description: error.message, variant: "destructive" });
+          } else {
+            setChartOfAccounts(data);
+          }
+        }
+      }
+    };
+    fetchChartOfAccounts();
+  }, [user, toast]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -35,17 +73,44 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
   };
 
   const parseCSV = (text: string): any[] => {
-    const lines = text.split("\n").filter(line => line.trim());
-    const headers = lines[0].split(",").map(h => h.trim());
-    
-    return lines.slice(1).map(line => {
-      const values = line.split(",");
-      const row: any = {};
-      headers.forEach((header, i) => {
-        row[header] = values[i]?.trim() || "";
-      });
-      return row;
-    });
+    const result = Papa.parse(text, { header: true, skipEmptyLines: true });
+    return result.data;
+  };
+
+  // Heuristic-based account mapping
+  const mapRowToAccounts = (row: any, accounts: ChartOfAccount[]) => {
+    const description = (row.Description || row.description || "").toLowerCase();
+    const amount = parseFloat(row.Amount || row.amount || "0");
+
+    let debitAccountId: string | null = null;
+    let creditAccountId: string | null = null;
+    let confidence: 'high' | 'low' = 'low';
+
+    const bankAccount = accounts.find(a => a.account_type === 'asset' && a.account_name.toLowerCase().includes('bank'));
+    const incomeAccount = accounts.find(a => a.account_type === 'income');
+    const expenseAccount = accounts.find(a => a.account_type === 'expense');
+
+    if (amount > 0) { // Income
+      creditAccountId = incomeAccount?.id || null;
+      debitAccountId = bankAccount?.id || null;
+      if (description.includes("invoice") || description.includes("payment")) {
+        const arAccount = accounts.find(a => a.account_name.toLowerCase().includes('accounts receivable'));
+        creditAccountId = arAccount?.id || creditAccountId;
+      }
+    } else { // Expense
+      debitAccountId = expenseAccount?.id || null;
+      creditAccountId = bankAccount?.id || null;
+      if (description.includes("bill") || description.includes("vendor")) {
+        const apAccount = accounts.find(a => a.account_name.toLowerCase().includes('accounts payable'));
+        debitAccountId = apAccount?.id || debitAccountId;
+      }
+    }
+
+    if (debitAccountId && creditAccountId) {
+      confidence = 'high';
+    }
+
+    return { debitAccountId, creditAccountId, confidence };
   };
 
   const handleImport = async () => {
@@ -84,6 +149,7 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
       // Map CSV rows to transactions
       const transactions = rows.map(row => {
         const amount = parseFloat(row.Amount || row.amount || "0");
+        const { debitAccountId, creditAccountId, confidence } = mapRowToAccounts(row, chartOfAccounts);
         
         return {
           company_id: profile.company_id,
@@ -93,9 +159,11 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
           description: row.Description || row.description || "Bank transaction",
           reference_number: row.Reference || row.reference || null,
           total_amount: Math.abs(amount),
-          status: "pending",
+          status: confidence === 'high' ? 'allocated' : 'unallocated',
           transaction_type: amount >= 0 ? "income" : "expense",
           category: "Bank Import",
+          debit_account_id: debitAccountId,
+          credit_account_id: creditAccountId,
         };
       }).filter(tx => tx.total_amount !== 0);
 
@@ -134,7 +202,7 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
 
       toast({ 
         title: "Import Complete", 
-        description: `✓ ${imported} imported | ⚠ ${duplicates} duplicates skipped${errors > 0 ? ` | ✗ ${errors} errors` : ""}` 
+        description: `âœ“ ${imported} imported | âš  ${duplicates} duplicates skipped${errors > 0 ? ` | âœ— ${errors} errors` : ""}` 
       });
       
       setOpen(false);
@@ -218,3 +286,4 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
     </Dialog>
   );
 };
+

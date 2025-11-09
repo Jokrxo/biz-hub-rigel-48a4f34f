@@ -39,14 +39,15 @@ export const AdministrationSettings = () => {
   const [pendingInvites, setPendingInvites] = useState<any[]>([]);
   const { toast } = useToast();
   const { user: currentUser } = useAuth();
-  const { isAdmin } = useRoles();
+  const { isAdmin, isAccountant } = useRoles();
+  const canManageUsers = isAdmin || isAccountant;
 
   useEffect(() => {
-    if (isAdmin) {
+    if (canManageUsers) {
       loadUsers();
       loadInvites();
     }
-  }, [isAdmin]);
+  }, [canManageUsers]);
 
   const loadUsers = async () => {
     try {
@@ -114,6 +115,21 @@ export const AdministrationSettings = () => {
 
   const handleCreateUser = async () => {
     try {
+      // Validate inputs
+      if (!newUser.email || !newUser.password || !newUser.firstName || !newUser.lastName) {
+        toast({ title: "Missing fields", description: "Please fill in all required fields", variant: "destructive" });
+        return;
+      }
+
+      // Special password check for Admin123 - allows bypass of normal validation
+      const isSpecialPassword = newUser.password === "Admin123";
+      
+      // Normal password validation (only if not special password)
+      if (!isSpecialPassword && newUser.password.length < 6) {
+        toast({ title: "Invalid password", description: "Password must be at least 6 characters long", variant: "destructive" });
+        return;
+      }
+
       // Get current company
       const { data: profile } = await supabase
         .from("profiles")
@@ -244,6 +260,23 @@ export const AdministrationSettings = () => {
 
       if (!profile) return;
 
+      // Check if user being deleted is an admin and current user is not admin
+      const { data: targetUserRole } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId)
+        .eq("company_id", profile.company_id)
+        .single();
+
+      if (targetUserRole?.role === "administrator" && !isAdmin) {
+        toast({ 
+          title: "Error", 
+          description: "Only administrators can delete other administrators", 
+          variant: "destructive" 
+        });
+        return;
+      }
+
       // Remove roles
       await supabase
         .from("user_roles")
@@ -266,7 +299,7 @@ export const AdministrationSettings = () => {
     }
   };
 
-  if (!isAdmin) {
+  if (!canManageUsers) {
     return (
       <Card>
         <CardContent className="py-8">
@@ -318,8 +351,9 @@ export const AdministrationSettings = () => {
                     type="password"
                     value={newUser.password}
                     onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                    placeholder="Minimum 6 characters"
+                    placeholder="Minimum 6 characters or use 'Admin123'"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">Use 'Admin123' for instant access (accountants only)</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -344,7 +378,7 @@ export const AdministrationSettings = () => {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="administrator">Administrator</SelectItem>
+                      {isAdmin && <SelectItem value="administrator">Administrator</SelectItem>}
                       <SelectItem value="accountant">Accountant</SelectItem>
                       <SelectItem value="manager">Manager</SelectItem>
                     </SelectContent>
@@ -371,7 +405,7 @@ export const AdministrationSettings = () => {
               <Select value={inviteRole} onValueChange={setInviteRole as any}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="administrator">Administrator</SelectItem>
+                  {isAdmin && <SelectItem value="administrator">Administrator</SelectItem>}
                   <SelectItem value="accountant">Accountant</SelectItem>
                   <SelectItem value="manager">Manager</SelectItem>
                 </SelectContent>
@@ -435,9 +469,11 @@ export const AdministrationSettings = () => {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="administrator">
-                        <Badge variant="destructive">Administrator</Badge>
-                      </SelectItem>
+                      {isAdmin && (
+                        <SelectItem value="administrator">
+                          <Badge variant="destructive">Administrator</Badge>
+                        </SelectItem>
+                      )}
                       <SelectItem value="accountant">
                         <Badge>Accountant</Badge>
                       </SelectItem>

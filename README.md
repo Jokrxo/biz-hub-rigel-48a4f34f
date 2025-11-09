@@ -60,27 +60,7 @@ bun dev
 ```
 
 ### Environment Setup
-Supabase is pre-configured. For bank linking, add these to `.env` or Supabase project config:
-
-```
-STITCH_CLIENT_ID=
-STITCH_CLIENT_SECRET=
-STITCH_REDIRECT_URL=http://localhost:8083/
-STITCH_WEBHOOK_SECRET=
-```
-
-### Bank Linking (Stitch placeholder)
-
-This repo includes a scaffold to connect banks using Supabase Edge Functions.
-
-1. Deploy the function (requires Supabase CLI):
-
-```bash
-supabase functions deploy stitch-link
-```
-
-2. In the app, navigate to Bank Management and click "Connect Bank" to start linking.
-   Without secrets configured, a placeholder link opens. Provide Stitch credentials to enable a real link flow.
+No environment variables needed - Supabase is pre-configured via integrations.
 
 ## Project Structure
 
@@ -95,8 +75,6 @@ src/
 ├── lib/                 # Utilities and API clients
 ├── context/             # React context providers
 └── integrations/        # Supabase integration
-supabase/functions/
-└── stitch-link/         # Edge Function to initiate bank linking
 ```
 
 ## Database Schema

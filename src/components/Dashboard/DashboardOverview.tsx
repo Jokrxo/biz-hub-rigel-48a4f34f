@@ -64,48 +64,107 @@ export const DashboardOverview = () => {
   }, [selectedMonth, selectedYear]);
 
   useEffect(() => {
-    // Set up real-time subscription for auto-updates on ALL financial data
-    const channel = supabase
-      .channel('dashboard-realtime-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
-        console.log('Transaction changed - updating dashboard...');
-        loadDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transaction_entries' }, () => {
-        console.log('Transaction entry changed - updating dashboard...');
-        loadDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_accounts' }, () => {
-        console.log('Bank account changed - updating dashboard...');
-        loadDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
-        console.log('Invoice changed - updating dashboard...');
-        loadDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'fixed_assets' }, () => {
-        console.log('Fixed asset changed - updating dashboard...');
-        loadDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'purchase_orders' }, () => {
-        console.log('Purchase order changed - updating dashboard...');
-        loadDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => {
-        console.log('Quote changed - updating dashboard...');
-        loadDashboardData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'sales' }, () => {
-        console.log('Sale changed - updating dashboard...');
-        loadDashboardData();
-      })
-      .subscribe((status) => {
-        console.log('Dashboard real-time subscription status:', status);
-      });
+    const setupRealtime = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
 
-    return () => {
-      supabase.removeChannel(channel);
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+
+      if (!profile) return;
+
+      const companyId = profile.company_id;
+
+      // Set up real-time subscription for auto-updates on ALL financial data
+      const channel = supabase
+        .channel('dashboard-realtime-updates')
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'transactions',
+          filter: `company_id=eq.${companyId}` 
+        }, () => {
+          console.log('Transaction changed - updating dashboard...');
+          loadDashboardData();
+        })
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'transaction_entries',
+          // Note: transaction_entries doesn't have company_id, so we listen to all
+          // and rely on the parent transaction check to re-load.
+          // This is not ideal, but a constraint of the current schema.
+        }, () => {
+          console.log('Transaction entry changed - updating dashboard...');
+          loadDashboardData();
+        })
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'bank_accounts',
+          filter: `company_id=eq.${companyId}`
+        }, () => {
+          console.log('Bank account changed - updating dashboard...');
+          loadDashboardData();
+        })
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'invoices',
+          filter: `company_id=eq.${companyId}`
+        }, () => {
+          console.log('Invoice changed - updating dashboard...');
+          loadDashboardData();
+        })
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'fixed_assets',
+          filter: `company_id=eq.${companyId}`
+        }, () => {
+          console.log('Fixed asset changed - updating dashboard...');
+          loadDashboardData();
+        })
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'purchase_orders',
+          filter: `company_id=eq.${companyId}`
+        }, () => {
+          console.log('Purchase order changed - updating dashboard...');
+          loadDashboardData();
+        })
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'quotes',
+          filter: `company_id=eq.${companyId}`
+        }, () => {
+          console.log('Quote changed - updating dashboard...');
+          loadDashboardData();
+        })
+        .on('postgres_changes', { 
+          event: '*', 
+          schema: 'public', 
+          table: 'sales',
+          filter: `company_id=eq.${companyId}`
+        }, () => {
+          console.log('Sale changed - updating dashboard...');
+          loadDashboardData();
+        })
+        .subscribe((status) => {
+          console.log('Dashboard real-time subscription status:', status);
+        });
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
     };
+
+    setupRealtime();
   }, []);
 
   useEffect(() => {

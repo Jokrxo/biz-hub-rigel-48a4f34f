@@ -52,16 +52,37 @@ export const FinancialReports = () => {
 
       if (!profile?.company_id) return;
 
-      // Fetch trial balance data directly (all amounts flow from TB to AFS)
-      const { data: trialBalance, error: tbError } = await supabase
-        .rpc('get_trial_balance_for_company');
+      // Try to get stored financial statements first
+      const { data: storedStatements, error: fsError } = await supabase
+        .rpc('get_latest_financial_statements', {
+          _company_id: profile.company_id
+        });
 
-      if (tbError) throw tbError;
+      if (fsError) throw fsError;
 
-      if (trialBalance) {
-        generateProfitLoss(trialBalance);
-        generateBalanceSheet(trialBalance);
-        await generateCashFlow(profile.company_id);
+      if (storedStatements && (storedStatements.balance_sheet || storedStatements.income_statement || storedStatements.cash_flow_statement)) {
+        // Use stored financial statements
+        if (storedStatements.balance_sheet) {
+          parseStoredBalanceSheet(storedStatements.balance_sheet);
+        }
+        if (storedStatements.income_statement) {
+          parseStoredIncomeStatement(storedStatements.income_statement);
+        }
+        if (storedStatements.cash_flow_statement) {
+          parseStoredCashFlowStatement(storedStatements.cash_flow_statement);
+        }
+      } else {
+        // Fallback: generate from trial balance if no stored statements
+        const { data: trialBalance, error: tbError } = await supabase
+          .rpc('get_trial_balance_for_company');
+
+        if (tbError) throw tbError;
+
+        if (trialBalance) {
+          generateProfitLoss(trialBalance);
+          generateBalanceSheet(trialBalance);
+          await generateCashFlow(profile.company_id);
+        }
       }
     } catch (error) {
       console.error('Error loading financial data:', error);

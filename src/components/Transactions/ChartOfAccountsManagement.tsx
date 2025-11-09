@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit, Trash2, BookOpen, Search } from "lucide-react";
+import { Plus, Edit, Trash2, BookOpen, Search, RefreshCw } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
@@ -211,7 +211,37 @@ export const ChartOfAccountsManagement = () => {
         .order("account_code");
 
       if (error) throw error;
-      setAccounts(data || []);
+
+      // Ensure SA Chart of Accounts defaults exist for all companies: insert any missing ones
+      const existingCodes = new Set((data || []).map(acc => acc.account_code));
+      const missingDefaults = SA_CHART_OF_ACCOUNTS.filter(acc => !existingCodes.has(acc.code));
+
+      if (missingDefaults.length > 0) {
+        const accountsToInsert = missingDefaults.map(acc => ({
+          company_id: profile.company_id,
+          account_code: acc.code,
+          account_name: acc.name,
+          account_type: acc.type,
+          is_active: true,
+        }));
+
+        const { error: insertError } = await supabase
+          .from("chart_of_accounts")
+          .insert(accountsToInsert);
+
+        if (insertError) throw insertError;
+
+        const { data: seeded } = await supabase
+          .from("chart_of_accounts")
+          .select("*")
+          .eq("company_id", profile.company_id)
+          .order("account_code");
+
+        setAccounts(seeded || []);
+        toast({ title: "Defaults Loaded", description: `Added ${accountsToInsert.length} missing SA accounts` });
+      } else {
+        setAccounts(data || []);
+      }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -386,7 +416,12 @@ export const ChartOfAccountsManagement = () => {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={loadSAChartOfAccounts}>
+            <BookOpen className="h-4 w-4 mr-2" />
             Load SA Chart of Accounts
+          </Button>
+          <Button variant="outline" onClick={loadAccounts}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
           </Button>
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
@@ -498,48 +533,79 @@ export const ChartOfAccountsManagement = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredAccounts.map((account) => (
-                  <TableRow key={account.id}>
-                    <TableCell className="font-mono font-semibold">{account.account_code}</TableCell>
-                    <TableCell>{account.account_name}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{account.account_type}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={account.is_active ? "default" : "secondary"}>
-                        {account.is_active ? "Active" : "Inactive"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                          onClick={() => handleEdit(account)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                          onClick={() => toggleActive(account)}
-                        >
-                          {account.is_active ? "Deactivate" : "Activate"}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0 text-destructive"
-                          onClick={() => handleDelete(account.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                {filteredAccounts.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center py-8">
+                      <div className="flex flex-col items-center justify-center space-y-2">
+                        <BookOpen className="h-12 w-12 text-muted-foreground mb-2" />
+                        <h3 className="text-lg font-semibold">No Chart of Accounts Found</h3>
+                        <p className="text-sm text-muted-foreground max-w-md">
+                          You don't have any chart of accounts set up yet. You can either load the predefined South African chart of accounts or create your own custom accounts.
+                        </p>
+                        <div className="flex gap-2 mt-4">
+                          <Button variant="outline" onClick={loadSAChartOfAccounts}>
+                            <BookOpen className="h-4 w-4 mr-2" />
+                            Load SA Chart
+                          </Button>
+                          <Button onClick={() => {
+                            setEditingAccount(null);
+                            setFormData({ account_code: "", account_name: "", account_type: "asset" });
+                            setIsDialogOpen(true);
+                          }}>
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add Custom Account
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Need help with SA chart of accounts? Contact your creditor or system administrator.
+                        </p>
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  filteredAccounts.map((account) => (
+                    <TableRow key={account.id}>
+                      <TableCell className="font-mono font-semibold">{account.account_code}</TableCell>
+                      <TableCell>{account.account_name}</TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{account.account_type}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={account.is_active ? "default" : "secondary"}>
+                          {account.is_active ? "Active" : "Inactive"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            onClick={() => handleEdit(account)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            onClick={() => toggleActive(account)}
+                          >
+                            {account.is_active ? "Deactivate" : "Activate"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-destructive"
+                            onClick={() => handleDelete(account.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>
