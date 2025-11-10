@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -49,6 +49,7 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
           .single();
 
         if (profile) {
+          console.log("Fetching chart of accounts for company:", profile.company_id);
           const { data, error } = await supabase
             .from('chart_of_accounts')
             .select('id, account_name, account_code, account_type')
@@ -56,9 +57,11 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
             .eq('is_active', true);
 
           if (error) {
+            console.error("Chart of accounts fetch error:", error);
             toast({ title: "Error fetching accounts", description: error.message, variant: "destructive" });
           } else {
-            setChartOfAccounts(data);
+            console.log("Chart of accounts fetched successfully:", data?.length, "accounts");
+            setChartOfAccounts(data || []);
           }
         }
       }
@@ -79,6 +82,11 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
 
   // Heuristic-based account mapping
   const mapRowToAccounts = (row: any, accounts: ChartOfAccount[]) => {
+    if (!accounts || accounts.length === 0) {
+      console.warn("No chart of accounts available for mapping");
+      return { debitAccountId: null, creditAccountId: null, confidence: 'low' };
+    }
+
     const description = (row.Description || row.description || "").toLowerCase();
     const amount = parseFloat(row.Amount || row.amount || "0");
 
@@ -151,6 +159,8 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
         const amount = parseFloat(row.Amount || row.amount || "0");
         const { debitAccountId, creditAccountId, confidence } = mapRowToAccounts(row, chartOfAccounts);
         
+        console.log("Mapping row:", row, "Accounts found:", { debitAccountId, creditAccountId, confidence });
+        
         return {
           company_id: profile.company_id,
           user_id: user!.id,
@@ -159,13 +169,15 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
           description: row.Description || row.description || "Bank transaction",
           reference_number: row.Reference || row.reference || null,
           total_amount: Math.abs(amount),
-          status: confidence === 'high' ? 'allocated' : 'unallocated',
+          status: confidence === 'high' ? 'approved' : 'pending',
           transaction_type: amount >= 0 ? "income" : "expense",
           category: "Bank Import",
           debit_account_id: debitAccountId,
           credit_account_id: creditAccountId,
         };
       }).filter(tx => tx.total_amount !== 0);
+
+      console.log("Transactions to import:", transactions.length, transactions);
 
       if (transactions.length === 0) {
         toast({ title: "Warning", description: "No valid transactions found in CSV" });
