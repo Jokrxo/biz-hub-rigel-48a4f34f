@@ -94,20 +94,20 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
     let creditAccountId: string | null = null;
     let confidence: 'high' | 'low' = 'low';
 
-    const bankAccount = accounts.find(a => a.account_type === 'asset' && a.account_name.toLowerCase().includes('bank'));
+    const bankAssetAccount = accounts.find(a => a.account_type === 'asset' && a.account_name.toLowerCase().includes('bank'));
     const incomeAccount = accounts.find(a => a.account_type === 'income');
     const expenseAccount = accounts.find(a => a.account_type === 'expense');
 
     if (amount > 0) { // Income
       creditAccountId = incomeAccount?.id || null;
-      debitAccountId = bankAccount?.id || null;
+      debitAccountId = bankAssetAccount?.id || null;
       if (description.includes("invoice") || description.includes("payment")) {
         const arAccount = accounts.find(a => a.account_name.toLowerCase().includes('accounts receivable'));
         creditAccountId = arAccount?.id || creditAccountId;
       }
     } else { // Expense
       debitAccountId = expenseAccount?.id || null;
-      creditAccountId = bankAccount?.id || null;
+      creditAccountId = bankAssetAccount?.id || null;
       if (description.includes("bill") || description.includes("vendor")) {
         const apAccount = accounts.find(a => a.account_name.toLowerCase().includes('accounts payable'));
         debitAccountId = apAccount?.id || debitAccountId;
@@ -132,13 +132,14 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
       const text = await file.text();
       const rows = parseCSV(text);
 
-      const { data: profile } = await supabase
+      const { data: profileData } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user!.id)
         .single();
 
-      if (!profile) throw new Error("Profile not found");
+      if (!profileData) throw new Error("Profile not found");
+      const profile = profileData;
 
       // Validate that the selected bank account still exists
       const { data: bankAccount, error: bankError } = await supabase
@@ -155,13 +156,13 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
       }
 
       // Map CSV rows to transactions
-      const transactions = rows.map(row => {
+      const transactions = rows.flatMap(row => {
         const amount = parseFloat(row.Amount || row.amount || "0");
-        const { debitAccountId, creditAccountId, confidence } = mapRowToAccounts(row, chartOfAccounts);
+        const { debitAccountId, creditAccountId } = mapRowToAccounts(row, chartOfAccounts);
         
-        console.log("Mapping row:", row, "Accounts found:", { debitAccountId, creditAccountId, confidence });
-        
-        return {
+        if (amount === 0) return [];
+
+        const baseTransaction = {
           company_id: profile.company_id,
           user_id: user!.id,
           bank_account_id: selectedBank,
@@ -169,7 +170,65 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
           description: row.Description || row.description || "Bank transaction",
           reference_number: row.Reference || row.reference || null,
           total_amount: Math.abs(amount),
-          status: confidence === 'high' ? 'approved' : 'pending',
+          status: 'pending',
+          transaction_type: amount >= 0 ? "income" : "expense",
+          category: "Bank Import",
+        };
+
+        const debitEntry = {
+          ...baseTransaction,
+          account_id: debitAccountId,
+          debit: Math.abs(amount),
+          credit: 0,
+        };
+
+        const creditEntry = {
+          ...baseTransaction,
+          account_id: creditAccountId,
+          debit: 0,
+          credit: Math.abs(amount),
+        };
+        
+        return [debitEntry, creditEntry];
+      });
+      const { data: companyProfile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user!.id)
+        .single();
+
+      if (!companyProfile) throw new Error("Profile not found");
+
+      // Validate that the selected bank account still exists
+      const { data: selectedBankAccount, error: bankAcctError } = await supabase
+        .from("bank_accounts")
+        .select("id")
+        .eq("id", selectedBank)
+        .eq("company_id", companyProfile.company_id)
+        .single();
+
+      if (bankAcctError || !selectedBankAccount) {
+        toast({ title: "Error", description: "Selected bank account no longer exists. Please refresh the page and try again.", variant: "destructive" });
+        setSelectedBank("");
+        return;
+      }
+
+      // Map CSV rows to transactions
+      const importedTransactions = rows.map(row => {
+        const amount = parseFloat(row.Amount || row.amount || "0");
+        const { debitAccountId, creditAccountId, confidence } = mapRowToAccounts(row, chartOfAccounts);
+        
+        console.log("Mapping row:", row, "Accounts found:", { debitAccountId, creditAccountId, confidence });
+        
+        return {
+          company_id: companyProfile.company_id,
+          user_id: user!.id,
+          bank_account_id: selectedBank,
+          transaction_date: row.Date || row.date || new Date().toISOString().split("T")[0],
+          description: row.Description || row.description || "Bank transaction",
+          reference_number: row.Reference || row.reference || null,
+          total_amount: Math.abs(amount),
+          status: 'pending',
           transaction_type: amount >= 0 ? "income" : "expense",
           category: "Bank Import",
           debit_account_id: debitAccountId,
@@ -177,9 +236,9 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
         };
       }).filter(tx => tx.total_amount !== 0);
 
-      console.log("Transactions to import:", transactions.length, transactions);
+      console.log("Transactions to import:", importedTransactions.length, importedTransactions);
 
-      if (transactions.length === 0) {
+      if (importedTransactions.length === 0) {
         toast({ title: "Warning", description: "No valid transactions found in CSV" });
         return;
       }
@@ -189,7 +248,7 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
       let duplicates = 0;
       let errors = 0;
 
-      for (const tx of transactions) {
+      for (const tx of importedTransactions) {
         const { data: isDuplicate } = await supabase.rpc("check_duplicate_transaction", {
           _company_id: profile.company_id,
           _bank_account_id: selectedBank,

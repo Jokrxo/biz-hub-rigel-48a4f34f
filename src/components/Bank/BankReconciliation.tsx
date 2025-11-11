@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,7 +55,7 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
         .from("transactions")
         .select("*")
         .eq("bank_account_id", selectedBank)
-        .eq("status", "unallocated")
+        .eq("status", "pending")
         .order("transaction_date", { ascending: false });
 
       if (error) throw error;
@@ -217,7 +217,7 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
         if (ledgerErr) throw ledgerErr;
 
         // Update transaction status to approved to indicate fully posted
-        await supabase.from('transactions').update({ status: 'allocated' }).eq('id', tx.id);
+        await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id);
 
         // Update bank running balance via RPC if available
         try {

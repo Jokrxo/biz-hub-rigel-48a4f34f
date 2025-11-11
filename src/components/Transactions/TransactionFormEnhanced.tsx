@@ -145,6 +145,25 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     }
   }, [open, editData]);
 
+  // Prefill form when editing an existing transaction
+  useEffect(() => {
+    if (!open || !editData) return;
+    try {
+      setForm(prev => ({
+        ...prev,
+        date: (editData.transaction_date || new Date().toISOString().slice(0, 10)).slice(0, 10),
+        description: editData.description || "",
+        reference: editData.reference_number || "",
+        bankAccountId: editData.bank_account_id || "",
+        element: (editData.transaction_type || (Number(editData.total_amount || 0) >= 0 ? 'income' : 'expense')),
+        debitAccount: editData.debit_account_id || prev.debitAccount,
+        creditAccount: editData.credit_account_id || prev.creditAccount,
+        amount: String(Math.abs(editData.total_amount || 0)),
+        vatRate: prev.vatRate
+      }));
+    } catch {}
+  }, [open, editData]);
+
   // Filter accounts based on search input
   const filteredDebitAccounts = debitAccounts.filter(a => 
     a.account_name.toLowerCase().includes(debitSearch.toLowerCase()) || 
@@ -338,12 +357,27 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         return;
       }
 
-      // If editing, update the transaction and create entries
+      // If editing, update the transaction header fields and account mapping
       if (editData) {
+        // Guard: ensure we have a valid transaction id to post against
+        if (!editData.id) {
+          toast({ 
+            title: "Missing transaction ID", 
+            description: "Cannot post ledger entries without a valid transaction.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+        const amountNum = parseFloat(form.amount || "0");
         const { error: updateError } = await supabase
           .from("transactions")
           .update({ 
-            status: 'allocated',
+            transaction_date: form.date,
+            description: form.description.trim(),
+            reference_number: form.reference ? form.reference.trim() : null,
+            transaction_type: form.element || null,
+            bank_account_id: form.bankAccountId && form.bankAccountId.trim() !== "" ? form.bankAccountId : null,
+            total_amount: isNaN(amountNum) ? 0 : amountNum,
             debit_account_id: form.debitAccount,
             credit_account_id: form.creditAccount,
            })
@@ -351,10 +385,103 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
         if (updateError) throw updateError;
 
-        // Create journal entries
-        // ... (entry creation logic as in the original handleSubmit)
+        // Simple posting logic: recreate double-entry rows for trial balance
+        // Remove prior entries to avoid duplicates (transaction_entries and ledger_entries)
+        await supabase.from("transaction_entries").delete().eq("transaction_id", editData.id);
+        await supabase.from("ledger_entries").delete().eq("transaction_id", editData.id);
 
-        toast({ title: "Success", description: "Transaction allocated successfully" });
+        const sanitizedDescription = form.description.trim();
+        const amountAbs = Math.abs(amountNum || 0);
+        
+        // Resolve company id for ledger insert
+        let effectiveCompanyId = companyId;
+        if (!effectiveCompanyId || effectiveCompanyId.trim() === "") {
+          try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+              const { data: prof } = await supabase
+                .from('profiles')
+                .select('company_id')
+                .eq('user_id', user.id)
+                .single();
+              if (prof?.company_id) {
+                effectiveCompanyId = prof.company_id as string;
+              }
+            }
+          } catch {}
+        }
+        if (!effectiveCompanyId || effectiveCompanyId.trim() === "") {
+          toast({ 
+            title: "Company context missing", 
+            description: "Company ID is required to post ledger entries.", 
+            variant: "destructive" 
+          });
+          return;
+        }
+        const simpleEntries = [
+          {
+            transaction_id: editData.id,
+            account_id: form.debitAccount,
+            debit: amountAbs,
+            credit: 0,
+            description: sanitizedDescription,
+            status: "approved"
+          },
+          {
+            transaction_id: editData.id,
+            account_id: form.creditAccount,
+            debit: 0,
+            credit: amountAbs,
+            description: sanitizedDescription,
+            status: "approved"
+          }
+        ];
+
+        const { error: entriesErr } = await supabase
+          .from("transaction_entries")
+          .insert(simpleEntries);
+        if (entriesErr) throw entriesErr;
+
+        // Also insert into ledger_entries so AFS/Trial Balance sees the amounts
+        const ledgerRows = [
+          {
+            company_id: effectiveCompanyId,
+            transaction_id: editData.id,
+            account_id: form.debitAccount,
+            entry_date: form.date,
+            description: sanitizedDescription,
+            debit: amountAbs,
+            credit: 0,
+            is_reversed: false,
+          },
+          {
+            company_id: effectiveCompanyId,
+            transaction_id: editData.id,
+            account_id: form.creditAccount,
+            entry_date: form.date,
+            description: sanitizedDescription,
+            debit: 0,
+            credit: amountAbs,
+            is_reversed: false,
+          }
+        ];
+
+        const { error: ledgerErr } = await supabase
+          .from("ledger_entries")
+          .insert(ledgerRows);
+        if (ledgerErr) throw ledgerErr;
+
+        // Optional: mark transaction approved for clarity in UI
+        await supabase.from("transactions").update({ status: "approved" }).eq("id", editData.id);
+
+        // Optional: refresh AFS/trial balance cache (if available)
+        try {
+          if (companyId) {
+            await supabase.rpc('refresh_afs_cache', { _company_id: companyId });
+          }
+        } catch {}
+
+        toast({ title: "Success", description: "Transaction posted to Trial Balance" });
         onOpenChange(false);
         onSuccess();
         return;
@@ -731,6 +858,58 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       // Entries created successfully: mark transaction as approved
       await supabase.from('transactions').update({ status: 'approved' }).eq('id', transaction.id);
 
+      // Mirror entries into ledger_entries for AFS/TB materialized view
+      try {
+        // Clean any prior ledger rows for safety (should be none for new transaction)
+        await supabase.from('ledger_entries').delete().eq('transaction_id', transaction.id);
+        // Guard: ensure transaction id exists
+        if (!transaction?.id) {
+          throw new Error('Missing transaction ID for ledger posting');
+        }
+        // Resolve company id for ledger insert
+        let effectiveCompanyId = companyId;
+        if (!effectiveCompanyId || effectiveCompanyId.trim() === '') {
+          try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+              const { data: prof } = await supabase
+                .from('profiles')
+                .select('company_id')
+                .eq('user_id', user.id)
+                .single();
+              if (prof?.company_id) {
+                effectiveCompanyId = prof.company_id as string;
+              }
+            }
+          } catch {}
+        }
+        if (!effectiveCompanyId || effectiveCompanyId.trim() === '') {
+          throw new Error('Company ID missing for ledger posting');
+        }
+
+        const ledgerRowsNew = sanitizedEntries.map(e => ({
+          company_id: effectiveCompanyId,
+          transaction_id: transaction.id,
+          account_id: e.account_id,
+          entry_date: form.date,
+          description: sanitizedDescription,
+          debit: e.debit || 0,
+          credit: e.credit || 0,
+          is_reversed: false,
+        }));
+
+        const { error: ledgerInsErr } = await supabase
+          .from('ledger_entries')
+          .insert(ledgerRowsNew);
+        if (ledgerInsErr) {
+          console.error('Ledger entries insert error:', ledgerInsErr);
+          throw ledgerInsErr;
+        }
+      } catch (ledErr: any) {
+        // If ledger insert fails, surface a toast but continue, as transaction_entries exist
+        toast({ title: 'Warning', description: `Posted entries saved, but AFS ledger sync failed: ${ledErr.message}` });
+      }
+
       // Update bank balance if bank account is involved
       if (bankAccountId) {
         const debitAccount = accounts.find(a => a.id === form.debitAccount);
@@ -754,13 +933,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       // Refresh AFS/trial balance cache after posting
       try {
-        const { data: profileForRefresh } = await supabase
-          .from("profiles")
-          .select("company_id")
-          .eq("user_id", user.id)
-          .single();
-        if (profileForRefresh?.company_id) {
-          await supabase.rpc('refresh_afs_cache', { _company_id: profileForRefresh.company_id });
+        if (companyId) {
+          await supabase.rpc('refresh_afs_cache', { _company_id: companyId });
         }
       } catch {}
 
@@ -956,11 +1130,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 <div>
                   <Label htmlFor="debitAccount">Debit Account *</Label>
                   <Select value={form.debitAccount} onValueChange={(val) => {
-                    setForm({ ...form, debitAccount: val });
-                    // If the selected debit account is the same as the credit account, clear the credit account
-                    if (form.creditAccount === val) {
-                      setForm({ ...form, creditAccount: "" });
-                    }
+                    // Update atomically to avoid overwriting with stale state
+                    setForm(prev => ({
+                      ...prev,
+                      debitAccount: val,
+                      creditAccount: prev.creditAccount === val ? "" : prev.creditAccount,
+                    }));
                   }} disabled={debitAccounts.length === 0}>
                     <SelectTrigger id="debitAccount">
                       <SelectValue placeholder="Select debit account" />
@@ -981,11 +1156,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 <div>
                   <Label htmlFor="creditAccount">Credit Account *</Label>
                   <Select value={form.creditAccount} onValueChange={(val) => {
-                    setForm({ ...form, creditAccount: val });
-                    // If the selected credit account is the same as the debit account, clear the debit account
-                    if (form.debitAccount === val) {
-                      setForm({ ...form, debitAccount: "" });
-                    }
+                    // Update atomically to avoid overwriting with stale state
+                    setForm(prev => ({
+                      ...prev,
+                      creditAccount: val,
+                      debitAccount: prev.debitAccount === val ? "" : prev.debitAccount,
+                    }));
                   }} disabled={creditAccounts.length === 0}>
                     <SelectTrigger id="creditAccount">
                       <SelectValue placeholder="Select credit account" />

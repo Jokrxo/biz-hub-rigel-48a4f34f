@@ -3,6 +3,7 @@ import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SalesOverviewReal } from "@/components/Sales/SalesOverviewReal";
+import { ARDashboard } from "@/components/Sales/ARDashboard";
 import { SalesInvoices } from "@/components/Sales/SalesInvoices";
 import { SalesQuotes } from "@/components/Sales/SalesQuotes";
 import { SalesProducts } from "@/components/Sales/SalesProducts";
@@ -23,6 +24,7 @@ export default function SalesPage() {
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="ar-dashboard">AR Dashboard</TabsTrigger>
               <TabsTrigger value="invoices">Invoices</TabsTrigger>
               <TabsTrigger value="quotes">Quotes</TabsTrigger>
               <TabsTrigger value="products">Products</TabsTrigger>
@@ -30,6 +32,10 @@ export default function SalesPage() {
 
             <TabsContent value="overview">
               <SalesOverviewReal />
+            </TabsContent>
+
+            <TabsContent value="ar-dashboard">
+              <ARDashboard />
             </TabsContent>
 
             <TabsContent value="invoices">

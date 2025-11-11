@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
-import { RefreshCw, Download, Eye } from "lucide-react";
+import { RefreshCw, Download, Eye, Calendar, FileDown } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -31,6 +31,10 @@ interface LedgerEntry {
 
 export const GAAPFinancialStatements = () => {
   const [loading, setLoading] = useState(false);
+  const [periodMode, setPeriodMode] = useState<'monthly' | 'annual'>('annual');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0,7)); // YYYY-MM
+  const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
+  const [activeTab, setActiveTab] = useState<string>('balance-sheet');
   const [periodStart, setPeriodStart] = useState(() => {
     const date = new Date();
     date.setMonth(0, 1); // January 1st
@@ -48,10 +52,48 @@ export const GAAPFinancialStatements = () => {
     difference: number;
     error_message: string;
   } | null>(null);
+  const [cashFlow, setCashFlow] = useState<{
+    operating_inflows: number;
+    operating_outflows: number;
+    net_cash_from_operations: number;
+    investing_inflows: number;
+    investing_outflows: number;
+    net_cash_from_investing: number;
+    financing_inflows: number;
+    financing_outflows: number;
+    net_cash_from_financing: number;
+    opening_cash_balance: number;
+    closing_cash_balance: number;
+    net_change_in_cash: number;
+  } | null>(null);
 
   useEffect(() => {
     loadFinancialData();
   }, [periodStart, periodEnd]);
+
+  useEffect(() => {
+    // Recompute period range when mode/month/year changes
+    if (periodMode === 'monthly') {
+      // selectedMonth format YYYY-MM
+      const [y, m] = selectedMonth.split('-').map((v) => parseInt(v, 10));
+      const start = new Date(y, m - 1, 1);
+      const end = new Date(y, m, 0); // last day of month
+      setPeriodStart(start.toISOString().split('T')[0]);
+      setPeriodEnd(end.toISOString().split('T')[0]);
+    } else {
+      const start = new Date(selectedYear, 0, 1);
+      const end = new Date(selectedYear, 11, 31);
+      setPeriodStart(start.toISOString().split('T')[0]);
+      setPeriodEnd(end.toISOString().split('T')[0]);
+    }
+  }, [periodMode, selectedMonth, selectedYear]);
+
+  // Load cash flow whenever cash-flow tab is active or period changes
+  useEffect(() => {
+    if (activeTab === 'cash-flow') {
+      loadCashFlow();
+    }
+  }, [activeTab, periodStart, periodEnd]);
 
   const loadFinancialData = async () => {
     setLoading(true);
@@ -59,13 +101,13 @@ export const GAAPFinancialStatements = () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
-      const { data: profile } = await supabase
+      const { data: companyProfile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user.id)
         .single();
 
-      if (!profile?.company_id) throw new Error("Company not found");
+      if (!companyProfile?.company_id) throw new Error("Company not found");
 
       // Get trial balance from secure function
       const { data: tbData, error: tbError } = await supabase
@@ -76,7 +118,7 @@ export const GAAPFinancialStatements = () => {
 
       // Validate accounting equation
       const { data: equation, error: eqError } = await supabase
-        .rpc('validate_accounting_equation', { _company_id: profile.company_id });
+        .rpc('validate_accounting_equation', { _company_id: companyProfile.company_id });
 
       if (eqError) throw eqError;
       if (equation && equation.length > 0) {
@@ -99,17 +141,80 @@ export const GAAPFinancialStatements = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data: profile } = await supabase
+    const { data: companyProfile } = await supabase
       .from("profiles")
       .select("company_id")
       .eq("user_id", user.id)
       .single();
 
-    if (!profile?.company_id) return;
+    if (!companyProfile?.company_id) return;
 
-    await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
+    await supabase.rpc('refresh_afs_cache', { _company_id: companyProfile.company_id });
     await loadFinancialData();
     toast({ title: "Success", description: "Financial statements refreshed" });
+  };
+
+  const handleExport = async (type: 'pdf' | 'excel') => {
+    try {
+      if (type === 'pdf') {
+        window.print();
+        return;
+      }
+      // Build simple CSV for Excel
+      const header = ['Account Code', 'Account Name', 'Type', 'Normal Balance', 'Debits', 'Credits', 'Balance'];
+      const rows = trialBalance.map(r => [
+        r.account_code,
+        r.account_name,
+        r.account_type,
+        r.normal_balance,
+        r.total_debits,
+        r.total_credits,
+        r.balance,
+      ]);
+      const csv = [header, ...rows]
+        .map(cols => cols.map(v => `"${String(v).replace(/"/g,'""')}"`).join(','))
+        .join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const label = periodMode === 'monthly' ? selectedMonth : `${selectedYear}`;
+      a.download = `AFS_${label}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      toast({ title: 'Export error', description: e.message || 'Could not export', variant: 'destructive' });
+    }
+  };
+
+  const loadCashFlow = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .single();
+      if (!profile?.company_id) return;
+      const { data, error } = await supabase.rpc('get_cash_flow_statement', {
+        _company_id: profile.company_id,
+        _period_start: periodStart,
+        _period_end: periodEnd,
+      });
+      if (error) throw error;
+      if (Array.isArray(data) && data.length > 0) {
+        const cf = data[0];
+        setCashFlow(cf);
+      } else {
+        setCashFlow(null);
+      }
+    } catch (e) {
+      // Non-fatal if cash flow RPC missing; keep UI responsive
+      setCashFlow(null);
+    }
   };
 
   const handleDrilldown = async (accountId: string, accountName: string) => {
@@ -377,6 +482,101 @@ export const GAAPFinancialStatements = () => {
     );
   };
 
+  const renderCashFlowStatement = () => {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="text-center w-full mb-2">
+            <h2 className="text-2xl font-bold">Cash Flow Statement</h2>
+            <p className="text-muted-foreground">For the period {periodStart} to {periodEnd}</p>
+          </div>
+          <div className="w-0" />
+        </div>
+
+        {!cashFlow && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">No cash flow data loaded.</p>
+            <Button variant="outline" onClick={loadCashFlow}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Load Cash Flow
+            </Button>
+          </div>
+        )}
+
+        {cashFlow && (
+          <div className="space-y-6">
+            {/* Operating Activities */}
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold border-b-2 pb-2">Operating Activities</h3>
+              <div className="flex justify-between">
+                <span>Cash Inflows</span>
+                <span className="font-mono">R {cashFlow.operating_inflows.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Cash Outflows</span>
+                <span className="font-mono">(R {cashFlow.operating_outflows.toLocaleString()})</span>
+              </div>
+              <div className="flex justify-between py-2 text-lg font-semibold border-t">
+                <span>Net Cash from Operations</span>
+                <span className="font-mono">R {cashFlow.net_cash_from_operations.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Investing Activities */}
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold border-b-2 pb-2">Investing Activities</h3>
+              <div className="flex justify-between">
+                <span>Cash Inflows</span>
+                <span className="font-mono">R {cashFlow.investing_inflows.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Cash Outflows</span>
+                <span className="font-mono">(R {cashFlow.investing_outflows.toLocaleString()})</span>
+              </div>
+              <div className="flex justify-between py-2 text-lg font-semibold border-t">
+                <span>Net Cash from Investing</span>
+                <span className="font-mono">R {cashFlow.net_cash_from_investing.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Financing Activities */}
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold border-b-2 pb-2">Financing Activities</h3>
+              <div className="flex justify-between">
+                <span>Cash Inflows</span>
+                <span className="font-mono">R {cashFlow.financing_inflows.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Cash Outflows</span>
+                <span className="font-mono">(R {cashFlow.financing_outflows.toLocaleString()})</span>
+              </div>
+              <div className="flex justify-between py-2 text-lg font-semibold border-t">
+                <span>Net Cash from Financing</span>
+                <span className="font-mono">R {cashFlow.net_cash_from_financing.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* Net Change and Balances */}
+            <div className="space-y-2">
+              <div className="flex justify-between py-2 text-lg font-bold border-t-2 border-b-2">
+                <span>NET CHANGE IN CASH</span>
+                <span className="font-mono">R {cashFlow.net_change_in_cash.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Opening Cash Balance</span>
+                <span className="font-mono">R {cashFlow.opening_cash_balance.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Closing Cash Balance</span>
+                <span className="font-mono">R {cashFlow.closing_cash_balance.toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -392,42 +592,79 @@ export const GAAPFinancialStatements = () => {
           <h1 className="text-3xl font-bold">GAAP Financial Statements</h1>
           <p className="text-muted-foreground">Annual Financial Statements with drill-down</p>
         </div>
-        <Button onClick={handleRefresh} disabled={loading}>
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Refresh AFS
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={handleRefresh} disabled={loading}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh AFS
+          </Button>
+          <Button variant="outline" onClick={() => handleExport('pdf')}>
+            <FileDown className="h-4 w-4 mr-2" />
+            Download PDF
+          </Button>
+          <Button variant="outline" onClick={() => handleExport('excel')}>
+            <Download className="h-4 w-4 mr-2" />
+            Download Excel
+          </Button>
+        </div>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>Reporting Period</CardTitle>
         </CardHeader>
-        <CardContent className="flex gap-4">
-          <div className="flex-1">
-            <Label htmlFor="periodStart">Period Start</Label>
-            <Input
-              id="periodStart"
-              type="date"
-              value={periodStart}
-              onChange={(e) => setPeriodStart(e.target.value)}
-            />
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Label>Mode</Label>
+            <div className="flex gap-2">
+              <Button variant={periodMode === 'monthly' ? 'default' : 'outline'} size="sm" onClick={() => setPeriodMode('monthly')}>Monthly</Button>
+              <Button variant={periodMode === 'annual' ? 'default' : 'outline'} size="sm" onClick={() => setPeriodMode('annual')}>Annual</Button>
+            </div>
           </div>
-          <div className="flex-1">
-            <Label htmlFor="periodEnd">Period End</Label>
-            <Input
-              id="periodEnd"
-              type="date"
-              value={periodEnd}
-              onChange={(e) => setPeriodEnd(e.target.value)}
-            />
+
+          {periodMode === 'monthly' ? (
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <Label htmlFor="selectedMonth">Month</Label>
+                <Input id="selectedMonth" type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+              </div>
+            </div>
+          ) : (
+            <div className="flex gap-4">
+              <div className="flex-1">
+                <Label htmlFor="selectedYear">Year</Label>
+                <Input id="selectedYear" type="number" min={1900} max={2100} value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value || `${new Date().getFullYear()}`, 10))} />
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <Label htmlFor="periodStart">Period Start</Label>
+              <Input
+                id="periodStart"
+                type="date"
+                value={periodStart}
+                onChange={(e) => setPeriodStart(e.target.value)}
+              />
+            </div>
+            <div className="flex-1">
+              <Label htmlFor="periodEnd">Period End</Label>
+              <Input
+                id="periodEnd"
+                type="date"
+                value={periodEnd}
+                onChange={(e) => setPeriodEnd(e.target.value)}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="balance-sheet">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="balance-sheet">Statement of Financial Position</TabsTrigger>
           <TabsTrigger value="income">Income Statement</TabsTrigger>
+          <TabsTrigger value="cash-flow">Cash Flow Statement</TabsTrigger>
         </TabsList>
 
         <TabsContent value="balance-sheet">
@@ -442,6 +679,14 @@ export const GAAPFinancialStatements = () => {
           <Card>
             <CardContent className="pt-6">
               {renderIncomeStatement()}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="cash-flow">
+          <Card>
+            <CardContent className="pt-6">
+              {renderCashFlowStatement()}
             </CardContent>
           </Card>
         </TabsContent>

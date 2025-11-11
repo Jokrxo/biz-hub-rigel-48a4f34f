@@ -182,6 +182,15 @@ export const ChartOfAccountsManagement = () => {
   const [editingAccount, setEditingAccount] = useState<Account | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("all");
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const TRANSACTION_TYPES = [
+    { key: "deposit", label: "Deposit" },
+    { key: "payment", label: "Payment" },
+    { key: "expense", label: "Expense" },
+    { key: "income", label: "Income" },
+    { key: "transfer", label: "Transfer" },
+  ];
+  const [mappings, setMappings] = useState<Record<string, { debit_account_id: string | null; credit_account_id: string | null }>>({});
   
   const [formData, setFormData] = useState({
     account_code: "",
@@ -191,6 +200,7 @@ export const ChartOfAccountsManagement = () => {
 
   useEffect(() => {
     loadAccounts();
+    loadMappings();
   }, []);
 
   const loadAccounts = async () => {
@@ -203,6 +213,7 @@ export const ChartOfAccountsManagement = () => {
         .single();
 
       if (!profile) return;
+      setCompanyId(profile.company_id);
 
       const { data, error } = await supabase
         .from("chart_of_accounts")
@@ -246,6 +257,62 @@ export const ChartOfAccountsManagement = () => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadMappings = async () => {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .single();
+      if (!profile) return;
+      setCompanyId(profile.company_id);
+
+      const { data, error } = await supabase
+        .from("transaction_type_mappings")
+        .select("transaction_type, debit_account_id, credit_account_id")
+        .eq("company_id", profile.company_id);
+
+      if (error) {
+        // If table is missing, don’t crash — show info toast and use empty defaults
+        toast({ title: "Info", description: "Mapping table not found; using empty defaults.", variant: "secondary" });
+        setMappings({});
+        return;
+      }
+
+      const map: Record<string, { debit_account_id: string | null; credit_account_id: string | null }> = {};
+      (data || []).forEach((row: any) => {
+        map[row.transaction_type] = {
+          debit_account_id: row.debit_account_id || null,
+          credit_account_id: row.credit_account_id || null,
+        };
+      });
+      setMappings(map);
+    } catch (error: any) {
+      // Swallow errors to avoid blocking the rest of the page
+      console.warn("loadMappings error", error);
+    }
+  };
+
+  const saveMappings = async () => {
+    try {
+      if (!companyId) throw new Error("Company context not found");
+      const payload = TRANSACTION_TYPES.map(tt => ({
+        company_id: companyId,
+        transaction_type: tt.key,
+        debit_account_id: mappings[tt.key]?.debit_account_id || null,
+        credit_account_id: mappings[tt.key]?.credit_account_id || null,
+      }));
+
+      const { error } = await supabase
+        .from("transaction_type_mappings")
+        .upsert(payload, { onConflict: "company_id,transaction_type" });
+      if (error) throw error;
+      toast({ title: "Saved", description: "Transaction type mappings updated" });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
 
@@ -608,6 +675,72 @@ export const ChartOfAccountsManagement = () => {
                 )}
               </TableBody>
             </Table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Transaction Type → Account Mapping */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Transaction Type Mappings</CardTitle>
+          <CardDescription>
+            Define default debit and credit accounts for each transaction type.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid md:grid-cols-2 gap-4">
+            {TRANSACTION_TYPES.map(tt => (
+              <div key={tt.key} className="rounded-md border p-4">
+                <div className="font-semibold mb-2">{tt.label}</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label>Debit Account</Label>
+                    <Select
+                      value={mappings[tt.key]?.debit_account_id || ""}
+                      onValueChange={(val) => setMappings(prev => ({
+                        ...prev,
+                        [tt.key]: { ...prev[tt.key], debit_account_id: val }
+                      }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select account" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {accounts.map(a => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.account_code} — {a.account_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Credit Account</Label>
+                    <Select
+                      value={mappings[tt.key]?.credit_account_id || ""}
+                      onValueChange={(val) => setMappings(prev => ({
+                        ...prev,
+                        [tt.key]: { ...prev[tt.key], credit_account_id: val }
+                      }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select account" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {accounts.map(a => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.account_code} — {a.account_name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={saveMappings} className="bg-gradient-primary">Save Mappings</Button>
           </div>
         </CardContent>
       </Card>
