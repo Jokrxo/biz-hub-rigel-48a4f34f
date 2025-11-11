@@ -206,8 +206,21 @@ export const GAAPFinancialStatements = () => {
       });
       if (error) throw error;
       if (Array.isArray(data) && data.length > 0) {
-        const cf = data[0];
-        setCashFlow(cf);
+        // Server returns the exact shape; trust server-side accounting logic
+        setCashFlow(data[0] as {
+          operating_inflows: number;
+          operating_outflows: number;
+          net_cash_from_operations: number;
+          investing_inflows: number;
+          investing_outflows: number;
+          net_cash_from_investing: number;
+          financing_inflows: number;
+          financing_outflows: number;
+          net_cash_from_financing: number;
+          opening_cash_balance: number;
+          closing_cash_balance: number;
+          net_change_in_cash: number;
+        });
       } else {
         setCashFlow(null);
       }
