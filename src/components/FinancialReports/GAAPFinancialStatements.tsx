@@ -109,11 +109,8 @@ export const GAAPFinancialStatements = () => {
 
       if (!companyProfile?.company_id) throw new Error("Company not found");
 
-      // Get trial balance from secure function
-      const { data: tbData, error: tbError } = await supabase
-        .rpc('get_trial_balance_for_company');
-
-      if (tbError) throw tbError;
+      // Fetch period-scoped trial balance using transaction entry dates
+      const tbData = await fetchTrialBalanceForPeriod(companyProfile.company_id, periodStart, periodEnd);
       setTrialBalance(tbData || []);
 
       // Validate accounting equation
@@ -208,20 +205,7 @@ export const GAAPFinancialStatements = () => {
         });
         if (error) throw error;
         if (Array.isArray(data) && data.length > 0) {
-          const cf = (data as unknown as Array<{
-            operating_inflows: number;
-            operating_outflows: number;
-            net_cash_from_operations: number;
-            investing_inflows: number;
-            investing_outflows: number;
-            net_cash_from_investing: number;
-            financing_inflows: number;
-            financing_outflows: number;
-            net_cash_from_financing: number;
-            opening_cash_balance: number;
-            closing_cash_balance: number;
-            net_change_in_cash: number;
-          }>)[0];
+          const cf = (data as any)[0];
           setCashFlow(cf);
           return;
         }
@@ -257,13 +241,38 @@ export const GAAPFinancialStatements = () => {
           closing_cash_balance: toNumber(d.closing_cash_balance ?? d.closing_cash),
           net_change_in_cash: toNumber(d.net_change_in_cash ?? d.net_cash_flow),
         };
+        // If legacy returns zeros while we have transactions, compute a local fallback
+        const isAllZero = [
+          cf.operating_inflows,
+          cf.operating_outflows,
+          cf.net_cash_from_operations,
+          cf.investing_inflows,
+          cf.investing_outflows,
+          cf.net_cash_from_investing,
+          cf.financing_inflows,
+          cf.financing_outflows,
+          cf.net_cash_from_financing,
+          cf.opening_cash_balance,
+          cf.closing_cash_balance,
+          cf.net_change_in_cash,
+        ].every(v => Math.abs(v || 0) < 0.001);
+
+        if (isAllZero) {
+          const local = await computeCashFlowFallback(profile.company_id, periodStart, periodEnd);
+          if (local) {
+            setCashFlow(local);
+            return;
+          }
+        }
         setCashFlow(cf);
       } else {
-        setCashFlow(null);
+        // No data; compute local fallback
+        const local = await computeCashFlowFallback(profile.company_id, periodStart, periodEnd);
+        setCashFlow(local);
       }
-    } catch (e) {
-      toast({ title: 'Cash Flow Error', description: (e as any)?.message || 'Failed to load cash flow data', variant: 'destructive' });
-      setCashFlow(null);
+    } catch (e: any) {
+      console.error('Cash flow load error', e);
+      toast({ title: 'Cash flow error', description: e.message || 'Could not load cash flow', variant: 'destructive' });
     }
   };
 
@@ -288,7 +297,7 @@ export const GAAPFinancialStatements = () => {
   // GAAP Statement of Financial Position (Balance Sheet)
   const renderStatementOfFinancialPosition = () => {
     const currentAssets = trialBalance.filter(r =>
-      r.account_type === 'asset' &&
+      r.account_type.toLowerCase() === 'asset' &&
       (r.account_name.toLowerCase().includes('cash') ||
        r.account_name.toLowerCase().includes('bank') ||
        r.account_name.toLowerCase().includes('receivable') ||
@@ -297,11 +306,11 @@ export const GAAPFinancialStatements = () => {
     );
     
     const nonCurrentAssets = trialBalance.filter(r =>
-      r.account_type === 'asset' && !currentAssets.includes(r)
+      r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r)
     );
     
     const currentLiabilities = trialBalance.filter(r =>
-      r.account_type === 'liability' &&
+      r.account_type.toLowerCase() === 'liability' &&
       (r.account_name.toLowerCase().includes('payable') ||
        r.account_name.toLowerCase().includes('sars') ||
        r.account_name.toLowerCase().includes('vat') ||
@@ -309,10 +318,38 @@ export const GAAPFinancialStatements = () => {
     );
     
     const nonCurrentLiabilities = trialBalance.filter(r =>
-      r.account_type === 'liability' && !currentLiabilities.includes(r)
+      r.account_type.toLowerCase() === 'liability' && !currentLiabilities.includes(r)
     );
     
-    const equity = trialBalance.filter(r => r.account_type === 'equity');
+    const equity = trialBalance.filter(r => r.account_type.toLowerCase() === 'equity');
+
+    // Compute net profit for the period to roll into retained earnings
+    const revenueRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+    const expenseRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'expense');
+    const totalRevenue = revenueRows.reduce((sum, r) => sum + r.balance, 0);
+    const totalExpenses = expenseRows.reduce((sum, r) => sum + r.balance, 0);
+    const netProfitForPeriod = totalRevenue - totalExpenses;
+
+    // Prepare equity display rows with retained earnings adjusted by net profit
+    const retainedIndex = equity.findIndex(r => r.account_name.toLowerCase().includes('retained earning'));
+    let equityDisplay: any[] = [...equity];
+    if (retainedIndex >= 0) {
+      const retained = equity[retainedIndex];
+      const adjusted = { ...retained, balance: retained.balance + netProfitForPeriod };
+      equityDisplay.splice(retainedIndex, 1, adjusted);
+    } else {
+      const syntheticRetained: any = {
+        account_id: 'retained-synthetic',
+        account_code: '—',
+        account_name: 'Retained Earnings (adjusted)',
+        account_type: 'equity',
+        normal_balance: 'credit',
+        total_debits: 0,
+        total_credits: 0,
+        balance: netProfitForPeriod,
+      };
+      equityDisplay.push(syntheticRetained);
+    }
 
     const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0);
     const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + r.balance, 0);
@@ -322,7 +359,7 @@ export const GAAPFinancialStatements = () => {
     const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
     const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
     
-    const totalEquity = equity.reduce((sum, r) => sum + r.balance, 0);
+    const totalEquity = equityDisplay.reduce((sum, r) => sum + r.balance, 0);
 
     return (
       <div className="space-y-6">
@@ -415,9 +452,8 @@ export const GAAPFinancialStatements = () => {
         <div className="space-y-4 mt-8">
           <h3 className="text-xl font-bold border-b-2 pb-2">EQUITY</h3>
           <div className="pl-4">
-            {equity.map(row => (
-              <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
-                   onClick={() => handleDrilldown(row.account_id, row.account_name)}>
+            {equityDisplay.map(row => (
+              <div key={row.account_id || row.account_code} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded">
                 <span>{row.account_code} - {row.account_name}</span>
                 <span className="font-mono">R {row.balance.toLocaleString()}</span>
               </div>
@@ -450,7 +486,7 @@ export const GAAPFinancialStatements = () => {
 
   // GAAP Income Statement
   const renderIncomeStatement = () => {
-    const revenue = trialBalance.filter(r => r.account_type === 'revenue');
+    const revenue = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
     const expenses = trialBalance.filter(r => r.account_type === 'expense');
     const costOfSales = expenses.filter(r => r.account_name.toLowerCase().includes('cost of') || r.account_code.startsWith('50'));
     const operatingExpenses = expenses.filter(r => !costOfSales.includes(r));
@@ -773,4 +809,181 @@ export const GAAPFinancialStatements = () => {
       )}
     </div>
   );
+};
+
+// Period-scoped trial balance computation using transaction_entries joined to transactions.transaction_date
+const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
+  const startDateObj = new Date(start);
+  const startISO = startDateObj.toISOString();
+  const endDateObj = new Date(end);
+  endDateObj.setHours(23, 59, 59, 999);
+  const endISO = endDateObj.toISOString();
+
+  const { data, error } = await supabase
+    .from('chart_of_accounts')
+    .select(`
+      id,
+      account_code,
+      account_name,
+      account_type,
+      transaction_entries (
+        debit,
+        credit,
+        transactions!inner (
+          transaction_date
+        )
+      )
+    `)
+    .eq('company_id', companyId)
+    .eq('is_active', true)
+    .not('transaction_entries.transactions.transaction_date', 'is', null)
+    .gte('transaction_entries.transactions.transaction_date', startISO)
+    .lte('transaction_entries.transactions.transaction_date', endISO)
+    .order('account_code');
+
+  if (error) throw error;
+
+  const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
+
+  (data || []).forEach((acc: any) => {
+    let sumDebit = 0;
+    let sumCredit = 0;
+    (acc.transaction_entries || []).forEach((le: any) => {
+      const dStr = le.transactions?.transaction_date;
+      const d = dStr ? new Date(dStr) : null;
+      if (d && d >= startDateObj && d <= endDateObj) {
+        sumDebit += Number(le.debit || 0);
+        sumCredit += Number(le.credit || 0);
+      }
+    });
+
+    const type = (acc.account_type || '').toLowerCase();
+    const naturalDebit = type === 'asset' || type === 'expense';
+    const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+
+    if (Math.abs(balance) > 0.01) {
+      trialBalance.push({
+        account_id: acc.id,
+        account_code: acc.account_code,
+        account_name: acc.account_name,
+        account_type: acc.account_type,
+        balance
+      });
+    }
+  });
+
+  return trialBalance;
+};
+
+const computeCashFlowFallback = async (companyId: string, start: string, end: string) => {
+  try {
+    const startDateObj = new Date(start);
+    const startISO = startDateObj.toISOString();
+    const endDateObj = new Date(end);
+    endDateObj.setHours(23, 59, 59, 999);
+    const endISO = endDateObj.toISOString();
+
+    // Fetch period entries with account metadata
+    const { data: periodEntries } = await supabase
+      .from('transaction_entries')
+      .select(`
+        debit, credit,
+        transactions!inner ( transaction_date, company_id, status ),
+        chart_of_accounts!inner ( id, account_name, account_type, is_cash_equivalent )
+      `)
+      .eq('transactions.company_id', companyId)
+      .eq('transactions.status', 'posted')
+      .gte('transactions.transaction_date', startISO)
+      .lte('transactions.transaction_date', endISO);
+
+    const sumBy = (pred: (row: any) => boolean, fn: (row: any) => number) =>
+      (periodEntries || []).filter(pred).reduce((s, row) => s + fn(row), 0);
+
+    const isIncome = (t: string) => {
+      const v = (t || '').toLowerCase();
+      return v === 'income' || v === 'revenue';
+    };
+
+    const isExpense = (t: string) => (t || '').toLowerCase() === 'expense';
+
+    const incomeSum = sumBy(
+      (row) => isIncome(row.chart_of_accounts?.account_type || ''),
+      (row) => Number(row.credit || 0) - Number(row.debit || 0)
+    );
+
+    const expenseSum = sumBy(
+      (row) => isExpense(row.chart_of_accounts?.account_type || ''),
+      (row) => Number(row.debit || 0) - Number(row.credit || 0)
+    );
+
+    const v_net_profit = incomeSum - expenseSum;
+
+    const v_depreciation = sumBy(
+      (row) => String(row.chart_of_accounts?.account_name || '').toLowerCase().includes('depreciation'),
+      (row) => Number(row.debit || 0)
+    );
+
+    const v_receivables_change = sumBy(
+      (row) => String(row.chart_of_accounts?.account_name || '').toLowerCase().includes('receivable'),
+      (row) => Number(row.debit || 0) - Number(row.credit || 0)
+    );
+
+    const v_payables_change = sumBy(
+      (row) => String(row.chart_of_accounts?.account_name || '').toLowerCase().includes('payable'),
+      (row) => Number(row.credit || 0) - Number(row.debit || 0)
+    );
+
+    const v_operating = v_net_profit + v_depreciation - v_receivables_change + v_payables_change;
+
+    const v_investing = sumBy(
+      (row) => String(row.chart_of_accounts?.account_name || '').toLowerCase().includes('fixed asset'),
+      (row) => (Number(row.debit || 0) - Number(row.credit || 0)) * -1
+    );
+
+    const v_financing = sumBy(
+      (row) => {
+        const name = String(row.chart_of_accounts?.account_name || '').toLowerCase();
+        return name.includes('loan') || name.includes('capital');
+      },
+      (row) => Number(row.credit || 0) - Number(row.debit || 0)
+    );
+
+    // Opening cash: entries before period on cash-equivalent accounts
+    const { data: openingEntries } = await supabase
+      .from('transaction_entries')
+      .select(`
+        debit, credit,
+        transactions!inner ( transaction_date, company_id, status ),
+        chart_of_accounts!inner ( is_cash_equivalent )
+      `)
+      .eq('transactions.company_id', companyId)
+      .eq('transactions.status', 'posted')
+      .lt('transactions.transaction_date', startISO)
+      .eq('chart_of_accounts.is_cash_equivalent', true);
+
+    const v_opening_cash = (openingEntries || []).reduce(
+      (s, row) => s + (Number(row.debit || 0) - Number(row.credit || 0)),
+      0
+    );
+
+    const v_closing_cash = v_opening_cash + v_operating + v_investing + v_financing;
+
+    return {
+      operating_inflows: v_operating > 0 ? v_operating : 0,
+      operating_outflows: v_operating < 0 ? -v_operating : 0,
+      net_cash_from_operations: v_operating,
+      investing_inflows: v_investing > 0 ? v_investing : 0,
+      investing_outflows: v_investing < 0 ? -v_investing : 0,
+      net_cash_from_investing: v_investing,
+      financing_inflows: v_financing > 0 ? v_financing : 0,
+      financing_outflows: v_financing < 0 ? -v_financing : 0,
+      net_cash_from_financing: v_financing,
+      opening_cash_balance: v_opening_cash,
+      closing_cash_balance: v_closing_cash,
+      net_change_in_cash: v_operating + v_investing + v_financing,
+    };
+  } catch (e) {
+    console.error('Fallback cash flow error', e);
+    return null;
+  }
 };
