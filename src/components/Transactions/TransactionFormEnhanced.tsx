@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import React from "react";
+import { lazy, Suspense } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +11,14 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info } from "lucide-react";
+import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandDialog } from "@/components/ui/command";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 import { z } from "zod";
+
+const ChartOfAccountsLazy = lazy(() => import("./ChartOfAccountsManagement").then(m => ({ default: m.ChartOfAccountsManagement })));
 
 
 interface Account {
@@ -109,6 +116,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [companyId, setCompanyId] = useState<string>('');
   const [debitSearch, setDebitSearch] = useState("");
   const [creditSearch, setCreditSearch] = useState("");
+  const [debitSearchOpen, setDebitSearchOpen] = useState(false);
+  const [creditSearchOpen, setCreditSearchOpen] = useState(false);
+  const [debitIncludeAll, setDebitIncludeAll] = useState(false);
+  const [creditIncludeAll, setCreditIncludeAll] = useState(false);
+  const [chartOpen, setChartOpen] = useState(false);
   
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -165,12 +177,15 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   }, [open, editData]);
 
   // Filter accounts based on search input
-  const filteredDebitAccounts = debitAccounts.filter(a => 
-    a.account_name.toLowerCase().includes(debitSearch.toLowerCase()) || 
+  const debitSource = debitIncludeAll ? accounts : debitAccounts;
+  const creditSource = creditIncludeAll ? accounts : creditAccounts;
+
+  const filteredDebitAccounts = debitSource.filter(a =>
+    a.account_name.toLowerCase().includes(debitSearch.toLowerCase()) ||
     a.account_code.toLowerCase().includes(debitSearch.toLowerCase())
   );
 
-  const filteredCreditAccounts = creditAccounts.filter(a =>
+  const filteredCreditAccounts = creditSource.filter(a =>
     a.account_name.toLowerCase().includes(creditSearch.toLowerCase()) ||
     a.account_code.toLowerCase().includes(creditSearch.toLowerCase())
   );
@@ -952,12 +967,26 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   };
 
   const selectedElement = ACCOUNTING_ELEMENTS.find(e => e.value === form.element);
-  const debitAccountName = debitAccounts.find(a => a.id === form.debitAccount)?.account_name;
-  const creditAccountName = creditAccounts.find(a => a.id === form.creditAccount)?.account_name;
+  const debitAccountName = accounts.find(a => a.id === form.debitAccount)?.account_name;
+  const creditAccountName = accounts.find(a => a.id === form.creditAccount)?.account_name;
+  const [accountSearchOpen, setAccountSearchOpen] = useState(false);
+  const [accountSearchTarget, setAccountSearchTarget] = useState<"debit"|"credit">("debit");
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setAccountSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   if (!open) return null;
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -1122,32 +1151,86 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           {/* Step 3: Account Selection */}
           {form.element && (
             <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
-              <h3 className="font-semibold text-lg flex items-center gap-2">
-                <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">3</span>
-                Account Selection (Double-Entry)
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-lg flex items-center gap-2">
+                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">3</span>
+                  Account Selection (Double-Entry)
+                </h3>
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline" onClick={() => setChartOpen(true)}>Chart of Accounts</Button>
+                  <Button type="button" variant="outline" onClick={() => setAccountSearchOpen(true)}>Search Accounts (Ctrl+K)</Button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="debitAccount">Debit Account *</Label>
-                  <Select value={form.debitAccount} onValueChange={(val) => {
-                    // Update atomically to avoid overwriting with stale state
-                    setForm(prev => ({
-                      ...prev,
-                      debitAccount: val,
-                      creditAccount: prev.creditAccount === val ? "" : prev.creditAccount,
-                    }));
-                  }} disabled={debitAccounts.length === 0}>
-                    <SelectTrigger id="debitAccount">
-                      <SelectValue placeholder="Select debit account" />
-                    </SelectTrigger>
-                    <SelectContent position="popper" className="max-h-64 overflow-auto">
-                      {debitAccounts.map((acc) => (
-                        <SelectItem key={acc.id} value={acc.id}>
-                          {acc.account_code} - {acc.account_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <Select value={form.debitAccount} onValueChange={(val) => {
+                        // Update atomically to avoid overwriting with stale state
+                        setForm(prev => ({
+                          ...prev,
+                          debitAccount: val,
+                          creditAccount: prev.creditAccount === val ? "" : prev.creditAccount,
+                        }));
+                      }} disabled={debitSource.length === 0}>
+                        <SelectTrigger id="debitAccount">
+                          <SelectValue placeholder="Select debit account" />
+                        </SelectTrigger>
+                        <SelectContent position="popper" className="max-h-64 overflow-auto">
+                          {debitSource.map((acc) => (
+                            <SelectItem key={acc.id} value={acc.id}>
+                              {acc.account_code} - {acc.account_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Popover open={debitSearchOpen} onOpenChange={setDebitSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search debit accounts">
+                          <Search className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                        <PopoverContent className="w-96 p-0 z-[70]">
+                        <Command>
+                          <div className="p-2">
+                             <CommandInput
+                               placeholder="Search debit accounts..."
+                               value={debitSearch}
+                               onValueChange={(val: string) => setDebitSearch(val)}
+                               autoFocus
+                             />
+                            <div className="flex items-center justify-between px-2 py-2 text-xs text-muted-foreground">
+                              <span>Include all accounts</span>
+                              <Switch checked={debitIncludeAll} onCheckedChange={setDebitIncludeAll} />
+                            </div>
+                          </div>
+                          <CommandList>
+                            <CommandEmpty>No matching accounts.</CommandEmpty>
+                            <CommandGroup heading="Debit Accounts">
+                              {(debitSearch ? filteredDebitAccounts : debitSource).map((acc) => (
+                                <CommandItem
+                                  key={acc.id}
+                                  onSelect={() => {
+                                    setForm(prev => ({
+                                      ...prev,
+                                      debitAccount: acc.id,
+                                      creditAccount: prev.creditAccount === acc.id ? "" : prev.creditAccount,
+                                    }));
+                                    setDebitSearchOpen(false);
+                                    setDebitSearch("");
+                                  }}
+                                >
+                                  {acc.account_code} - {acc.account_name}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     Showing {selectedElement?.debitType} accounts
                   </p>
@@ -1155,25 +1238,73 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
                 <div>
                   <Label htmlFor="creditAccount">Credit Account *</Label>
-                  <Select value={form.creditAccount} onValueChange={(val) => {
-                    // Update atomically to avoid overwriting with stale state
-                    setForm(prev => ({
-                      ...prev,
-                      creditAccount: val,
-                      debitAccount: prev.debitAccount === val ? "" : prev.debitAccount,
-                    }));
-                  }} disabled={creditAccounts.length === 0}>
-                    <SelectTrigger id="creditAccount">
-                      <SelectValue placeholder="Select credit account" />
-                    </SelectTrigger>
-                    <SelectContent position="popper" className="max-h-64 overflow-auto">
-                      {creditAccounts.map((acc) => (
-                        <SelectItem key={acc.id} value={acc.id}>
-                          {acc.account_code} - {acc.account_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <Select value={form.creditAccount} onValueChange={(val) => {
+                        // Update atomically to avoid overwriting with stale state
+                        setForm(prev => ({
+                          ...prev,
+                          creditAccount: val,
+                          debitAccount: prev.debitAccount === val ? "" : prev.debitAccount,
+                        }));
+                      }} disabled={creditSource.length === 0}>
+                        <SelectTrigger id="creditAccount">
+                          <SelectValue placeholder="Select credit account" />
+                        </SelectTrigger>
+                        <SelectContent position="popper" className="max-h-64 overflow-auto">
+                          {creditSource.map((acc) => (
+                            <SelectItem key={acc.id} value={acc.id}>
+                              {acc.account_code} - {acc.account_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Popover open={creditSearchOpen} onOpenChange={setCreditSearchOpen}>
+                      <PopoverTrigger asChild>
+                        <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search credit accounts">
+                          <Search className="h-4 w-4" />
+                        </Button>
+                      </PopoverTrigger>
+                        <PopoverContent className="w-96 p-0 z-[70]">
+                        <Command>
+                          <div className="p-2">
+                             <CommandInput
+                               placeholder="Search credit accounts..."
+                               value={creditSearch}
+                               onValueChange={(val: string) => setCreditSearch(val)}
+                               autoFocus
+                             />
+                            <div className="flex items-center justify-between px-2 py-2 text-xs text-muted-foreground">
+                              <span>Include all accounts</span>
+                              <Switch checked={creditIncludeAll} onCheckedChange={setCreditIncludeAll} />
+                            </div>
+                          </div>
+                          <CommandList>
+                            <CommandEmpty>No matching accounts.</CommandEmpty>
+                            <CommandGroup heading="Credit Accounts">
+                              {(creditSearch ? filteredCreditAccounts : creditSource).map((acc) => (
+                                <CommandItem
+                                  key={acc.id}
+                                  onSelect={() => {
+                                    setForm(prev => ({
+                                      ...prev,
+                                      creditAccount: acc.id,
+                                      debitAccount: prev.debitAccount === acc.id ? "" : prev.debitAccount,
+                                    }));
+                                    setCreditSearchOpen(false);
+                                    setCreditSearch("");
+                                  }}
+                                >
+                                  {acc.account_code} - {acc.account_name}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     Showing {selectedElement?.creditTypes?.join('/')} accounts
                   </p>
@@ -1273,5 +1404,49 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       </DialogContent>
     </Dialog>
 
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading Chart of Accounts...</div>}>
+      <Sheet open={chartOpen} onOpenChange={setChartOpen}>
+        <SheetContent side="right" className="sm:max-w-xl w-full z-[60]">
+          <div className="h-full overflow-auto">
+            <ChartOfAccountsLazy />
+          </div>
+        </SheetContent>
+      </Sheet>
+    </Suspense>
+
+    {/* Global Account Search */}
+    <CommandDialog open={accountSearchOpen} onOpenChange={setAccountSearchOpen}>
+      <div className="flex items-center justify-between px-4 pt-4">
+        <div className="text-sm text-muted-foreground">Assign to:</div>
+        <div className="flex gap-1">
+          <Button variant={accountSearchTarget === "debit" ? "default" : "outline"} size="sm" onClick={() => setAccountSearchTarget("debit")}>Debit</Button>
+          <Button variant={accountSearchTarget === "credit" ? "default" : "outline"} size="sm" onClick={() => setAccountSearchTarget("credit")}>Credit</Button>
+        </div>
+      </div>
+      <Command>
+        <CommandInput placeholder="Search all accounts..." autoFocus />
+        <CommandList>
+          <CommandEmpty>No accounts found.</CommandEmpty>
+          <CommandGroup heading="Accounts">
+            {accounts.map(acc => (
+              <CommandItem
+                key={acc.id}
+                onSelect={() => {
+                  setForm(prev => ({
+                    ...prev,
+                    debitAccount: accountSearchTarget === "debit" ? acc.id : prev.debitAccount,
+                    creditAccount: accountSearchTarget === "credit" ? acc.id : prev.creditAccount,
+                  }));
+                  setAccountSearchOpen(false);
+                }}
+              >
+                {acc.account_code} - {acc.account_name}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </CommandList>
+      </Command>
+    </CommandDialog>
+    </>
   );
 };

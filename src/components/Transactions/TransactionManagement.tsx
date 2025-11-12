@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Suspense, lazy } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,10 @@ import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Cal
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/lib/supabase";
-import { TransactionFormEnhanced as TransactionForm } from "./TransactionFormEnhanced";
+// Lazy-load the enhanced transaction form to avoid route-level stalls if it errors
+const TransactionFormLazy = lazy(() =>
+  import("./TransactionFormEnhanced").then((m) => ({ default: m.TransactionFormEnhanced }))
+);
 import { exportTransactionsToExcel, exportTransactionsToPDF } from "@/lib/export-utils";
 
 interface Transaction {
@@ -332,12 +335,14 @@ export const TransactionManagement = () => {
           New Transaction
         </Button>
         
-        <TransactionForm
-          open={open}
-          onOpenChange={setOpen}
-          onSuccess={load}
-          editData={editData}
-        />
+        <Suspense fallback={null}>
+          <TransactionFormLazy
+            open={open}
+            onOpenChange={setOpen}
+            onSuccess={load}
+            editData={editData}
+          />
+        </Suspense>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">

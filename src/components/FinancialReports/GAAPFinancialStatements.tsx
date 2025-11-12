@@ -199,33 +199,70 @@ export const GAAPFinancialStatements = () => {
         .eq('user_id', user.id)
         .single();
       if (!profile?.company_id) return;
-      const { data, error } = await supabase.rpc('get_cash_flow_statement', {
+      // Try new RPC first
+      try {
+        const { data, error } = await supabase.rpc('get_cash_flow_statement' as any, {
+          _company_id: profile.company_id,
+          _period_start: periodStart,
+          _period_end: periodEnd,
+        });
+        if (error) throw error;
+        if (Array.isArray(data) && data.length > 0) {
+          const cf = (data as unknown as Array<{
+            operating_inflows: number;
+            operating_outflows: number;
+            net_cash_from_operations: number;
+            investing_inflows: number;
+            investing_outflows: number;
+            net_cash_from_investing: number;
+            financing_inflows: number;
+            financing_outflows: number;
+            net_cash_from_financing: number;
+            opening_cash_balance: number;
+            closing_cash_balance: number;
+            net_change_in_cash: number;
+          }>)[0];
+          setCashFlow(cf);
+          return;
+        }
+      } catch {}
+
+      // Fallback to legacy RPC
+      const { data: legacy, error: legacyErr } = await supabase.rpc('generate_cash_flow' as any, {
         _company_id: profile.company_id,
         _period_start: periodStart,
         _period_end: periodEnd,
       });
-      if (error) throw error;
-      if (Array.isArray(data) && data.length > 0) {
-        // Server returns the exact shape; trust server-side accounting logic
-        setCashFlow(data[0] as {
-          operating_inflows: number;
-          operating_outflows: number;
-          net_cash_from_operations: number;
-          investing_inflows: number;
-          investing_outflows: number;
-          net_cash_from_investing: number;
-          financing_inflows: number;
-          financing_outflows: number;
-          net_cash_from_financing: number;
-          opening_cash_balance: number;
-          closing_cash_balance: number;
-          net_change_in_cash: number;
-        });
+      if (legacyErr) throw legacyErr;
+      if (Array.isArray(legacy) && legacy.length > 0) {
+        const d: any = legacy[0] || {};
+        const toNumber = (v: any) => {
+          const n = typeof v === 'number' ? v : parseFloat(String(v || 0));
+          return isNaN(n) ? 0 : n;
+        };
+        const oa = toNumber(d.operating_activities);
+        const ia = toNumber(d.investing_activities);
+        const fa = toNumber(d.financing_activities);
+        const cf = {
+          operating_inflows: toNumber(d.operating_inflows ?? (oa > 0 ? oa : 0)),
+          operating_outflows: toNumber(d.operating_outflows ?? (oa < 0 ? -oa : 0)),
+          net_cash_from_operations: toNumber(d.net_cash_from_operations ?? oa),
+          investing_inflows: toNumber(d.investing_inflows ?? (ia > 0 ? ia : 0)),
+          investing_outflows: toNumber(d.investing_outflows ?? (ia < 0 ? -ia : 0)),
+          net_cash_from_investing: toNumber(d.net_cash_from_investing ?? ia),
+          financing_inflows: toNumber(d.financing_inflows ?? (fa > 0 ? fa : 0)),
+          financing_outflows: toNumber(d.financing_outflows ?? (fa < 0 ? -fa : 0)),
+          net_cash_from_financing: toNumber(d.net_cash_from_financing ?? fa),
+          opening_cash_balance: toNumber(d.opening_cash_balance ?? d.opening_cash),
+          closing_cash_balance: toNumber(d.closing_cash_balance ?? d.closing_cash),
+          net_change_in_cash: toNumber(d.net_change_in_cash ?? d.net_cash_flow),
+        };
+        setCashFlow(cf);
       } else {
         setCashFlow(null);
       }
     } catch (e) {
-      // Non-fatal if cash flow RPC missing; keep UI responsive
+      toast({ title: 'Cash Flow Error', description: (e as any)?.message || 'Failed to load cash flow data', variant: 'destructive' });
       setCashFlow(null);
     }
   };
