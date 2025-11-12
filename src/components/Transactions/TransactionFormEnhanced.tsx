@@ -971,6 +971,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const creditAccountName = accounts.find(a => a.id === form.creditAccount)?.account_name;
   const [accountSearchOpen, setAccountSearchOpen] = useState(false);
   const [accountSearchTarget, setAccountSearchTarget] = useState<"debit"|"credit">("debit");
+  const [globalSearch, setGlobalSearch] = useState("");
+  const [globalIncludeAll, setGlobalIncludeAll] = useState(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -988,7 +990,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl overflow-visible">
+          <div className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
           <DialogTitle className="text-2xl flex items-center gap-2">
             Smart Double-Entry Transaction
@@ -1158,7 +1161,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 </h3>
                 <div className="flex gap-2">
                   <Button type="button" variant="outline" onClick={() => setChartOpen(true)}>Chart of Accounts</Button>
-                  <Button type="button" variant="outline" onClick={() => setAccountSearchOpen(true)}>Search Accounts (Ctrl+K)</Button>
+                  <Button type="button" variant="outline" onClick={() => { setAccountSearchTarget("debit"); setAccountSearchOpen(true); }}>Search Accounts (Ctrl+K)</Button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1192,7 +1195,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           <Search className="h-4 w-4" />
                         </Button>
                       </PopoverTrigger>
-                        <PopoverContent className="w-96 p-0 z-[70]">
+                        <PopoverContent className="w-96 p-0 z-[80]">
                         <Command>
                           <div className="p-2">
                              <CommandInput
@@ -1229,12 +1232,21 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           </CommandList>
                         </Command>
                       </PopoverContent>
-                    </Popover>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Showing {selectedElement?.debitType} accounts
-                  </p>
+                  </Popover>
+                  <Button
+                    type="button"
+                    variant="link"
+                    size="sm"
+                    className="px-2"
+                    onClick={() => { setAccountSearchTarget("debit"); setAccountSearchOpen(true); }}
+                  >
+                    Search
+                  </Button>
                 </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Showing {selectedElement?.debitType} accounts
+                </p>
+              </div>
 
                 <div>
                   <Label htmlFor="creditAccount">Credit Account *</Label>
@@ -1266,7 +1278,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           <Search className="h-4 w-4" />
                         </Button>
                       </PopoverTrigger>
-                        <PopoverContent className="w-96 p-0 z-[70]">
+                        <PopoverContent className="w-96 p-0 z-[80]">
                         <Command>
                           <div className="p-2">
                              <CommandInput
@@ -1303,7 +1315,16 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           </CommandList>
                         </Command>
                       </PopoverContent>
-                    </Popover>
+                      </Popover>
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="px-2"
+                        onClick={() => { setAccountSearchTarget("credit"); setAccountSearchOpen(true); }}
+                      >
+                        Search
+                      </Button>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     Showing {selectedElement?.creditTypes?.join('/')} accounts
@@ -1401,6 +1422,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             {loading ? "Posting Transaction..." : "Post Transaction"}
           </Button>
         </DialogFooter>
+          </div>
       </DialogContent>
     </Dialog>
 
@@ -1415,7 +1437,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     </Suspense>
 
     {/* Global Account Search */}
-    <CommandDialog open={accountSearchOpen} onOpenChange={setAccountSearchOpen}>
+    <CommandDialog open={accountSearchOpen} onOpenChange={(o) => {
+      setAccountSearchOpen(o);
+      if (!o) { setGlobalSearch(""); }
+    }}>
       <div className="flex items-center justify-between px-4 pt-4">
         <div className="text-sm text-muted-foreground">Assign to:</div>
         <div className="flex gap-1">
@@ -1424,25 +1449,46 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         </div>
       </div>
       <Command>
-        <CommandInput placeholder="Search all accounts..." autoFocus />
+        <div className="p-2">
+          <CommandInput
+            placeholder="Search accounts by code or name..."
+            value={globalSearch}
+            onValueChange={(val: string) => setGlobalSearch(val)}
+            autoFocus
+          />
+          <div className="flex items-center justify-between px-2 py-2 text-xs text-muted-foreground">
+            <span>Include all accounts</span>
+            <Switch checked={globalIncludeAll} onCheckedChange={setGlobalIncludeAll} />
+          </div>
+        </div>
         <CommandList>
           <CommandEmpty>No accounts found.</CommandEmpty>
-          <CommandGroup heading="Accounts">
-            {accounts.map(acc => (
-              <CommandItem
-                key={acc.id}
-                onSelect={() => {
-                  setForm(prev => ({
-                    ...prev,
-                    debitAccount: accountSearchTarget === "debit" ? acc.id : prev.debitAccount,
-                    creditAccount: accountSearchTarget === "credit" ? acc.id : prev.creditAccount,
-                  }));
-                  setAccountSearchOpen(false);
-                }}
-              >
-                {acc.account_code} - {acc.account_name}
-              </CommandItem>
-            ))}
+          <CommandGroup heading={accountSearchTarget === "debit" ? "Debit Accounts" : "Credit Accounts"}>
+            {(() => {
+              const source = accountSearchTarget === "debit"
+                ? (globalIncludeAll ? accounts : debitSource)
+                : (globalIncludeAll ? accounts : creditSource);
+              const filtered = source.filter(a =>
+                (a.account_name || '').toLowerCase().includes(globalSearch.toLowerCase()) ||
+                (a.account_code || '').toLowerCase().includes(globalSearch.toLowerCase())
+              );
+              const list = globalSearch ? filtered : source;
+              return list.map(acc => (
+                <CommandItem
+                  key={acc.id}
+                  onSelect={() => {
+                    setForm(prev => ({
+                      ...prev,
+                      debitAccount: accountSearchTarget === "debit" ? acc.id : prev.debitAccount,
+                      creditAccount: accountSearchTarget === "credit" ? acc.id : prev.creditAccount,
+                    }));
+                    setAccountSearchOpen(false);
+                  }}
+                >
+                  {acc.account_code} - {acc.account_name}
+                </CommandItem>
+              ));
+            })()}
           </CommandGroup>
         </CommandList>
       </Command>

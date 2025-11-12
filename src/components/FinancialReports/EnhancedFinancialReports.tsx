@@ -66,24 +66,38 @@ export const EnhancedFinancialReports = () => {
       if (!profile?.company_id) return;
       setCompanyId(profile.company_id);
 
-      // Fetch trial balance data directly (all amounts flow from TB to AFS)
-      // Note: Date filtering should be handled at transaction level, but for AFS we use full TB
-      const { data: trialBalance, error: tbError } = await supabase
-        .rpc('get_trial_balance_for_company');
+      // Defensive data check: warn on transactions with NULL dates (excluded from reports)
+      try {
+        const { count: nullTxCount } = await supabase
+          .from('transactions')
+          .select('id', { count: 'exact', head: true })
+          .eq('company_id', profile.company_id)
+          .is('transaction_date', null);
 
-      if (tbError) throw tbError;
-
-      if (trialBalance) {
-        const pl = generateProfitLoss(trialBalance);
-        const bs = generateBalanceSheet(trialBalance);
-        const cf = await generateCashFlow(profile.company_id);
-        
-        setReportData({
-          profitLoss: pl,
-          balanceSheet: bs,
-          cashFlow: cf
-        });
+        if ((nullTxCount || 0) > 0) {
+          toast({
+            title: 'Missing transaction dates detected',
+            description: `${nullTxCount} transaction(s) have no date and were excluded from period reports. Please update their dates for accurate reporting.`,
+            variant: 'warning'
+          });
+        }
+      } catch (warnErr) {
+        // Non-blocking warning check
+        console.warn('Null-date check failed:', warnErr);
       }
+
+      // Build trial balance for the selected period from ledger entries
+      const trialBalance = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
+
+      const pl = generateProfitLoss(trialBalance);
+      const bs = generateBalanceSheet(trialBalance);
+      const cf = await generateCashFlow(profile.company_id);
+      
+      setReportData({
+        profitLoss: pl,
+        balanceSheet: bs,
+        cashFlow: cf
+      });
     } catch (error: any) {
       console.error('Error loading financial data:', error);
       toast({
@@ -94,6 +108,74 @@ export const EnhancedFinancialReports = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Fetch period-specific trial balance using transaction_entries joined to transactions.date within range
+  const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
+    // Ensure valid ISO date strings
+    const startDateObj = new Date(start);
+    const startISO = startDateObj.toISOString();
+    const endDateObj = new Date(end);
+    // Set to end-of-day to make filter inclusive
+    endDateObj.setHours(23, 59, 59, 999);
+    const endISO = endDateObj.toISOString();
+
+    const { data, error } = await supabase
+      .from('chart_of_accounts')
+      .select(`
+        id,
+        account_code,
+        account_name,
+        account_type,
+        transaction_entries (
+          debit,
+          credit,
+          transactions!inner (
+            transaction_date
+          )
+        )
+      `)
+      .eq('company_id', companyId)
+      .eq('is_active', true)
+      .not('transaction_entries.transactions.transaction_date', 'is', null)
+      .gte('transaction_entries.transactions.transaction_date', startISO)
+      .lte('transaction_entries.transactions.transaction_date', endISO)
+      .order('account_code');
+
+    if (error) throw error;
+
+    const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
+
+    (data || []).forEach((acc: any) => {
+      let sumDebit = 0;
+      let sumCredit = 0;
+      (acc.transaction_entries || []).forEach((le: any) => {
+        const dStr = le.transactions?.transaction_date;
+        const d = dStr ? new Date(dStr) : null;
+        // Strict period enforcement: only include entries with valid date within range
+        if (d && d >= startDateObj && d <= endDateObj) {
+          sumDebit += Number(le.debit || 0);
+          sumCredit += Number(le.credit || 0);
+        }
+      });
+
+      // Map sign convention by account type
+      const type = (acc.account_type || '').toLowerCase();
+      const naturalDebit = type === 'asset' || type === 'expense';
+      const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+
+      if (Math.abs(balance) > 0.01) {
+        trialBalance.push({
+          account_id: acc.id,
+          account_code: acc.account_code,
+          account_name: acc.account_name,
+          account_type: acc.account_type,
+          balance
+        });
+      }
+    });
+
+    return trialBalance;
   };
 
   const generateProfitLoss = (trialBalance: any[]): any[] => {
@@ -391,6 +473,49 @@ export const EnhancedFinancialReports = () => {
             <Calendar className="h-5 w-5 text-primary" />
             Period Selection
           </CardTitle>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const now = new Date();
+                const start = new Date(now.getFullYear(), now.getMonth(), 1);
+                const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                setPeriodStart(start.toISOString().split('T')[0]);
+                setPeriodEnd(end.toISOString().split('T')[0]);
+              }}
+            >
+              This Month
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const now = new Date();
+                const q = Math.floor(now.getMonth() / 3); // 0-based quarter
+                const qStartMonth = q * 3;
+                const start = new Date(now.getFullYear(), qStartMonth, 1);
+                const end = new Date(now.getFullYear(), qStartMonth + 3, 0);
+                setPeriodStart(start.toISOString().split('T')[0]);
+                setPeriodEnd(end.toISOString().split('T')[0]);
+              }}
+            >
+              This Quarter
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const now = new Date();
+                const start = new Date(now.getFullYear(), 0, 1);
+                const end = new Date(now.getFullYear(), 11, 31);
+                setPeriodStart(start.toISOString().split('T')[0]);
+                setPeriodEnd(end.toISOString().split('T')[0]);
+              }}
+            >
+              This Year
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
