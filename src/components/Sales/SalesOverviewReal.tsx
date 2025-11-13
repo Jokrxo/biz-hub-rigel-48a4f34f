@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FileText, AlertCircle, CheckCircle, Clock } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
+
+type StatusScope = 'sent_overdue' | 'include_draft';
 
 export const SalesOverviewReal = () => {
   const { toast } = useToast();
@@ -19,6 +23,7 @@ export const SalesOverviewReal = () => {
     days61to90: 0,
     days90plus: 0
   });
+  const [statusScope, setStatusScope] = useState<StatusScope>('sent_overdue');
 
   useEffect(() => {
     loadSalesData();
@@ -38,6 +43,8 @@ export const SalesOverviewReal = () => {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => { loadSalesData(); }, [statusScope]);
 
   const loadSalesData = async () => {
     try {
@@ -68,7 +75,15 @@ export const SalesOverviewReal = () => {
       
       let current = 0, days31to60 = 0, days61to90 = 0, days90plus = 0;
 
-      invoices?.forEach(inv => {
+      const rows = invoices || [];
+      const filtered = rows.filter(inv => {
+        if (statusScope === 'sent_overdue') {
+          return inv.status === 'sent' || inv.status === 'overdue';
+        }
+        return inv.status !== 'paid' && inv.status !== 'cancelled';
+      });
+
+      filtered.forEach(inv => {
         const amount = inv.total_amount || 0;
         
         if (inv.status === 'paid') {
@@ -133,6 +148,23 @@ export const SalesOverviewReal = () => {
 
   return (
     <div className="space-y-6 mt-6">
+      <Card className="card-professional">
+        <CardHeader>
+          <CardTitle>Filters</CardTitle>
+        </CardHeader>
+        <CardContent className="flex gap-4 items-end">
+          <div className="min-w-56">
+            <Label>Statuses</Label>
+            <Select value={statusScope} onValueChange={(v) => setStatusScope(v as StatusScope)}>
+              <SelectTrigger className="w-56"><SelectValue placeholder="Statuses" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="sent_overdue">Sent & Overdue</SelectItem>
+                <SelectItem value="include_draft">Include Draft</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {statCards.map((stat) => (
           <Card key={stat.title} className="card-professional">
