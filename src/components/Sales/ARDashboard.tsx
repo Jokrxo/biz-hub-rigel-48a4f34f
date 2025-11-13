@@ -22,6 +22,7 @@ interface InvoiceRow {
 type StatusScope = 'sent_overdue' | 'include_draft';
 
 type AgingBucket = 'current' | 'd1_30' | 'd31_60' | 'd61_90' | 'd91p';
+type AgingRow = { name: string; due: number } & Record<AgingBucket, number>;
 
 const COLORS = ["#3b82f6", "#22c55e", "#ef4444", "#a855f7", "#f59e0b", "#06b6d4", "#64748b", "#84cc16", "#f43f5e", "#0ea5e9"];
 
@@ -34,15 +35,19 @@ export const ARDashboard = () => {
   const [statusScope, setStatusScope] = useState<StatusScope>('include_draft');
 
   useEffect(() => { loadData(); }, [periodStart, periodEnd, customerFilter, statusScope]);
-useEffect(() => {
-  const channel = supabase
-    .channel('ar-dashboard-changes')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
-      loadData();
-    })
-    .subscribe();
-  return () => { supabase.removeChannel(channel); };
-}, []);
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    if (periodEnd !== today) setPeriodEnd(today);
+  }, [periodEnd]);
+  useEffect(() => {
+    const channel = supabase
+      .channel('ar-dashboard-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        loadData();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   const loadData = async () => {
     setLoading(true);
@@ -108,13 +113,24 @@ useEffect(() => {
     const overdue = invoices.filter(r => r.amount_due > 0 && r.due_date && r.due_date < now);
     const overdueTotal = overdue.reduce((sum, r) => sum + (r.amount_due || 0), 0);
 
-    const overdue30 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 30 : false);
-    const overdue90 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 90 : false);
+-    const overdue30 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 30 : false);
+-    const overdue90 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 90 : false);
++    // Under 30 days overdue (1–30)
++    const overdueUnder30 = overdue.filter(r => {
++      const d = r.due_date ? diffDays(r.due_date, now) : 0;
++      return d > 0 && d <= 30;
++    });
++    // 31+ days overdue
++    const overdue30 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 31 : false);
++    // 90+ days overdue
++    const overdue90 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 90 : false);
 
++    const overdueUnder30Total = overdueUnder30.reduce((sum, r) => sum + (r.amount_due || 0), 0);
     const overdue30Total = overdue30.reduce((sum, r) => sum + (r.amount_due || 0), 0);
     const overdue90Total = overdue90.reduce((sum, r) => sum + (r.amount_due || 0), 0);
 
-    return { unpaidTotal, overdueTotal, overdue30Total, overdue90Total };
+-    return { unpaidTotal, overdueTotal, overdue30Total, overdue90Total };
++    return { unpaidTotal, overdueTotal, overdueUnder30Total, overdue30Total, overdue90Total };
   }, [invoices]);
 
   const diffDays = (from?: string | null, to?: string | null) => {
@@ -152,14 +168,15 @@ useEffect(() => {
 
   const agingSummary = useMemo(() => {
     const now = new Date().toISOString().split('T')[0];
-    const rows = new Map<string, { name: string; current: number; d1_30: number; d31_60: number; d61_90: number; d91p: number; due: number }>();
+    const rows = new Map<string, AgingRow>();
     invoices.forEach(r => {
       const key = r.customer_name || 'Unknown';
       const isOverdue = r.amount_due > 0 && r.due_date && r.due_date < now;
       const days = r.due_date ? diffDays(r.due_date, now) : 0;
       const bucket = !isOverdue ? 'current' : days <= 30 ? 'd1_30' : days <= 60 ? 'd31_60' : days <= 90 ? 'd61_90' : 'd91p';
-      const curr = rows.get(key) || { name: key, current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d91p: 0, due: 0 };
-      curr[bucket as keyof typeof curr] += r.amount_due || 0;
+      const curr: AgingRow = rows.get(key) || { name: key, current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d91p: 0, due: 0 };
+      const typedBucket: AgingBucket = bucket as AgingBucket;
+      curr[typedBucket] += r.amount_due || 0;
       curr.due += r.amount_due || 0;
       rows.set(key, curr);
     });
@@ -179,7 +196,7 @@ useEffect(() => {
           </div>
           <div className="flex-1 min-w-56">
             <Label htmlFor="periodEnd">End</Label>
-            <Input id="periodEnd" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+            <Input id="periodEnd" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} disabled />
           </div>
           <div className="min-w-56">
             <Label>Customer</Label>
@@ -215,10 +232,21 @@ useEffect(() => {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      {invoices.length === 0 ? (
+        <Card className="shadow-md">
+          <CardHeader><CardTitle>No invoices match your filters</CardTitle></CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">Try adjusting status or widening the date range. End date is fixed to today.</p>
+          </CardContent>
+        </Card>
+      ) : (
+       <>
+         <div className="grid gap-4 md:grid-cols-4">
         <Card className="shadow-md bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Unpaid invoices amount (in home currency)</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-primary">R {kpis.unpaidTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
         <Card className="shadow-md bg-gradient-to-br from-rose-50 to-white dark:from-rose-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue amount</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-destructive">R {kpis.overdueTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
-        <Card className="shadow-md bg-gradient-to-br from-amber-50 to-white dark:from-amber-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 30+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-600">R {kpis.overdue30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
+-        <Card className="shadow-md bg-gradient-to-br from-amber-50 to-white dark:from-amber-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 30+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-600">R {kpis.overdue30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
++        <Card className="shadow-md bg-gradient-to-br from-amber-50 to-white dark:from-amber-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 1–30 days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-600">R {kpis.overdueUnder30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
++        <Card className="shadow-md bg-gradient-to-br from-amber-100 to-white dark:from-amber-900 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 31+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-700">R {kpis.overdue30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
         <Card className="shadow-md bg-gradient-to-br from-slate-50 to-white dark:from-slate-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 90+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-slate-700 dark:text-slate-200">R {kpis.overdue90Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
       </div>
 
@@ -318,6 +346,8 @@ useEffect(() => {
           </div>
         </CardContent>
       </Card>
+      </>
+      )}
     </div>
   );
 };

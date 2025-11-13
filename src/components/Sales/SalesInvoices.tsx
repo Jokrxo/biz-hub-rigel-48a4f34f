@@ -6,13 +6,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
 import { Download, Mail, Plus, Trash2, FileText } from "lucide-react";
+import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
 
 interface Invoice {
   id: string;
@@ -36,6 +37,7 @@ export const SalesInvoices = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const { isAdmin, isAccountant } = useRoles();
+  const todayStr = new Date().toISOString().split("T")[0];
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -45,6 +47,13 @@ export const SalesInvoices = () => {
     notes: "",
     items: [{ description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
   });
+
+  // Send dialog state (inside component)
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [sendEmail, setSendEmail] = useState<string>('');
+  const [sendMessage, setSendMessage] = useState<string>('');
+  const [sending, setSending] = useState<boolean>(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
 
   useEffect(() => {
     loadData();
@@ -134,7 +143,22 @@ export const SalesInvoices = () => {
       toast({ title: "Permission denied", variant: "destructive" });
       return;
     }
-
+    // Date validation: invoice_date must be today or earlier; due_date (if provided) must be >= invoice_date
+    const invDate = new Date(formData.invoice_date);
+    const dueDate = formData.due_date ? new Date(formData.due_date) : null;
+    const today = new Date(todayStr);
+    if (isNaN(invDate.getTime())) {
+      toast({ title: "Invalid date", description: "Invoice date is not valid.", variant: "destructive" });
+      return;
+    }
+    if (invDate > today) {
+      toast({ title: "Invalid invoice date", description: "Invoice date cannot be in the future.", variant: "destructive" });
+      return;
+    }
+    if (dueDate && dueDate < invDate) {
+      toast({ title: "Invalid due date", description: "Due date cannot be earlier than invoice date.", variant: "destructive" });
+      return;
+    }
     try {
       const { data: profile } = await supabase
         .from("profiles")
@@ -229,6 +253,124 @@ export const SalesInvoices = () => {
     }
   };
 
+  // Helpers for PDF generation and email sending
+  const fetchCompanyForPDF = async (): Promise<any> => {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('name,email,phone,address,tax_number,vat_number,logo_url')
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) {
+      return { name: 'Company' };
+    }
+    return {
+      name: (data as any).name,
+      email: (data as any).email,
+      phone: (data as any).phone,
+      address: (data as any).address,
+      tax_number: (data as any).tax_number ?? null,
+      vat_number: (data as any).vat_number ?? null,
+      logo_url: (data as any).logo_url ?? null,
+    };
+  };
+
+  const fetchInvoiceItemsForPDF = async (invoiceId: string): Promise<any[]> => {
+    const { data, error } = await supabase
+      .from('invoice_items')
+      .select('description,quantity,unit_price,tax_rate')
+      .eq('invoice_id', invoiceId);
+    if (error || !data) return [] as any[];
+    return data as any[];
+  };
+
+  const mapInvoiceForPDF = (inv: any) => ({
+    invoice_number: inv.invoice_number || String(inv.id),
+    invoice_date: inv.invoice_date || new Date().toISOString(),
+    due_date: inv.due_date || null,
+    customer_name: inv.customer_name || inv.customer?.name || 'Customer',
+    customer_email: inv.customer_email || inv.customer?.email || null,
+    notes: inv.notes || null,
+    subtotal: inv.subtotal ?? inv.total_before_tax ?? 0,
+    tax_amount: inv.tax_amount ?? inv.tax ?? 0,
+    total_amount: inv.total_amount ?? inv.total ?? inv.amount ?? 0,
+  });
+
+  const handleDownloadInvoice = async (inv: any) => {
+    try {
+      const [company, items] = await Promise.all([
+        fetchCompanyForPDF(),
+        fetchInvoiceItemsForPDF(inv.id),
+      ]);
+      const dto = mapInvoiceForPDF(inv);
+      const doc = buildInvoicePDF(dto, items, company);
+      const logoDataUrl = await fetchLogoDataUrl(company.logo_url);
+      if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
+      doc.save(`invoice_${dto.invoice_number}.pdf`);
+      toast.success('Invoice PDF downloaded');
+    } catch (e) {
+      console.error(e);
+      toast({ title: 'Error', description: 'Failed to download invoice PDF', variant: 'destructive' });
+    }
+  };
+
+  const openSendDialog = (inv: any) => {
+    setSelectedInvoice(inv);
+    const email = inv.customer_email || inv.customer?.email || '';
+    setSendEmail(email);
+    const totalText = inv.total_amount ?? inv.total ?? inv.amount ?? '';
+    const msg = `Hello,\n\nPlease find your Invoice ${inv.invoice_number}dur company.\nTPDFotal due: R ${totalText}.\n\nThank you.\n`;
+    setSendMessage(msg);
+    setSendDialogOpen(true);
+  };
+
+  const handleSendEmail = async () => {
+    if (!selectedInvoice) return;
+    if (!sendEmail) {
+      toast.error('Please enter recipient email');
+      return;
+    }
+    setSending(true);
+    try {
+      const [company, items] = await Promise.all([
+        fetchCompanyForPDF(),
+        fetchInvoiceItemsForPDF(selectedInvoice.id),
+      ]);
+      const dto = mapInvoiceForPDF(selectedInvoice);
+      const doc = buildInvoicePDF(dto, items, company);
+      const logoDataUrl = await fetchLogoDataUrl(company.logo_url);
+      if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
+      const blob = doc.output('blob');
+      const fileName = `invoice_${dto.invoice_number}.pdf`;
+      const path = `invoices/${fileName}`;
+      const { error: uploadErr } = await supabase.storage
+        .from('invoices')
+        .upload(path, blob, { contentType: 'application/pdf', upsert: true });
+      let publicUrl = '';
+      if (!uploadErr) {
+        const { data } = supabase.storage.from('invoices').getPublicUrl(path);
+        publicUrl = data?.publicUrl || '';
+      }
+      const subject = encodeURIComponent(`Invoice ${dto.invoice_number}`);
+      const bodyLines = [
+        sendMessage,
+        publicUrl ? `\nDownload your invoice: ${publicUrl}` : '',
+      ].join('\n');
+      const body = encodeURIComponent(bodyLines);
+      window.location.href = `mailto:${sendEmail}?subject=${subject}&body=${body}`;
+      await supabase
+        .from('invoices')
+        .update({ status: 'sent', sent_at: new Date().toISOString() })
+        .eq('id', selectedInvoice.id);
+      toast.success('Email compose opened with invoice link');
+      setSendDialogOpen(false);
+    } catch (e) {
+      console.error(e);
+      toast({ title: 'Error', description: 'Failed to prepare email', variant: 'destructive' });
+    } finally {
+      setSending(false);
+    }
+  };
+
   const canEdit = isAdmin || isAccountant;
   const totals = calculateTotals();
 
@@ -294,8 +436,11 @@ export const SalesInvoices = () => {
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-2">
-                      <Button size="sm" variant="outline">
+                      <Button size="sm" variant="outline" onClick={() => handleDownloadInvoice(invoice)}>
                         <Download className="h-3 w-3" />
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => openSendDialog(invoice)}>
+                        <Mail className="h-3 w-3" />
                       </Button>
                       {canEdit && (
                         <Button size="sm" variant="ghost" onClick={() => deleteInvoice(invoice.id)}>
@@ -344,6 +489,7 @@ export const SalesInvoices = () => {
                   type="date"
                   value={formData.invoice_date}
                   onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
+                  max={todayStr}
                   required
                 />
               </div>
@@ -353,6 +499,7 @@ export const SalesInvoices = () => {
                   type="date"
                   value={formData.due_date}
                   onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                  min={formData.invoice_date}
                 />
               </div>
             </div>
@@ -457,6 +604,24 @@ export const SalesInvoices = () => {
               <Button type="submit" className="bg-gradient-primary">Create Invoice</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Send Invoice Dialog */}
+      <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send invoice</DialogTitle>
+            <DialogDescription>Enter recipient email. A professional message is prefilled.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input type="email" placeholder="Recipient email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} />
+            <Textarea rows={6} value={sendMessage} onChange={(e) => setSendMessage(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSendDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSendEmail} disabled={sending}>{sending ? 'Sending…' : 'Send'}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Card>
