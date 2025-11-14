@@ -13,13 +13,13 @@ export default function SalesPage() {
   const location = useLocation();
   const [activeTab, setActiveTab] = useState(() => {
     const tabParam = new URLSearchParams(window.location.search).get('tab');
-    return tabParam || "overview";
+    return tabParam === 'overview' ? 'ar-dashboard' : (tabParam || 'ar-dashboard');
   });
 
   useEffect(() => {
     const tabParam = new URLSearchParams(location.search).get('tab');
     if (tabParam && tabParam !== activeTab) {
-      setActiveTab(tabParam);
+      setActiveTab(tabParam === 'overview' ? 'ar-dashboard' : tabParam);
     }
   }, [location.search]);
 
@@ -35,16 +35,11 @@ export default function SalesPage() {
 
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList>
-              <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="ar-dashboard">AR Dashboard</TabsTrigger>
               <TabsTrigger value="invoices">Invoices</TabsTrigger>
               <TabsTrigger value="quotes">Quotes</TabsTrigger>
               <TabsTrigger value="products">Products</TabsTrigger>
             </TabsList>
-
-            <TabsContent value="overview">
-              <SalesOverviewReal />
-            </TabsContent>
 
             <TabsContent value="ar-dashboard">
               <ARDashboard />

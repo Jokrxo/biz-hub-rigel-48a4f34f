@@ -39,6 +39,7 @@ export const SalesInvoices = () => {
   const { toast } = useToast();
   const { isAdmin, isAccountant } = useRoles();
   const todayStr = new Date().toISOString().split("T")[0];
+  const [posting, setPosting] = useState(false);
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -299,6 +300,134 @@ export const SalesInvoices = () => {
     });
   };
 
+  const getCompanyId = async () => {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("company_id")
+      .eq("user_id", user?.id)
+      .maybeSingle();
+    return profile?.company_id as string;
+  };
+
+  const loadAccounts = async (companyId: string) => {
+    const { data } = await supabase
+      .from("chart_of_accounts")
+      .select("id, account_name, account_type")
+      .eq("company_id", companyId)
+      .eq("is_active", true);
+    return (data || []) as Array<{ id: string; account_name: string; account_type: string }>;
+  };
+
+  const findAccountId = (accounts: Array<{ id: string; account_name: string; account_type: string }>, type: string, keywords: string[]) => {
+    const lower = accounts.map(a => ({ ...a, account_name: (a.account_name || "").toLowerCase(), account_type: (a.account_type || "").toLowerCase() }));
+    const byType = lower.filter(a => a.account_type === type.toLowerCase());
+    const match = byType.find(a => keywords.some(k => a.account_name.includes(k)));
+    return match?.id || byType[0]?.id || null;
+  };
+
+  const ensureNoDuplicatePosting = async (companyId: string, reference: string) => {
+    const { data } = await supabase
+      .from("transactions")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("reference_number", reference)
+      .limit(1);
+    return (data || []).length === 0;
+  };
+
+  const insertEntries = async (
+    companyId: string,
+    txId: string,
+    entryDate: string,
+    description: string,
+    rows: Array<{ account_id: string; debit: number; credit: number }>
+  ) => {
+    const txEntries = rows.map(r => ({ transaction_id: txId, account_id: r.account_id, debit: r.debit, credit: r.credit, description, status: "approved" }));
+    const { error: teErr } = await supabase.from("transaction_entries").insert(txEntries);
+    if (teErr) throw teErr;
+    const ledgerRows = rows.map(r => ({ company_id: companyId, transaction_id: txId, account_id: r.account_id, entry_date: entryDate, description, debit: r.debit, credit: r.credit, is_reversed: false }));
+    const { error: leErr } = await supabase.from("ledger_entries").insert(ledgerRows);
+    if (leErr) throw leErr;
+  };
+
+  const postInvoiceSent = async (inv: any) => {
+    try {
+      setPosting(true);
+      const companyId = await getCompanyId();
+      if (!companyId) return;
+      const canPost = await ensureNoDuplicatePosting(companyId, inv.invoice_number);
+      if (!canPost) return;
+      const accounts = await loadAccounts(companyId);
+      const arId = findAccountId(accounts, "asset", ["receivable", "debtor", "trade"]);
+      const revenueId = findAccountId(accounts, "income", ["sales", "revenue"]) || findAccountId(accounts, "revenue", ["sales", "revenue"]);
+      const vatId = findAccountId(accounts, "liability", ["vat", "sars", "tax"]);
+      if (!arId || !revenueId) {
+        toast({ title: "Missing accounts", description: "Receivable or Revenue accounts not found", variant: "destructive" });
+        return;
+      }
+      const { data: { user: u } } = await supabase.auth.getUser();
+      if (!u) return;
+      const { data: tx } = await supabase
+        .from("transactions")
+        .insert({ company_id: companyId, user_id: u.id, transaction_date: inv.invoice_date, description: `Invoice ${inv.invoice_number} sent to ${inv.customer_name}`, total_amount: Number(inv.total_amount || 0), reference_number: inv.invoice_number, status: "approved" })
+        .select()
+        .single();
+      if (!tx?.id) return;
+      const subtotal = Number(inv.subtotal || 0);
+      const tax = Number(inv.tax_amount || 0);
+      const total = Number(inv.total_amount || 0);
+      const rows: Array<{ account_id: string; debit: number; credit: number }> = [];
+      rows.push({ account_id: arId, debit: total, credit: 0 });
+      rows.push({ account_id: revenueId, debit: 0, credit: subtotal });
+      if (vatId && tax > 0.0001) rows.push({ account_id: vatId, debit: 0, credit: tax });
+      await insertEntries(companyId, tx.id, inv.invoice_date, `Invoice ${inv.invoice_number}`, rows);
+      try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
+    } finally {
+      setPosting(false);
+    }
+  };
+
+  const postInvoicePaid = async (inv: any) => {
+    try {
+      setPosting(true);
+      const companyId = await getCompanyId();
+      if (!companyId) return;
+      const accounts = await loadAccounts(companyId);
+      const bankChartId = findAccountId(accounts, "asset", ["bank", "cash"]);
+      const arId = findAccountId(accounts, "asset", ["receivable", "debtor", "trade"]);
+      if (!bankChartId || !arId) {
+        toast({ title: "Missing accounts", description: "Bank or Receivable accounts not found", variant: "destructive" });
+        return;
+      }
+      const { data: banks } = await supabase
+        .from("bank_accounts")
+        .select("id")
+        .eq("company_id", companyId)
+        .order("created_at")
+        .limit(1);
+      const bankAccountId = (banks || [])[0]?.id || null;
+      const { data: { user: u } } = await supabase.auth.getUser();
+      if (!u) return;
+      const { data: tx } = await supabase
+        .from("transactions")
+        .insert({ company_id: companyId, user_id: u.id, transaction_date: todayStr, description: `Invoice ${inv.invoice_number} payment`, total_amount: Number(inv.total_amount || 0), reference_number: inv.invoice_number, status: "approved", bank_account_id: bankAccountId })
+        .select()
+        .single();
+      if (!tx?.id) return;
+      const total = Number(inv.total_amount || 0);
+      await insertEntries(companyId, tx.id, todayStr, `Payment for ${inv.invoice_number}`, [
+        { account_id: bankChartId, debit: total, credit: 0 },
+        { account_id: arId, debit: 0, credit: total }
+      ]);
+      if (bankAccountId) {
+        try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: total, _operation: 'add' }); } catch {}
+      }
+      try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
+    } finally {
+      setPosting(false);
+    }
+  };
+
   const updateStatus = async (id: string, newStatus: string) => {
     try {
       const { error } = await supabase
@@ -308,6 +437,14 @@ export const SalesInvoices = () => {
 
       if (error) throw error;
       toast({ title: "Success", description: "Invoice status updated" });
+      const inv = invoices.find(i => i.id === id);
+      if (inv) {
+        if (newStatus === "sent") {
+          await postInvoiceSent(inv);
+        } else if (newStatus === "paid") {
+          await postInvoicePaid(inv);
+        }
+      }
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -434,6 +571,7 @@ export const SalesInvoices = () => {
         .from('invoices')
         .update({ status: 'sent', sent_at: new Date().toISOString() })
         .eq('id', selectedInvoice.id);
+      await postInvoiceSent(selectedInvoice);
       toast({ title: 'Success', description: 'Email compose opened with invoice link' });
       setSendDialogOpen(false);
     } catch (e) {
