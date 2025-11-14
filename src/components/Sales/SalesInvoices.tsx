@@ -32,6 +32,7 @@ interface Invoice {
 export const SalesInvoices = () => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const { user } = useAuth();
@@ -45,7 +46,7 @@ export const SalesInvoices = () => {
     invoice_date: new Date().toISOString().split("T")[0],
     due_date: "",
     notes: "",
-    items: [{ description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
+    items: [{ product_id: "", description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
   });
 
   // Send dialog state (inside component)
@@ -90,6 +91,14 @@ export const SalesInvoices = () => {
 
       setCustomers(customersData || []);
 
+      // Load products
+      const { data: productsData } = await supabase
+        .from("products")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("name");
+      setProducts(productsData || []);
+
       // Load invoices
       const { data, error } = await supabase
         .from("invoices")
@@ -109,7 +118,7 @@ export const SalesInvoices = () => {
   const addItem = () => {
     setFormData({
       ...formData,
-      items: [...formData.items, { description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
+      items: [...formData.items, { product_id: "", description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
     });
   };
 
@@ -122,6 +131,30 @@ export const SalesInvoices = () => {
     const newItems = [...formData.items];
     newItems[index] = { ...newItems[index], [field]: value };
     setFormData({ ...formData, items: newItems });
+  };
+
+  const updateItemProduct = (index: number, productId: string) => {
+    const product = products.find((p: any) => String(p.id) === String(productId));
+    const newItems = [...formData.items];
+    newItems[index] = { ...newItems[index], product_id: productId };
+    if (product) {
+      const name = (product.name ?? product.title ?? product.description ?? '').toString();
+      newItems[index].description = name;
+      if (typeof product.price === 'number') {
+        newItems[index].unit_price = product.price;
+      }
+    }
+    setFormData({ ...formData, items: newItems });
+  };
+
+  // Apply selected customer to form (name and email)
+  const applyCustomerSelection = (name: string) => {
+    const selected = customers.find((c: any) => c.name === name);
+    setFormData(prev => ({
+      ...prev,
+      customer_name: name,
+      customer_email: selected?.email ?? "",
+    }));
   };
 
   const calculateTotals = () => {
@@ -141,6 +174,14 @@ export const SalesInvoices = () => {
     e.preventDefault();
     if (!isAdmin && !isAccountant) {
       toast({ title: "Permission denied", variant: "destructive" });
+      return;
+    }
+    if (!formData.customer_name) {
+      toast({ title: "Customer required", description: "Please select a customer.", variant: "destructive" });
+      return;
+    }
+    if (formData.items.some((it: any) => !it.product_id)) {
+      toast({ title: "Product required", description: "Please select a product for each item.", variant: "destructive" });
       return;
     }
     // Date validation: invoice_date must be today or earlier; due_date (if provided) must be >= invoice_date
@@ -222,7 +263,7 @@ export const SalesInvoices = () => {
       invoice_date: new Date().toISOString().split("T")[0],
       due_date: "",
       notes: "",
-      items: [{ description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
+      items: [{ product_id: "", description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
     });
   };
 
@@ -306,7 +347,7 @@ export const SalesInvoices = () => {
       const logoDataUrl = await fetchLogoDataUrl(company.logo_url);
       if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
       doc.save(`invoice_${dto.invoice_number}.pdf`);
-      toast.success('Invoice PDF downloaded');
+      toast({ title: 'Success', description: 'Invoice PDF downloaded' });
     } catch (e) {
       console.error(e);
       toast({ title: 'Error', description: 'Failed to download invoice PDF', variant: 'destructive' });
@@ -318,7 +359,7 @@ export const SalesInvoices = () => {
     const email = inv.customer_email || inv.customer?.email || '';
     setSendEmail(email);
     const totalText = inv.total_amount ?? inv.total ?? inv.amount ?? '';
-    const msg = `Hello,\n\nPlease find your Invoice ${inv.invoice_number}dur company.\nTPDFotal due: R ${totalText}.\n\nThank you.\n`;
+    const msg = `Hello,\n\nPlease find your Invoice ${inv.invoice_number} for our company.\nTotal due: R ${totalText}.\n\nThank you.\n`;
     setSendMessage(msg);
     setSendDialogOpen(true);
   };
@@ -326,7 +367,7 @@ export const SalesInvoices = () => {
   const handleSendEmail = async () => {
     if (!selectedInvoice) return;
     if (!sendEmail) {
-      toast.error('Please enter recipient email');
+      toast({ title: 'Error', description: 'Please enter recipient email', variant: 'destructive' });
       return;
     }
     setSending(true);
@@ -361,7 +402,7 @@ export const SalesInvoices = () => {
         .from('invoices')
         .update({ status: 'sent', sent_at: new Date().toISOString() })
         .eq('id', selectedInvoice.id);
-      toast.success('Email compose opened with invoice link');
+      toast({ title: 'Success', description: 'Email compose opened with invoice link' });
       setSendDialogOpen(false);
     } catch (e) {
       console.error(e);
@@ -464,13 +505,20 @@ export const SalesInvoices = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Customer Name *</Label>
-                <Input
-                  value={formData.customer_name}
-                  onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                  placeholder="Enter customer name"
-                  required
-                />
+                <div className="flex items-center justify-between">
+                  <Label>Customer *</Label>
+                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/sales/customers', '_blank')}>Add customer</Button>
+                </div>
+                <Select value={formData.customer_name} onValueChange={(value) => applyCustomerSelection(value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={customers.length ? "Select customer" : "No customers found"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customers.map((c: any) => (
+                      <SelectItem key={c.id ?? c.name} value={c.name}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label>Customer Email</Label>
@@ -514,7 +562,10 @@ export const SalesInvoices = () => {
 
             <div>
               <div className="flex justify-between items-center mb-2">
-                <Label>Items</Label>
+                <div className="flex items-center gap-3">
+                  <Label>Items</Label>
+                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/sales/products', '_blank')}>Add product</Button>
+                </div>
                 <Button type="button" size="sm" variant="outline" onClick={addItem}>
                   <Plus className="h-4 w-4 mr-2" />
                   Add Item
@@ -525,13 +576,20 @@ export const SalesInvoices = () => {
                 {formData.items.map((item, index) => (
                   <div key={index} className="grid grid-cols-12 gap-2 items-end p-3 border rounded-lg">
                     <div className="col-span-4">
-                      <Label className="text-xs">Description</Label>
-                      <Input
-                        placeholder="Item description"
-                        value={item.description}
-                        onChange={(e) => updateItem(index, "description", e.target.value)}
-                        required
-                      />
+                      <Label className="text-xs">Product</Label>
+                      <Select value={item.product_id || ""} onValueChange={(val) => updateItemProduct(index, val)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder={products.length ? "Select a product" : "No products found"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {products.map((p: any) => (
+                            <SelectItem key={p.id} value={String(p.id)}>
+                              {(p.name ?? p.title ?? p.description ?? `Product ${p.id}`) as string}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="mt-2 text-[11px] text-muted-foreground">{item.description}</div>
                     </div>
                     <div className="col-span-2">
                       <Label className="text-xs">Qty</Label>

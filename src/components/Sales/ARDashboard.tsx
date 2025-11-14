@@ -107,38 +107,37 @@ export const ARDashboard = () => {
     return Array.from(uniq.entries()).map(([id, name]) => ({ id, name }));
   }, [invoices]);
 
+  // Hoisted function to avoid "Cannot access before initialization" runtime
+  function diffDays(from?: string | null, to?: string | null) {
+    if (!from || !to) return 0;
+    const a = new Date(from).getTime();
+    const b = new Date(to).getTime();
+    return Math.floor((b - a) / (1000 * 60 * 60 * 24));
+  }
+
   const kpis = useMemo(() => {
     const now = new Date().toISOString().split('T')[0];
     const unpaidTotal = invoices.reduce((sum, r) => sum + (r.amount_due || 0), 0);
     const overdue = invoices.filter(r => r.amount_due > 0 && r.due_date && r.due_date < now);
     const overdueTotal = overdue.reduce((sum, r) => sum + (r.amount_due || 0), 0);
+    // Under 30 days overdue (1–30)
+    const overdueUnder30 = overdue.filter(r => {
+      const d = r.due_date ? diffDays(r.due_date, now) : 0;
+      return d > 0 && d <= 30;
+    });
+    // 31+ days overdue
+    const overdue30 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 31 : false);
+    // 90+ days overdue
+    const overdue90 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 90 : false);
 
--    const overdue30 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 30 : false);
--    const overdue90 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 90 : false);
-+    // Under 30 days overdue (1–30)
-+    const overdueUnder30 = overdue.filter(r => {
-+      const d = r.due_date ? diffDays(r.due_date, now) : 0;
-+      return d > 0 && d <= 30;
-+    });
-+    // 31+ days overdue
-+    const overdue30 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 31 : false);
-+    // 90+ days overdue
-+    const overdue90 = overdue.filter(r => r.due_date ? diffDays(r.due_date, now) >= 90 : false);
-
-+    const overdueUnder30Total = overdueUnder30.reduce((sum, r) => sum + (r.amount_due || 0), 0);
+    const overdueUnder30Total = overdueUnder30.reduce((sum, r) => sum + (r.amount_due || 0), 0);
     const overdue30Total = overdue30.reduce((sum, r) => sum + (r.amount_due || 0), 0);
     const overdue90Total = overdue90.reduce((sum, r) => sum + (r.amount_due || 0), 0);
 
--    return { unpaidTotal, overdueTotal, overdue30Total, overdue90Total };
-+    return { unpaidTotal, overdueTotal, overdueUnder30Total, overdue30Total, overdue90Total };
+    return { unpaidTotal, overdueTotal, overdueUnder30Total, overdue30Total, overdue90Total };
   }, [invoices]);
 
-  const diffDays = (from?: string | null, to?: string | null) => {
-    if (!from || !to) return 0;
-    const a = new Date(from).getTime();
-    const b = new Date(to).getTime();
-    return Math.floor((b - a) / (1000 * 60 * 60 * 24));
-  };
+  // diffDays hoisted above
 
   const top10Data = useMemo(() => {
     const totals = new Map<string, { name: string; amount: number }>();
@@ -244,9 +243,8 @@ export const ARDashboard = () => {
          <div className="grid gap-4 md:grid-cols-4">
         <Card className="shadow-md bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Unpaid invoices amount (in home currency)</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-primary">R {kpis.unpaidTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
         <Card className="shadow-md bg-gradient-to-br from-rose-50 to-white dark:from-rose-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue amount</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-destructive">R {kpis.overdueTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
--        <Card className="shadow-md bg-gradient-to-br from-amber-50 to-white dark:from-amber-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 30+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-600">R {kpis.overdue30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
-+        <Card className="shadow-md bg-gradient-to-br from-amber-50 to-white dark:from-amber-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 1–30 days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-600">R {kpis.overdueUnder30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
-+        <Card className="shadow-md bg-gradient-to-br from-amber-100 to-white dark:from-amber-900 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 31+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-700">R {kpis.overdue30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
+        <Card className="shadow-md bg-gradient-to-br from-amber-50 to-white dark:from-amber-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 1–30 days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-600">R {kpis.overdueUnder30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
+        <Card className="shadow-md bg-gradient-to-br from-amber-100 to-white dark:from-amber-900 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 31+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-700">R {kpis.overdue30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
         <Card className="shadow-md bg-gradient-to-br from-slate-50 to-white dark:from-slate-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 90+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-slate-700 dark:text-slate-200">R {kpis.overdue90Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
       </div>
 

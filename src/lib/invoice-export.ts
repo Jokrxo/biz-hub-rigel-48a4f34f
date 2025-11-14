@@ -129,3 +129,22 @@ export const addLogoToPDF = (doc: any, logoDataUrl: string) => {
     console.warn('Failed to add logo to PDF', e);
   }
 };
+
+// Fetch a logo image as Data URL suitable for jsPDF.addImage
+export const fetchLogoDataUrl = async (logoUrl?: string | null): Promise<string> => {
+  if (!logoUrl) return '';
+  try {
+    const resp = await fetch(logoUrl);
+    if (!resp.ok) return '';
+    const blob = await resp.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read logo blob'));
+      reader.onloadend = () => resolve((reader.result || '') as string);
+      reader.readAsDataURL(blob);
+    });
+  } catch (e) {
+    console.warn('Failed to fetch logo for PDF', e);
+    return '';
+  }
+};
