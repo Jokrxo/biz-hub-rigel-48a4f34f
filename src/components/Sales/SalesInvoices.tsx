@@ -91,11 +91,12 @@ export const SalesInvoices = () => {
 
       setCustomers(customersData || []);
 
-      // Load products
+      // Load products from items table
       const { data: productsData } = await supabase
-        .from("products")
+        .from("items")
         .select("*")
         .eq("company_id", profile.company_id)
+        .eq("item_type", "product")
         .order("name");
       setProducts(productsData || []);
 
@@ -138,10 +139,10 @@ export const SalesInvoices = () => {
     const newItems = [...formData.items];
     newItems[index] = { ...newItems[index], product_id: productId };
     if (product) {
-      const name = (product.name ?? product.title ?? product.description ?? '').toString();
+      const name = (product.name ?? product.description ?? '').toString();
       newItems[index].description = name;
-      if (typeof product.price === 'number') {
-        newItems[index].unit_price = product.price;
+      if (typeof product.unit_price === 'number') {
+        newItems[index].unit_price = product.unit_price;
       }
     }
     setFormData({ ...formData, items: newItems });
@@ -183,6 +184,24 @@ export const SalesInvoices = () => {
     if (formData.items.some((it: any) => !it.product_id)) {
       toast({ title: "Product required", description: "Please select a product for each item.", variant: "destructive" });
       return;
+    }
+    if (formData.items.some((it: any) => (Number(it.quantity) || 0) <= 0)) {
+      toast({ title: "Invalid quantity", description: "Each item must have quantity > 0.", variant: "destructive" });
+      return;
+    }
+    // Validate stock availability against loaded products
+    for (const it of formData.items) {
+      const prod = products.find((p: any) => String(p.id) === String(it.product_id));
+      const available = Number(prod?.quantity_on_hand ?? 0);
+      const requested = Number(it.quantity ?? 0);
+      if (!prod) {
+        toast({ title: "Product not found", description: "Selected product no longer exists.", variant: "destructive" });
+        return;
+      }
+      if (requested > available) {
+        toast({ title: "Insufficient stock", description: `Requested ${requested}, available ${available} for ${prod.name}.`, variant: "destructive" });
+        return;
+      }
     }
     // Date validation: invoice_date must be today or earlier; due_date (if provided) must be >= invoice_date
     const invDate = new Date(formData.invoice_date);
@@ -246,6 +265,19 @@ export const SalesInvoices = () => {
         .insert(items);
 
       if (itemsError) throw itemsError;
+
+      // Decrease stock for each product item
+      for (const it of formData.items) {
+        const prod = products.find((p: any) => String(p.id) === String(it.product_id));
+        if (!prod) continue;
+        const currentQty = Number(prod.quantity_on_hand ?? 0);
+        const newQty = currentQty - Number(it.quantity ?? 0);
+        const { error: stockError } = await supabase
+          .from("items")
+          .update({ quantity_on_hand: newQty })
+          .eq("id", prod.id);
+        if (stockError) throw stockError;
+      }
 
       toast({ title: "Success", description: "Invoice created successfully" });
       setDialogOpen(false);
@@ -507,7 +539,7 @@ export const SalesInvoices = () => {
               <div>
                 <div className="flex items-center justify-between">
                   <Label>Customer *</Label>
-                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/sales/customers', '_blank')}>Add customer</Button>
+                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/customers', '_blank')}>Add customer</Button>
                 </div>
                 <Select value={formData.customer_name} onValueChange={(value) => applyCustomerSelection(value)}>
                   <SelectTrigger>
@@ -564,7 +596,7 @@ export const SalesInvoices = () => {
               <div className="flex justify-between items-center mb-2">
                 <div className="flex items-center gap-3">
                   <Label>Items</Label>
-                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/sales/products', '_blank')}>Add product</Button>
+                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/sales?tab=products', '_blank')}>Add product</Button>
                 </div>
                 <Button type="button" size="sm" variant="outline" onClick={addItem}>
                   <Plus className="h-4 w-4 mr-2" />
