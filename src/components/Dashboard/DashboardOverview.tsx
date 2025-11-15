@@ -69,103 +69,113 @@ export const DashboardOverview = () => {
 
   useEffect(() => {
     const setupRealtime = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        if (authError || !user) {
+          console.warn('Dashboard realtime: User not authenticated:', authError);
+          return;
+        }
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user.id)
-        .single();
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("company_id")
+          .eq("user_id", user.id)
+          .single();
 
-      if (!profile) return;
+        if (profileError || !profile) {
+          console.warn('Dashboard realtime: Profile not found:', profileError);
+          return;
+        }
 
-      const companyId = profile.company_id;
+        const companyId = profile.company_id;
 
-      // Set up real-time subscription for auto-updates on ALL financial data
-      const channel = supabase
-        .channel('dashboard-realtime-updates')
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'transactions',
-          filter: `company_id=eq.${companyId}` 
-        }, () => {
-          console.log('Transaction changed - updating dashboard...');
-          loadDashboardData();
-        })
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'transaction_entries',
-          // Note: transaction_entries doesn't have company_id, so we listen to all
-          // and rely on the parent transaction check to re-load.
-          // This is not ideal, but a constraint of the current schema.
-        }, () => {
-          console.log('Transaction entry changed - updating dashboard...');
-          loadDashboardData();
-        })
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'bank_accounts',
-          filter: `company_id=eq.${companyId}`
-        }, () => {
-          console.log('Bank account changed - updating dashboard...');
-          loadDashboardData();
-        })
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'invoices',
-          filter: `company_id=eq.${companyId}`
-        }, () => {
-          console.log('Invoice changed - updating dashboard...');
-          loadDashboardData();
-        })
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'fixed_assets',
-          filter: `company_id=eq.${companyId}`
-        }, () => {
-          console.log('Fixed asset changed - updating dashboard...');
-          loadDashboardData();
-        })
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'purchase_orders',
-          filter: `company_id=eq.${companyId}`
-        }, () => {
-          console.log('Purchase order changed - updating dashboard...');
-          loadDashboardData();
-        })
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'quotes',
-          filter: `company_id=eq.${companyId}`
-        }, () => {
-          console.log('Quote changed - updating dashboard...');
-          loadDashboardData();
-        })
-        .on('postgres_changes', { 
-          event: '*', 
-          schema: 'public', 
-          table: 'sales',
-          filter: `company_id=eq.${companyId}`
-        }, () => {
-          console.log('Sale changed - updating dashboard...');
-          loadDashboardData();
-        })
-        .subscribe((status) => {
-          console.log('Dashboard real-time subscription status:', status);
-        });
+        // Set up real-time subscription for auto-updates on ALL financial data
+        const channel = supabase
+          .channel('dashboard-realtime-updates')
+          .on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'transactions',
+            filter: `company_id=eq.${companyId}` 
+          }, () => {
+            console.log('Transaction changed - updating dashboard...');
+            loadDashboardData();
+          })
+          .on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'transaction_entries',
+            // Note: transaction_entries doesn't have company_id, so we listen to all
+            // and rely on the parent transaction check to re-load.
+            // This is not ideal, but a constraint of the current schema.
+          }, () => {
+            console.log('Transaction entry changed - updating dashboard...');
+            loadDashboardData();
+          })
+          .on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'bank_accounts',
+            filter: `company_id=eq.${companyId}`
+          }, () => {
+            console.log('Bank account changed - updating dashboard...');
+            loadDashboardData();
+          })
+          .on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'invoices',
+            filter: `company_id=eq.${companyId}`
+          }, () => {
+            console.log('Invoice changed - updating dashboard...');
+            loadDashboardData();
+          })
+          .on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'fixed_assets',
+            filter: `company_id=eq.${companyId}`
+          }, () => {
+            console.log('Fixed asset changed - updating dashboard...');
+            loadDashboardData();
+          })
+          .on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'purchase_orders',
+            filter: `company_id=eq.${companyId}`
+          }, () => {
+            console.log('Purchase order changed - updating dashboard...');
+            loadDashboardData();
+          })
+          .on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'quotes',
+            filter: `company_id=eq.${companyId}`
+          }, () => {
+            console.log('Quote changed - updating dashboard...');
+            loadDashboardData();
+          })
+          .on('postgres_changes', { 
+            event: '*', 
+            schema: 'public', 
+            table: 'sales',
+            filter: `company_id=eq.${companyId}`
+          }, () => {
+            console.log('Sale changed - updating dashboard...');
+            loadDashboardData();
+          })
+          .subscribe((status) => {
+            console.log('Dashboard real-time subscription status:', status);
+          });
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
+        return () => {
+          supabase.removeChannel(channel);
+        };
+      } catch (error) {
+        console.error('Dashboard realtime setup error:', error);
+      }
     };
 
     setupRealtime();
@@ -182,16 +192,24 @@ export const DashboardOverview = () => {
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        console.warn('Dashboard: User not authenticated or auth error:', authError);
+        setLoading(false);
+        return;
+      }
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user.id)
         .single();
 
-      if (!profile) return;
+      if (profileError || !profile) {
+        console.warn('Dashboard: Profile not found or error:', profileError);
+        setLoading(false);
+        return;
+      }
 
       console.log('Loading dashboard data for company:', profile.company_id);
 
@@ -391,6 +409,29 @@ export const DashboardOverview = () => {
     return <div className="flex items-center justify-center h-96">
       <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
     </div>;
+  }
+
+  // Show error state if no data could be loaded
+  if (!metrics.totalAssets && !metrics.totalLiabilities && !metrics.totalEquity && !metrics.totalIncome && !metrics.totalExpenses) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center space-y-4">
+          <div className="text-6xl">📊</div>
+          <h2 className="text-2xl font-bold">Dashboard Unavailable</h2>
+          <p className="text-muted-foreground max-w-md">
+            Unable to load dashboard data. This may be due to authentication issues or no financial data being available yet.
+          </p>
+          <div className="flex gap-3 justify-center">
+            <Button onClick={() => window.location.reload()}>
+              Retry
+            </Button>
+            <Button variant="outline" onClick={() => navigate('/login')}>
+              Login
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
   }
   return (
     <div className="space-y-6">
