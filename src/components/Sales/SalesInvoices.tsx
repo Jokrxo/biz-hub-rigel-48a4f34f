@@ -27,6 +27,9 @@ interface Invoice {
   total_amount: number;
   status: string;
   notes: string | null;
+  amount_paid?: number;
+  sent_at?: string | null;
+  paid_at?: string | null;
 }
 
 export const SalesInvoices = () => {
@@ -40,6 +43,7 @@ export const SalesInvoices = () => {
   const { isAdmin, isAccountant } = useRoles();
   const todayStr = new Date().toISOString().split("T")[0];
   const [posting, setPosting] = useState(false);
+  const [lastPosting, setLastPosting] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -56,6 +60,18 @@ export const SalesInvoices = () => {
   const [sendMessage, setSendMessage] = useState<string>('');
   const [sending, setSending] = useState<boolean>(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+
+  // Payment dialog state
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [paymentDate, setPaymentDate] = useState<string>(todayStr);
+  const [paymentInvoice, setPaymentInvoice] = useState<any>(null);
+  const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+  const [selectedBankId, setSelectedBankId] = useState<string>("");
+
+  const [sentDialogOpen, setSentDialogOpen] = useState(false);
+  const [sentDate, setSentDate] = useState<string>(todayStr);
+  const [sentInvoice, setSentInvoice] = useState<any>(null);
 
   useEffect(() => {
     loadData();
@@ -110,10 +126,33 @@ export const SalesInvoices = () => {
 
       if (error) throw error;
       setInvoices(data || []);
+
+      try {
+        await supabase.rpc('backfill_invoice_postings', { _company_id: profile.company_id });
+        await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
+      } catch {}
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConfirmSent = async () => {
+    if (!sentInvoice) return;
+    try {
+      const { error } = await supabase
+        .from("invoices")
+        .update({ status: "sent", sent_at: new Date(sentDate).toISOString() })
+        .eq("id", sentInvoice.id);
+      if (error) throw error;
+      await postInvoiceSent(sentInvoice, sentDate);
+      toast({ title: "Success", description: "Invoice posted as Sent" });
+      setSentDialogOpen(false);
+      setSentInvoice(null);
+      loadData();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
     }
   };
 
@@ -310,29 +349,58 @@ export const SalesInvoices = () => {
   };
 
   const loadAccounts = async (companyId: string) => {
+    try { await supabase.rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
     const { data } = await supabase
       .from("chart_of_accounts")
-      .select("id, account_name, account_type")
+      .select("id, account_name, account_type, account_code")
       .eq("company_id", companyId)
       .eq("is_active", true);
-    return (data || []) as Array<{ id: string; account_name: string; account_type: string }>;
+    return (data || []) as Array<{ id: string; account_name: string; account_type: string; account_code: string }>;
   };
 
-  const findAccountId = (accounts: Array<{ id: string; account_name: string; account_type: string }>, type: string, keywords: string[]) => {
-    const lower = accounts.map(a => ({ ...a, account_name: (a.account_name || "").toLowerCase(), account_type: (a.account_type || "").toLowerCase() }));
+  const loadBankAccounts = async (companyId: string) => {
+    const { data } = await supabase
+      .from("bank_accounts")
+      .select("id,bank_name,account_name,account_number")
+      .eq("company_id", companyId)
+      .order("bank_name");
+    const list = data || [];
+    setBankAccounts(list);
+    return list;
+  };
+
+  const findAccountByCodeOrName = (
+    accounts: Array<{ id: string; account_name: string; account_type: string; account_code: string }>,
+    type: string,
+    codes: string[],
+    names: string[]
+  ) => {
+    const lower = accounts.map(a => ({
+      ...a,
+      account_name: (a.account_name || "").toLowerCase(),
+      account_type: (a.account_type || "").toLowerCase(),
+      account_code: (a.account_code || "").toString()
+    }));
     const byType = lower.filter(a => a.account_type === type.toLowerCase());
-    const match = byType.find(a => keywords.some(k => a.account_name.includes(k)));
-    return match?.id || byType[0]?.id || null;
+    const byCode = byType.find(a => codes.includes((a.account_code || "").toString()));
+    if (byCode) return byCode.id;
+    const byName = byType.find(a => names.some(k => a.account_name.includes(k)));
+    return byName?.id || byType[0]?.id || null;
   };
 
   const ensureNoDuplicatePosting = async (companyId: string, reference: string) => {
-    const { data } = await supabase
+    const { data: txs } = await supabase
       .from("transactions")
       .select("id")
       .eq("company_id", companyId)
-      .eq("reference_number", reference)
-      .limit(1);
-    return (data || []).length === 0;
+      .eq("reference_number", reference);
+    const ids = (txs || []).map(t => t.id);
+    if (ids.length === 0) return true;
+    const { count } = await supabase
+      .from("transaction_entries")
+      .select("id", { count: 'exact', head: true })
+      .in("transaction_id", ids);
+    return (count || 0) === 0;
   };
 
   const insertEntries = async (
@@ -345,84 +413,36 @@ export const SalesInvoices = () => {
     const txEntries = rows.map(r => ({ transaction_id: txId, account_id: r.account_id, debit: r.debit, credit: r.credit, description, status: "approved" }));
     const { error: teErr } = await supabase.from("transaction_entries").insert(txEntries);
     if (teErr) throw teErr;
-    const ledgerRows = rows.map(r => ({ company_id: companyId, transaction_id: txId, account_id: r.account_id, entry_date: entryDate, description, debit: r.debit, credit: r.credit, is_reversed: false }));
-    const { error: leErr } = await supabase.from("ledger_entries").insert(ledgerRows);
-    if (leErr) throw leErr;
   };
 
-  const postInvoiceSent = async (inv: any) => {
+  const postInvoiceSent = async (inv: any, postDateStr?: string) => {
     try {
       setPosting(true);
+      await supabase.rpc('post_invoice_sent', { _invoice_id: inv.id, _post_date: postDateStr || inv.invoice_date });
       const companyId = await getCompanyId();
-      if (!companyId) return;
-      const canPost = await ensureNoDuplicatePosting(companyId, inv.invoice_number);
-      if (!canPost) return;
-      const accounts = await loadAccounts(companyId);
-      const arId = findAccountId(accounts, "asset", ["receivable", "debtor", "trade"]);
-      const revenueId = findAccountId(accounts, "income", ["sales", "revenue"]) || findAccountId(accounts, "revenue", ["sales", "revenue"]);
-      const vatId = findAccountId(accounts, "liability", ["vat", "sars", "tax"]);
-      if (!arId || !revenueId) {
-        toast({ title: "Missing accounts", description: "Receivable or Revenue accounts not found", variant: "destructive" });
-        return;
+      if (companyId) {
+        try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
       }
-      const { data: { user: u } } = await supabase.auth.getUser();
-      if (!u) return;
-      const { data: tx } = await supabase
-        .from("transactions")
-        .insert({ company_id: companyId, user_id: u.id, transaction_date: inv.invoice_date, description: `Invoice ${inv.invoice_number} sent to ${inv.customer_name}`, total_amount: Number(inv.total_amount || 0), reference_number: inv.invoice_number, status: "approved" })
-        .select()
-        .single();
-      if (!tx?.id) return;
-      const subtotal = Number(inv.subtotal || 0);
-      const tax = Number(inv.tax_amount || 0);
-      const total = Number(inv.total_amount || 0);
-      const rows: Array<{ account_id: string; debit: number; credit: number }> = [];
-      rows.push({ account_id: arId, debit: total, credit: 0 });
-      rows.push({ account_id: revenueId, debit: 0, credit: subtotal });
-      if (vatId && tax > 0.0001) rows.push({ account_id: vatId, debit: 0, credit: tax });
-      await insertEntries(companyId, tx.id, inv.invoice_date, `Invoice ${inv.invoice_number}`, rows);
-      try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
+      toast({ title: "Success", description: `Posted invoice ${inv.invoice_number} to Receivable and Revenue` });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message || 'Failed to post Sent invoice', variant: 'destructive' });
     } finally {
       setPosting(false);
     }
   };
 
-  const postInvoicePaid = async (inv: any) => {
+  const postInvoicePaid = async (inv: any, payDateStr?: string, bankAccountId?: string) => {
     try {
       setPosting(true);
+      const amt = Number(inv._payment_amount || inv.total_amount || 0);
+      await supabase.rpc('post_invoice_paid', { _invoice_id: inv.id, _payment_date: payDateStr || todayStr, _bank_account_id: bankAccountId, _amount: amt });
       const companyId = await getCompanyId();
-      if (!companyId) return;
-      const accounts = await loadAccounts(companyId);
-      const bankChartId = findAccountId(accounts, "asset", ["bank", "cash"]);
-      const arId = findAccountId(accounts, "asset", ["receivable", "debtor", "trade"]);
-      if (!bankChartId || !arId) {
-        toast({ title: "Missing accounts", description: "Bank or Receivable accounts not found", variant: "destructive" });
-        return;
+      if (companyId) {
+        try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
       }
-      const { data: banks } = await supabase
-        .from("bank_accounts")
-        .select("id")
-        .eq("company_id", companyId)
-        .order("created_at")
-        .limit(1);
-      const bankAccountId = (banks || [])[0]?.id || null;
-      const { data: { user: u } } = await supabase.auth.getUser();
-      if (!u) return;
-      const { data: tx } = await supabase
-        .from("transactions")
-        .insert({ company_id: companyId, user_id: u.id, transaction_date: todayStr, description: `Invoice ${inv.invoice_number} payment`, total_amount: Number(inv.total_amount || 0), reference_number: inv.invoice_number, status: "approved", bank_account_id: bankAccountId })
-        .select()
-        .single();
-      if (!tx?.id) return;
-      const total = Number(inv.total_amount || 0);
-      await insertEntries(companyId, tx.id, todayStr, `Payment for ${inv.invoice_number}`, [
-        { account_id: bankChartId, debit: total, credit: 0 },
-        { account_id: arId, debit: 0, credit: total }
-      ]);
-      if (bankAccountId) {
-        try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: total, _operation: 'add' }); } catch {}
-      }
-      try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
+      toast({ title: "Success", description: `Posted payment for ${inv.invoice_number}` });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message || 'Failed to post payment', variant: 'destructive' });
     } finally {
       setPosting(false);
     }
@@ -430,6 +450,33 @@ export const SalesInvoices = () => {
 
   const updateStatus = async (id: string, newStatus: string) => {
     try {
+      const inv = invoices.find(i => i.id === id);
+      if (!inv) return;
+      if (newStatus === "paid") {
+        setPaymentInvoice(inv);
+        setPaymentDate(todayStr);
+        const amtPaid = Number(inv.amount_paid ?? 0);
+        const outstanding = Math.max(0, Number(inv.total_amount || 0) - amtPaid);
+        setPaymentAmount(outstanding);
+        const companyId = await getCompanyId();
+        if (companyId) {
+          const list = await loadBankAccounts(companyId);
+          if (!list || list.length === 0) {
+            toast({ title: "No bank accounts", description: "Add a bank account in the Bank module before posting payment.", variant: "destructive" });
+            return;
+          }
+        }
+        setSelectedBankId("");
+        setPaymentDialogOpen(true);
+        return;
+      }
+      if (newStatus === "sent") {
+        setSentInvoice(inv);
+        setSentDate(todayStr);
+        setSentDialogOpen(true);
+        return;
+      }
+
       const { error } = await supabase
         .from("invoices")
         .update({ status: newStatus })
@@ -437,17 +484,62 @@ export const SalesInvoices = () => {
 
       if (error) throw error;
       toast({ title: "Success", description: "Invoice status updated" });
-      const inv = invoices.find(i => i.id === id);
-      if (inv) {
-        if (newStatus === "sent") {
-          await postInvoiceSent(inv);
-        } else if (newStatus === "paid") {
-          await postInvoicePaid(inv);
-        }
-      }
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!paymentInvoice) return;
+    try {
+      const outstanding = Math.max(0, Number(paymentInvoice.total_amount || 0) - Number(paymentInvoice.amount_paid || 0));
+      const amount = Number(paymentAmount || 0);
+      if (!amount || amount <= 0) {
+        toast({ title: "Invalid amount", description: "Enter a payment amount greater than zero.", variant: "destructive" });
+        return;
+      }
+      if (!selectedBankId) {
+        toast({ title: "Bank required", description: "Select a bank account to post the payment.", variant: "destructive" });
+        return;
+      }
+      const selectedBank = bankAccounts.find((b: any) => String(b.id) === String(selectedBankId));
+      if (!selectedBank) {
+        toast({ title: "Invalid bank account", description: "Selected bank account no longer exists.", variant: "destructive" });
+        return;
+      }
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(String(selectedBankId))) {
+        toast({ title: "Invalid bank account ID", description: "Bank account identifier format is invalid.", variant: "destructive" });
+        return;
+      }
+      if (amount > outstanding + 0.0001) {
+        toast({ title: "Amount exceeds outstanding", description: `Outstanding: R ${outstanding.toLocaleString('en-ZA')}`, variant: "destructive" });
+        return;
+      }
+      const { error } = await supabase
+        .from("invoices")
+        .update({ 
+          status: amount >= outstanding ? "paid" : "sent", 
+          amount_paid: Number(paymentInvoice.amount_paid || 0) + amount 
+        })
+        .eq("id", paymentInvoice.id);
+      if (error) throw error;
+      const invForPost = { ...paymentInvoice, _payment_amount: amount };
+      await postInvoicePaid(invForPost, paymentDate, selectedBankId);
+      if (amount >= outstanding) {
+        try {
+          await supabase.from('invoices').update({ paid_at: new Date(paymentDate).toISOString() }).eq('id', paymentInvoice.id);
+        } catch (e) {
+          toast({ title: "Paid date not recorded", description: "Database missing paid_at column; payment posted though.", variant: "default" });
+        }
+      }
+      toast({ title: "Success", description: "Payment posted" });
+      setPaymentDialogOpen(false);
+      setPaymentInvoice(null);
+      loadData();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
     }
   };
 
@@ -600,6 +692,11 @@ export const SalesInvoices = () => {
         )}
       </CardHeader>
       <CardContent>
+        {lastPosting && (
+          <div className="mb-4 p-3 border rounded bg-muted/30 text-sm">
+            {lastPosting}
+          </div>
+        )}
         {loading ? (
           <div className="text-center py-8">Loading...</div>
         ) : invoices.length === 0 ? (
@@ -832,6 +929,70 @@ export const SalesInvoices = () => {
               <Button type="submit" className="bg-gradient-primary">Create Invoice</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={sentDialogOpen} onOpenChange={setSentDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Post Sent Invoice</DialogTitle>
+            <DialogDescription>
+              Choose the posting date for Debtors and Revenue.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Posting Date</Label>
+              <Input type="date" value={sentDate} max={todayStr} onChange={(e) => setSentDate(e.target.value)} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setSentDialogOpen(false)}>Cancel</Button>
+              <Button className="bg-gradient-primary" onClick={handleConfirmSent}>Post</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirm Payment</DialogTitle>
+            <DialogDescription>
+              Select the payment date to post Bank and settle Debtors.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {paymentInvoice && (
+              <div className="text-sm text-muted-foreground">
+                Outstanding: R {Math.max(0, Number(paymentInvoice.total_amount || 0) - Number(paymentInvoice.amount_paid || 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+              </div>
+            )}
+            <div>
+              <Label>Payment Amount</Label>
+              <Input type="number" min={0} step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(Number(e.target.value))} />
+            </div>
+            <div>
+              <Label>Payment Date</Label>
+              <Input type="date" value={paymentDate} max={todayStr} onChange={(e) => setPaymentDate(e.target.value)} />
+            </div>
+            <div>
+              <Label>Bank Account</Label>
+              <Select value={selectedBankId} onValueChange={(v) => setSelectedBankId(v)}>
+                <SelectTrigger>
+              <SelectValue placeholder={bankAccounts.length ? "Select bank account" : "No bank accounts"} />
+              </SelectTrigger>
+              <SelectContent>
+                  {bankAccounts.map((b: any) => (
+                    <SelectItem key={b.id} value={String(b.id)}>{`${b.bank_name} - ${b.account_name} (${b.account_number})`}</SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
+              <Button className="bg-gradient-primary" onClick={handleConfirmPayment}>Post Payment</Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

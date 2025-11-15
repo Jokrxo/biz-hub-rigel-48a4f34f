@@ -40,6 +40,9 @@ export const DashboardOverview = () => {
   const [chartData, setChartData] = useState<any[]>([]);
   const [expenseBreakdown, setExpenseBreakdown] = useState<any[]>([]);
   const [assetTrend, setAssetTrend] = useState<any[]>([]);
+  const [arInvoices, setArInvoices] = useState<Array<{ id: string; customer_name: string; total_amount: number; status: string; invoice_date: string; due_date: string | null }>>([]);
+  const [arTop10, setArTop10] = useState<any[]>([]);
+  const [arDonut, setArDonut] = useState<any[]>([]);
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean }>({ hasCoa: true, hasBank: true });
   
   // Date filter state
@@ -55,7 +58,8 @@ export const DashboardOverview = () => {
       expenseBreakdown: true,
       assetTrend: true,
       recentTransactions: true,
-      trialBalance: true
+      trialBalance: true,
+      arUnpaid: true
     };
   });
 
@@ -298,6 +302,42 @@ export const DashboardOverview = () => {
         assets: Math.max(0, assets * (0.85 + idx * 0.03))
       }));
       setAssetTrend(assetData);
+
+      // Load AR unpaid invoices (sent/overdue/draft – exclude paid/cancelled)
+      const { data: arData, error: arErr } = await supabase
+        .from('invoices')
+        .select('id, customer_name, invoice_date, due_date, total_amount, status')
+        .eq('company_id', profile.company_id)
+        .not('status', 'in', ['("paid")','("cancelled")'])
+        .gte('invoice_date', startDate.toISOString().split('T')[0])
+        .lte('invoice_date', endDate.toISOString().split('T')[0])
+        .order('invoice_date', { ascending: false });
+      if (arErr) throw arErr;
+      const rows = (arData || []).map((r: any) => ({
+        id: r.id,
+        customer_name: r.customer_name || 'Unknown',
+        total_amount: r.status === 'paid' ? 0 : Number(r.total_amount || 0),
+        status: r.status,
+        invoice_date: r.invoice_date,
+        due_date: r.due_date || null
+      }));
+      setArInvoices(rows);
+      // Compute Top 10 and Donut
+      const totals = new Map<string, { name: string; amount: number }>();
+      rows.forEach(r => {
+        const key = r.customer_name || 'Unknown';
+        const curr = totals.get(key) || { name: key, amount: 0 };
+        curr.amount += r.total_amount || 0;
+        totals.set(key, curr);
+      });
+      const top10 = Array.from(totals.values())
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 10)
+        .map(r => ({ name: r.name, amount: r.amount }));
+      setArTop10(top10);
+      const totalUnpaid = rows.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 1;
+      const donut = Array.from(totals.values()).map(b => ({ name: b.name, value: b.amount, pct: (b.amount / totalUnpaid) * 100 }));
+      setArDonut(donut);
 
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -549,6 +589,29 @@ export const DashboardOverview = () => {
             </CardContent>
           </Card>
         )}
+
+        {widgets.arUnpaid && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-primary" />
+                AR Unpaid (Top Customers)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={arTop10} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis type="number" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} stroke="hsl(var(--muted-foreground))" />
+                  <YAxis type="category" dataKey="name" width={150} stroke="hsl(var(--muted-foreground))" />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Unpaid']} />
+                  <Legend />
+                  <Bar dataKey="amount" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Unpaid" />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {widgets.assetTrend && (
@@ -690,6 +753,29 @@ export const DashboardOverview = () => {
             </div>
           </CardContent>
         </Card>
+        )}
+        {widgets.arUnpaid && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-primary" />
+                AR Unpaid Distribution
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={260}>
+                <PieChart>
+                  <Pie data={arDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                    {arDonut.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

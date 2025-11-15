@@ -23,7 +23,7 @@ import {
 
 export const EnhancedFinancialReports = () => {
   const [loading, setLoading] = useState(true);
-  const [activeReport, setActiveReport] = useState<'pl' | 'bs' | 'cf'>('pl');
+  const [activeReport, setActiveReport] = useState<'pl' | 'bs' | 'cf' | 'tb'>('pl');
   const [periodStart, setPeriodStart] = useState(() => {
     const date = new Date();
     return `${date.getFullYear()}-01-01`;
@@ -37,7 +37,8 @@ export const EnhancedFinancialReports = () => {
     profitLoss: any[];
     balanceSheet: any[];
     cashFlow: any[];
-  }>({ profitLoss: [], balanceSheet: [], cashFlow: [] });
+    trialBalance: any[];
+  }>({ profitLoss: [], balanceSheet: [], cashFlow: [], trialBalance: [] });
   
   const [drilldownAccount, setDrilldownAccount] = useState<{
     id: string;
@@ -66,6 +67,13 @@ export const EnhancedFinancialReports = () => {
       if (!profile?.company_id) return;
       setCompanyId(profile.company_id);
 
+      // Backfill any missing postings from existing invoices to ledger
+      try {
+        await supabase.rpc('backfill_invoice_postings', { _company_id: profile.company_id });
+      } catch (bfErr: any) {
+        console.warn('Backfill failed or function missing:', bfErr?.message || bfErr);
+      }
+
       // Defensive data check: warn on transactions with NULL dates (excluded from reports)
       try {
         const { count: nullTxCount } = await supabase
@@ -78,7 +86,7 @@ export const EnhancedFinancialReports = () => {
           toast({
             title: 'Missing transaction dates detected',
             description: `${nullTxCount} transaction(s) have no date and were excluded from period reports. Please update their dates for accurate reporting.`,
-            variant: 'warning'
+            variant: 'default'
           });
         }
       } catch (warnErr) {
@@ -96,7 +104,8 @@ export const EnhancedFinancialReports = () => {
       setReportData({
         profitLoss: pl,
         balanceSheet: bs,
-        cashFlow: cf
+        cashFlow: cf,
+        trialBalance
       });
     } catch (error: any) {
       console.error('Error loading financial data:', error);
@@ -112,13 +121,9 @@ export const EnhancedFinancialReports = () => {
 
   // Fetch period-specific trial balance using transaction_entries joined to transactions.date within range
   const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
-    // Ensure valid ISO date strings
     const startDateObj = new Date(start);
-    const startISO = startDateObj.toISOString();
     const endDateObj = new Date(end);
-    // Set to end-of-day to make filter inclusive
     endDateObj.setHours(23, 59, 59, 999);
-    const endISO = endDateObj.toISOString();
 
     const { data, error } = await supabase
       .from('chart_of_accounts')
@@ -138,8 +143,8 @@ export const EnhancedFinancialReports = () => {
       .eq('company_id', companyId)
       .eq('is_active', true)
       .not('transaction_entries.transactions.transaction_date', 'is', null)
-      .gte('transaction_entries.transactions.transaction_date', startISO)
-      .lte('transaction_entries.transactions.transaction_date', endISO)
+      .gte('transaction_entries.transactions.transaction_date', start)
+      .lte('transaction_entries.transactions.transaction_date', end)
       .order('account_code');
 
     if (error) throw error;
@@ -189,7 +194,10 @@ export const EnhancedFinancialReports = () => {
     );
     
     let totalRevenue = 0;
-    revenue.forEach(acc => {
+    const pinnedRev = revenue.find(acc => (acc.account_code || '').toString() === '4000');
+    const restRev = revenue.filter(acc => (acc.account_code || '').toString() !== '4000');
+    const orderedRev = [pinnedRev, ...restRev].filter(Boolean) as any[];
+    orderedRev.forEach(acc => {
       // Use balance from trial balance directly
       const total = acc.balance || 0;
       if (Math.abs(total) > 0.01) {
@@ -278,7 +286,14 @@ export const EnhancedFinancialReports = () => {
     );
     
     let totalCurrentAssets = 0;
-    currentAssets.forEach(acc => {
+    const bankPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1100');
+    const arPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1200');
+    const restCA = currentAssets.filter(acc => {
+      const code = (acc.account_code || '').toString();
+      return code !== '1100' && code !== '1200';
+    });
+    const orderedCA = [bankPinned, arPinned, ...restCA].filter(Boolean) as any[];
+    orderedCA.forEach(acc => {
       // Use balance from trial balance directly
       const total = acc.balance || 0;
       if (Math.abs(total) > 0.01) {
@@ -540,7 +555,7 @@ export const EnhancedFinancialReports = () => {
       </Card>
 
       <Tabs value={activeReport} onValueChange={(v) => setActiveReport(v as any)}>
-        <TabsList className="grid w-full grid-cols-3 max-w-2xl">
+        <TabsList className="grid w-full grid-cols-4 max-w-3xl">
           <TabsTrigger value="pl">
             <TrendingUp className="h-4 w-4 mr-2" />
             Income Statement
@@ -548,6 +563,10 @@ export const EnhancedFinancialReports = () => {
           <TabsTrigger value="bs">
             <BarChart3 className="h-4 w-4 mr-2" />
             Balance Sheet
+          </TabsTrigger>
+          <TabsTrigger value="tb">
+            <FileText className="h-4 w-4 mr-2" />
+            Trial Balance
           </TabsTrigger>
           <TabsTrigger value="cf">
             <Activity className="h-4 w-4 mr-2" />
@@ -563,22 +582,58 @@ export const EnhancedFinancialReports = () => {
                   <FileText className="h-5 w-5 text-primary" />
                   {activeReport === 'pl' ? 'Income Statement' : 
                    activeReport === 'bs' ? 'Statement of Financial Position' : 
+                   activeReport === 'tb' ? 'Trial Balance' :
                    'Cash Flow Statement'}
                 </CardTitle>
                 <div className="flex gap-2">
+                  {activeReport !== 'tb' && (
                   <Button variant="outline" size="sm" onClick={() => handleExport('pdf')}>
                     <Download className="h-4 w-4 mr-2" />
                     PDF
                   </Button>
+                  )}
+                  {activeReport !== 'tb' && (
                   <Button variant="outline" size="sm" onClick={() => handleExport('excel')}>
                     <Download className="h-4 w-4 mr-2" />
                     Excel
                   </Button>
+                  )}
                 </div>
               </div>
             </CardHeader>
             <CardContent>
-              {getCurrentData().length === 0 ? (
+              {activeReport === 'tb' ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Code</TableHead>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Debit</TableHead>
+                      <TableHead className="text-right">Credit</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {reportData.trialBalance.length === 0 ? (
+                      <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">No financial data for the selected period</TableCell></TableRow>
+                    ) : (
+                      reportData.trialBalance.map((acc: any, index: number) => {
+                        const type = (acc.account_type || '').toLowerCase();
+                        const naturalDebit = type === 'asset' || type === 'expense';
+                        const debit = naturalDebit ? (acc.balance || 0) : 0;
+                        const credit = !naturalDebit ? (acc.balance || 0) : 0;
+                        return (
+                          <TableRow key={`${acc.account_id}-${index}`} onClick={() => setDrilldownAccount({ id: acc.account_id, name: acc.account_name, code: acc.account_code })} className="cursor-pointer">
+                            <TableCell>{acc.account_code}</TableCell>
+                            <TableCell>{acc.account_name}</TableCell>
+                            <TableCell className="text-right font-mono">{debit ? `R ${debit.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : ''}</TableCell>
+                            <TableCell className="text-right font-mono">{credit ? `R ${credit.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : ''}</TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              ) : getCurrentData().length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   No financial data for the selected period
                 </div>
