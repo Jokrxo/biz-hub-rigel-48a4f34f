@@ -58,7 +58,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     debitAccount: "",
     creditAccount: "",
     amount: "",
-    vatRate: "15"
+    vatRate: "0"
   });
   const [companyId, setCompanyId] = useState<string>("");
   const [validationError, setValidationError] = useState<string>("");
@@ -89,7 +89,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         debitAccount: "",
         creditAccount: "",
         amount: editData.total_amount?.toString() || "",
-        vatRate: "15"
+        vatRate: editData.vat_rate ? String(editData.vat_rate) : "0"
       });
     }
   }, [editData, bankAccounts]);
@@ -611,7 +611,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         debitAccount: "",
         creditAccount: "",
         amount: "",
-        vatRate: "15"
+        vatRate: "0"
       });
       setAutoClassification(null);
       setDuplicateWarning(false);

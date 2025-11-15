@@ -49,6 +49,9 @@ export const PurchaseOrdersManagement = () => {
   const [payDialogOpen, setPayDialogOpen] = useState(false);
   const [payOrder, setPayOrder] = useState<PurchaseOrder | null>(null);
   const [payDate, setPayDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [payAmount, setPayAmount] = useState<string>("");
+  const [paidSoFar, setPaidSoFar] = useState<number>(0);
+  const [paidMap, setPaidMap] = useState<Record<string, number>>({});
   const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; account_name: string }>>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const { toast } = useToast();
@@ -104,6 +107,23 @@ export const PurchaseOrdersManagement = () => {
       }));
 
       setOrders(mappedOrders as any);
+      const poNumbers = mappedOrders.map((o: any) => o.po_number).filter(Boolean);
+      if (poNumbers.length > 0) {
+        const { data: payments } = await supabase
+          .from('transactions')
+          .select('reference_number,total_amount,transaction_type,status')
+          .in('reference_number', poNumbers)
+          .eq('transaction_type', 'payment')
+          .eq('status', 'posted');
+        const nextMap: Record<string, number> = {};
+        (payments || []).forEach((p: any) => {
+          const ref = String(p.reference_number || '');
+          nextMap[ref] = (nextMap[ref] || 0) + Number(p.total_amount || 0);
+        });
+        setPaidMap(nextMap);
+      } else {
+        setPaidMap({});
+      }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -336,24 +356,48 @@ export const PurchaseOrdersManagement = () => {
     setPayOrder(order);
     setPayDate(new Date().toISOString().slice(0, 10));
     setPayDialogOpen(true);
+    (async () => {
+      try {
+        const { data: txs } = await supabase
+          .from('transactions')
+          .select('total_amount')
+          .eq('reference_number', order.po_number)
+          .eq('transaction_type', 'payment')
+          .eq('status', 'posted');
+        const paid = (txs || []).reduce((sum: number, t: any) => sum + Number(t.total_amount || 0), 0);
+        setPaidSoFar(paid);
+        const outstanding = Math.max(0, Number(order.total_amount || 0) - paid);
+        setPayAmount(outstanding.toFixed(2));
+      } catch {
+        setPaidSoFar(0);
+        setPayAmount(String(order.total_amount || 0));
+      }
+    })();
   };
 
   const confirmPayment = async () => {
     if (!payOrder || !selectedBankId) return;
     try {
+      const amt = parseFloat(payAmount || '0');
+      const outstanding = Math.max(0, Number((payOrder as any).total_amount || 0) - paidSoFar);
+      if (!amt || amt <= 0) { throw new Error('Enter a valid payment amount'); }
+      if (amt > outstanding + 0.0001) { throw new Error('Amount exceeds outstanding'); }
       await transactionsApi.postPurchasePaidClient(
         payOrder,
         payDate,
         selectedBankId,
-        Number((payOrder as any).total_amount || 0)
+        amt
       );
       const { error } = await supabase
         .from("purchase_orders")
-        .update({ status: "paid" })
+        .update({ status: (amt >= outstanding ? "paid" : "sent") })
         .eq("id", (payOrder as any).id);
       if (error) throw error;
-      setOrders(prev => prev.map(o => o.id === (payOrder as any).id ? { ...o, status: "paid" } : o));
-      toast({ title: "Success", description: "Payment posted and Purchase order marked as Paid" });
+      const newPaid = paidSoFar + amt;
+      setPaidMap(prev => ({ ...prev, [String(payOrder?.po_number || '')]: newPaid }));
+      const fullySettled = newPaid >= Number((payOrder as any).total_amount || 0) - 0.0001;
+      setOrders(prev => prev.map(o => o.id === (payOrder as any).id ? { ...o, status: (fullySettled ? "paid" : "sent") } : o));
+      toast({ title: "Success", description: fullySettled ? "Payment posted and Purchase order marked as Paid" : "Partial payment posted" });
       setPayDialogOpen(false);
       setPayOrder(null);
     } catch (e: any) {
@@ -390,27 +434,31 @@ export const PurchaseOrdersManagement = () => {
             </div>
           ) : (
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>PO Number</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Supplier</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
+            <TableHeader>
+              <TableRow>
+                <TableHead>PO Number</TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Supplier</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Outstanding</TableHead>
+                <TableHead className="text-right">Total</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {orders.map(order => (
                 <TableRow key={order.id}>
-                    <TableCell className="font-mono">{order.po_number}</TableCell>
-                    <TableCell>{new Date(order.po_date).toLocaleDateString("en-ZA")}</TableCell>
-                    <TableCell>{(order as any).supplierName || "N/A"}</TableCell>
-                    <TableCell>
-                      <Badge variant={order.status === "draft" ? "secondary" : "default"}>
-                        {order.status}
-                      </Badge>
-                    </TableCell>
+                  <TableCell className="font-mono">{order.po_number}</TableCell>
+                  <TableCell>{new Date(order.po_date).toLocaleDateString("en-ZA")}</TableCell>
+                  <TableCell>{(order as any).supplierName || "N/A"}</TableCell>
+                  <TableCell>
+                    <Badge variant={order.status === "draft" ? "secondary" : "default"}>
+                      {order.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right font-mono">
+                    R {Math.max(0, Number(order.total_amount || 0) - Number(paidMap[order.po_number] || 0)).toLocaleString('en-ZA')}
+                  </TableCell>
                   <TableCell className="text-right font-mono">
                     R {order.total_amount.toLocaleString("en-ZA")}
                   </TableCell>
@@ -570,14 +618,22 @@ export const PurchaseOrdersManagement = () => {
         </DialogContent>
       </Dialog>
       <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Record Payment</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Record Payment</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Date</Label>
+            <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>Date</Label>
-              <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+              <Label>Amount to Pay (R)</Label>
+              <Input type="number" step="0.01" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
+              <div className="text-xs text-muted-foreground mt-1">
+                Outstanding: R {Math.max(0, Number(payOrder?.total_amount || 0) - paidSoFar).toLocaleString('en-ZA')}
+              </div>
             </div>
             <div>
               <Label>Bank Account</Label>
@@ -593,11 +649,12 @@ export const PurchaseOrdersManagement = () => {
               </Select>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPayDialogOpen(false)}>Cancel</Button>
-            <Button onClick={confirmPayment}>Confirm</Button>
-          </DialogFooter>
-        </DialogContent>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setPayDialogOpen(false)}>Cancel</Button>
+          <Button onClick={confirmPayment}>Confirm</Button>
+        </DialogFooter>
+      </DialogContent>
       </Dialog>
     </div>
   );

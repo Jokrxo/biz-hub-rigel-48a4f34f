@@ -333,4 +333,93 @@ export const transactionsApi = {
       .eq('id', tx.id);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: amt, _operation: 'subtract' }); } catch {}
   },
+  postBillRecordedClient: async (bill: any, postDateStr?: string): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = postDateStr || bill.bill_date || new Date().toISOString().slice(0, 10);
+    const total = Number(bill.total_amount || 0);
+    const { data: accounts } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_name, account_type, account_code, is_active')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => {
+      const byCode = list.find(a => a.type === type.toLowerCase() && codes.includes(a.code));
+      if (byCode) return byCode.id;
+      const byName = list.find(a => a.type === type.toLowerCase() && names.some(n => a.name.includes(n)));
+      if (byName) return byName.id;
+      const byType = list.find(a => a.type === type.toLowerCase());
+      return byType?.id || '';
+    };
+    const expenseId = pick('expense', ['6000'], ['uncategorized expense','expense']);
+    const apId = pick('liability', ['2100'], ['accounts payable','payable']);
+    if (!expenseId || !apId) throw new Error('Expense or Accounts Payable account missing');
+    const { data: tx, error: txErr } = await supabase
+      .from('transactions')
+      .insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Bill ${bill.bill_number || bill.id} recorded`, reference_number: bill.bill_number || null, total_amount: total, transaction_type: 'bill', status: 'pending' })
+      .select('id')
+      .single();
+    if (txErr) throw txErr;
+    const rows = [
+      { transaction_id: tx.id, account_id: expenseId, debit: total, credit: 0, description: 'Supplier bill', status: 'approved' },
+      { transaction_id: tx.id, account_id: apId, debit: 0, credit: total, description: 'Accounts Payable', status: 'approved' },
+    ];
+    const { error: teErr } = await supabase.from('transaction_entries').insert(rows);
+    if (teErr) throw teErr;
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: tx.id, description: r.description }));
+    const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
+    if (leErr) throw leErr;
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id);
+  },
+  postBillPaidClient: async (bill: any, paymentDateStr: string, bankAccountId: string, amount: number): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const payDate = paymentDateStr || new Date().toISOString().slice(0, 10);
+    const amt = Number(amount || bill.total_amount || 0);
+    if (!amt || amt <= 0) throw new Error('Invalid payment amount');
+    if (!bankAccountId) throw new Error('Bank account required');
+    const { data: bankAcc } = await supabase
+      .from('bank_accounts')
+      .select('id, company_id, account_name')
+      .eq('id', bankAccountId)
+      .maybeSingle();
+    if (!bankAcc || bankAcc.company_id !== companyId) throw new Error('Invalid bank account selection for this company');
+    const { data: accounts } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_name, account_type, account_code, is_active')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => {
+      const byCode = list.find(a => a.type === type.toLowerCase() && codes.includes(a.code));
+      if (byCode) return byCode.id;
+      const byName = list.find(a => a.type === type.toLowerCase() && names.some(n => a.name.includes(n)));
+      if (byName) return byName.id;
+      const byType = list.find(a => a.type === type.toLowerCase());
+      return byType?.id || '';
+    };
+    const apId = pick('liability', ['2100'], ['accounts payable','payable']);
+    const bankId = pick('asset', ['1100'], ['bank','cash']);
+    if (!apId || !bankId) throw new Error('Accounts Payable or Bank account missing');
+    const { data: tx, error: txErr } = await supabase
+      .from('transactions')
+      .insert({ company_id: companyId, user_id: user.id, transaction_date: payDate, description: `Payment for Bill ${bill.bill_number || bill.id}`, reference_number: bill.bill_number || null, total_amount: amt, transaction_type: 'payment', status: 'pending', bank_account_id: bankAccountId })
+      .select('id')
+      .single();
+    if (txErr) throw txErr;
+    const rows = [
+      { transaction_id: tx.id, account_id: apId, debit: amt, credit: 0, description: 'Accounts Payable', status: 'approved' },
+      { transaction_id: tx.id, account_id: bankId, debit: 0, credit: amt, description: 'Bank', status: 'approved' },
+    ];
+    const { error: teErr } = await supabase.from('transaction_entries').insert(rows);
+    if (teErr) throw teErr;
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: payDate, is_reversed: false, transaction_id: tx.id, description: r.description }));
+    const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
+    if (leErr) throw leErr;
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: amt, _operation: 'subtract' }); } catch {}
+  },
 };

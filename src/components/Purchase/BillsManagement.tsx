@@ -13,6 +13,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { useRoles } from "@/hooks/use-roles";
+import { transactionsApi } from "@/lib/transactions-api";
 
 interface Bill {
   id: string;
@@ -30,6 +31,14 @@ export const BillsManagement = () => {
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [sentLoading, setSentLoading] = useState<string | null>(null);
+  const [payDialogOpen, setPayDialogOpen] = useState(false);
+  const [payBill, setPayBill] = useState<Bill | null>(null);
+  const [payDate, setPayDate] = useState<string>(new Date().toISOString().split("T")[0]);
+  const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; account_name: string }>>([]);
+  const [selectedBankId, setSelectedBankId] = useState<string>("");
+  const [payAmount, setPayAmount] = useState<string>("");
+  const [paidMap, setPaidMap] = useState<Record<string, number>>({});
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
@@ -57,6 +66,26 @@ export const BillsManagement = () => {
     return () => {
       supabase.removeChannel(channel);
     };
+  }, []);
+
+  useEffect(() => {
+    const loadBanks = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!profile) return;
+      const { data } = await supabase
+        .from("bank_accounts")
+        .select("id, account_name")
+        .eq("company_id", (profile as any).company_id)
+        .order("created_at", { ascending: false });
+      setBankAccounts((data || []).map((b: any) => ({ id: b.id, account_name: b.account_name })));
+    };
+    loadBanks();
   }, []);
 
   const loadData = async () => {
@@ -90,6 +119,23 @@ export const BillsManagement = () => {
 
       if (error) throw error;
       setBills(data as any || []);
+      const billNumbers = (data || []).map((b: any) => b.bill_number).filter(Boolean);
+      if (billNumbers.length > 0) {
+        const { data: pays } = await supabase
+          .from("transactions")
+          .select("reference_number,total_amount,transaction_type,status")
+          .in("reference_number", billNumbers)
+          .eq("transaction_type", "payment")
+          .eq("status", "posted");
+        const map: Record<string, number> = {};
+        (pays || []).forEach((t: any) => {
+          const ref = String(t.reference_number || "");
+          map[ref] = (map[ref] || 0) + Number(t.total_amount || 0);
+        });
+        setPaidMap(map);
+      } else {
+        setPaidMap({});
+      }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -212,6 +258,55 @@ export const BillsManagement = () => {
     }
   };
 
+  const markSent = async (bill: Bill) => {
+    try {
+      setSentLoading(bill.id);
+      const { error } = await supabase
+        .from("bills")
+        .update({ status: "pending" })
+        .eq("id", bill.id);
+      if (error) throw error;
+      await transactionsApi.postBillRecordedClient(bill, bill.bill_date);
+      setBills(prev => prev.map(b => b.id === bill.id ? { ...b, status: "pending" } : b));
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setSentLoading(null);
+    }
+  };
+
+  const openPayDialog = (bill: Bill) => {
+    setPayBill(bill);
+    setPayDate(new Date().toISOString().split("T")[0]);
+    const outstanding = Math.max(0, Number(bill.total_amount || 0) - Number(paidMap[bill.bill_number] || 0));
+    setPayAmount(outstanding.toFixed(2));
+    setPayDialogOpen(true);
+  };
+
+  const confirmPayment = async () => {
+    if (!payBill || !selectedBankId) return;
+    try {
+      const amt = parseFloat(payAmount || '0');
+      const outstanding = Math.max(0, Number((payBill as any).total_amount || 0) - Number(paidMap[(payBill as any).bill_number] || 0));
+      if (!amt || amt <= 0) throw new Error('Enter a valid payment amount');
+      if (amt > outstanding + 0.0001) throw new Error('Amount exceeds outstanding');
+      await transactionsApi.postBillPaidClient(payBill, payDate, selectedBankId, amt);
+      const { error } = await supabase
+        .from("bills")
+        .update({ status: (amt >= outstanding ? "paid" : "sent") })
+        .eq("id", (payBill as any).id);
+      if (error) throw error;
+      const newPaid = Number(paidMap[(payBill as any).bill_number] || 0) + amt;
+      setPaidMap(prev => ({ ...prev, [String((payBill as any).bill_number || '')]: newPaid }));
+      const fullySettled = newPaid >= Number((payBill as any).total_amount || 0) - 0.0001;
+      setBills(prev => prev.map(b => b.id === (payBill as any).id ? { ...b, status: (fullySettled ? "paid" : "sent") } : b));
+      setPayDialogOpen(false);
+      setPayBill(null);
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
   const canEdit = isAdmin || isAccountant;
   const totals = calculateTotals();
 
@@ -246,6 +341,7 @@ export const BillsManagement = () => {
                 <TableHead>Due Date</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead className="text-right">Outstanding</TableHead>
                 {canEdit && <TableHead>Actions</TableHead>}
               </TableRow>
             </TableHeader>
@@ -262,11 +358,20 @@ export const BillsManagement = () => {
                       {bill.status}
                     </Badge>
                   </TableCell>
+                  <TableCell className="text-right font-mono">R {Math.max(0, Number(bill.total_amount || 0) - Number(paidMap[bill.bill_number] || 0)).toLocaleString('en-ZA')}</TableCell>
                   {canEdit && (
                     <TableCell>
-                      <Button size="sm" variant="ghost" onClick={() => deleteBill(bill.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex gap-2">
+                        {bill.status !== 'paid' && (
+                          <Button size="sm" onClick={() => markSent(bill)} disabled={sentLoading === bill.id}>Sent</Button>
+                        )}
+                        {bill.status === 'pending' && (
+                          <Button size="sm" variant="outline" onClick={() => openPayDialog(bill)}>Paid</Button>
+                        )}
+                        <Button size="sm" variant="ghost" onClick={() => deleteBill(bill.id)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>
@@ -417,6 +522,46 @@ export const BillsManagement = () => {
               <Button type="submit" className="bg-gradient-primary">Create Bill</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record Bill Payment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Date</Label>
+                <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>Amount to Pay (R)</Label>
+                <Input type="number" step="0.01" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
+                <div className="text-xs text-muted-foreground mt-1">
+                  Outstanding: R {Math.max(0, Number(payBill?.total_amount || 0) - Number(paidMap[payBill?.bill_number || ''] || 0)).toLocaleString('en-ZA')}
+                </div>
+              </div>
+            </div>
+            <div>
+              <Label>Bank Account</Label>
+              <Select value={selectedBankId} onValueChange={setSelectedBankId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select bank" />
+                </SelectTrigger>
+                <SelectContent>
+                  {bankAccounts.map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPayDialogOpen(false)}>Cancel</Button>
+            <Button onClick={confirmPayment}>Confirm</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Card>

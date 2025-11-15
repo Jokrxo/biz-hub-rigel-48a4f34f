@@ -14,9 +14,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { useRoles } from "@/hooks/use-roles";
+import { CommandDialog, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 
 interface Budget {
   id: string;
+  account_id?: string | null;
   budget_name: string;
   budget_year: number;
   budget_month: number;
@@ -27,12 +29,15 @@ interface Budget {
   status: string;
   notes: string | null;
 }
+interface AccountOpt { id: string; account_name: string; account_type: string; normal_balance?: string }
 
 export const BudgetManagement = () => {
   const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [accounts, setAccounts] = useState<AccountOpt[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
+  const [accountSearchOpen, setAccountSearchOpen] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
@@ -44,6 +49,7 @@ export const BudgetManagement = () => {
     budget_name: "",
     budget_year: currentYear.toString(),
     budget_month: currentMonth.toString(),
+    account_id: "",
     category: "",
     budgeted_amount: "",
     notes: "",
@@ -55,19 +61,29 @@ export const BudgetManagement = () => {
   useEffect(() => {
     loadBudgets();
 
-    // Real-time updates
-    const channel = supabase
-      .channel('budgets-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'budgets' }, () => {
-        loadBudgets();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, () => {
-        updateBudgetActuals();
-      })
-      .subscribe();
+    let channel: any;
+    (async () => {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .maybeSingle();
+
+      const companyId = (profile as any)?.company_id || "";
+
+      channel = supabase
+        .channel('budgets-changes')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'budgets', filter: `company_id=eq.${companyId}` }, () => {
+          loadBudgets();
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `company_id=eq.${companyId}` }, () => {
+          updateBudgetActuals();
+        })
+        .subscribe();
+    })();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [selectedYear, selectedMonth]);
 
@@ -83,42 +99,50 @@ export const BudgetManagement = () => {
 
       const { data, error } = await supabase
         .from("budgets")
-        .select("*")
+        .select("id, account_id, budget_name, budget_year, budget_month, category, budgeted_amount, actual_amount, variance, status, notes")
         .eq("company_id", profile.company_id)
         .eq("budget_year", parseInt(selectedYear))
         .eq("budget_month", parseInt(selectedMonth))
-        .order("category");
+        .order("budget_name");
 
       if (error) throw error;
 
-      // Calculate actual amounts
-      const budgetsWithActuals = await Promise.all(
-        (data || []).map(async (budget) => {
-          const { data: expenses } = await supabase
-            .from("expenses")
-            .select("amount")
-            .eq("company_id", profile.company_id)
-            .eq("category", budget.category)
-            .gte("expense_date", `${budget.budget_year}-${String(budget.budget_month).padStart(2, '0')}-01`)
-            .lte("expense_date", `${budget.budget_year}-${String(budget.budget_month).padStart(2, '0')}-31`)
-            .eq("status", "approved");
+      const { data: accs } = await supabase
+        .from("chart_of_accounts")
+        .select("id, account_name, account_type, normal_balance")
+        .eq("company_id", profile.company_id)
+        .eq("is_active", true);
+      const acct = (accs || []).filter((a: any) => ["expense", "income"].includes(String(a.account_type || '').toLowerCase()));
+      setAccounts(acct.map((a: any) => ({ id: a.id, account_name: a.account_name, account_type: a.account_type, normal_balance: a.normal_balance })));
 
-          const actualAmount = expenses?.reduce((sum, e) => sum + Number(e.amount), 0) || 0;
-          const variance = Number(budget.budgeted_amount) - actualAmount;
+      const start = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-01`;
+      const y = parseInt(selectedYear);
+      const m = parseInt(selectedMonth);
+      const lastDay = new Date(y, m, 0).getDate();
+      const end = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+      const { data: te, error: teError } = await supabase
+        .from("transaction_entries")
+        .select("account_id, debit, credit, status, transactions!inner(transaction_date, company_id, status)")
+        .eq("transactions.company_id", profile.company_id)
+        .eq("transactions.status", "posted")
+        .gte("transactions.transaction_date", start)
+        .lte("transactions.transaction_date", end)
+        .eq("status", "approved");
+      if (teError) throw teError;
+      const actualMap: Record<string, number> = {};
+      (te || []).forEach((row: any) => {
+        const accId = String(row.account_id || '');
+        const acc = acct.find((a: any) => a.id === accId);
+        const nb = String(acc?.normal_balance || '').toLowerCase();
+        const val = nb === 'credit' ? Number(row.credit || 0) - Number(row.debit || 0) : Number(row.debit || 0) - Number(row.credit || 0);
+        actualMap[accId] = (actualMap[accId] || 0) + val;
+      });
 
-          // Update budget with actual amounts
-          await supabase
-            .from("budgets")
-            .update({ actual_amount: actualAmount, variance: variance })
-            .eq("id", budget.id);
-
-          return {
-            ...budget,
-            actual_amount: actualAmount,
-            variance: variance
-          };
-        })
-      );
+      const budgetsWithActuals = (data || []).map((budget: any) => {
+        const actualAmount = actualMap[String(budget.account_id || '')] || 0;
+        const variance = Number(budget.budgeted_amount || 0) - actualAmount;
+        return { ...budget, actual_amount: actualAmount, variance } as Budget;
+      });
 
       setBudgets(budgetsWithActuals);
     } catch (error: any) {
@@ -139,6 +163,7 @@ export const BudgetManagement = () => {
         budget_name: budget.budget_name,
         budget_year: budget.budget_year.toString(),
         budget_month: budget.budget_month.toString(),
+        account_id: budget.account_id ? String(budget.account_id) : "",
         category: budget.category,
         budgeted_amount: budget.budgeted_amount.toString(),
         notes: budget.notes || "",
@@ -155,6 +180,7 @@ export const BudgetManagement = () => {
       budget_name: "",
       budget_year: currentYear.toString(),
       budget_month: currentMonth.toString(),
+      account_id: "",
       category: "",
       budgeted_amount: "",
       notes: "",
@@ -175,6 +201,11 @@ export const BudgetManagement = () => {
         .eq("user_id", user?.id)
         .single();
 
+      if (!formData.account_id) {
+        toast({ title: "Account required", description: "Please select an account for this budget.", variant: "destructive" });
+        return;
+      }
+
       if (editingBudget) {
         const { error } = await supabase
           .from("budgets")
@@ -182,22 +213,36 @@ export const BudgetManagement = () => {
             budget_name: formData.budget_name,
             budget_year: parseInt(formData.budget_year),
             budget_month: parseInt(formData.budget_month),
-            category: formData.category,
+            account_id: formData.account_id || null,
+            category: String(formData.account_id),
             budgeted_amount: parseFloat(formData.budgeted_amount),
             notes: formData.notes || null,
           })
-          .eq("id", editingBudget.id);
+          .eq("id", editingBudget.id)
+          .eq("company_id", profile!.company_id);
 
         if (error) throw error;
         toast({ title: "Success", description: "Budget updated successfully" });
       } else {
+        const { data: existing } = await supabase
+          .from("budgets")
+          .select("id")
+          .eq("company_id", profile!.company_id)
+          .eq("budget_year", parseInt(formData.budget_year))
+          .eq("budget_month", parseInt(formData.budget_month))
+          .eq("account_id", formData.account_id);
+        if ((existing || []).length > 0) {
+          toast({ title: "Duplicate budget", description: "An entry for this account and period already exists.", variant: "destructive" });
+          return;
+        }
         const { error } = await supabase.from("budgets").insert({
           company_id: profile!.company_id,
           user_id: user!.id,
-          budget_name: formData.budget_name,
+          budget_name: formData.budget_name || (accounts.find(a => a.id === formData.account_id)?.account_name || ""),
           budget_year: parseInt(formData.budget_year),
           budget_month: parseInt(formData.budget_month),
-          category: formData.category,
+          account_id: formData.account_id || null,
+          category: String(formData.account_id),
           budgeted_amount: parseFloat(formData.budgeted_amount),
           actual_amount: 0,
           variance: parseFloat(formData.budgeted_amount),
@@ -221,7 +266,12 @@ export const BudgetManagement = () => {
   const deleteBudget = async (id: string) => {
     if (!confirm("Delete this budget?")) return;
     try {
-      const { error } = await supabase.from("budgets").delete().eq("id", id);
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .maybeSingle();
+      const { error } = await supabase.from("budgets").delete().eq("id", id).eq("company_id", profile?.company_id || "");
       if (error) throw error;
       toast({ title: "Success", description: "Budget deleted" });
       loadBudgets();
@@ -287,6 +337,19 @@ export const BudgetManagement = () => {
                 <SelectContent>
                   {[currentYear - 1, currentYear, currentYear + 1].map(year => (
                     <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Account *</Label>
+              <Select value={formData.account_id} onValueChange={(val) => setFormData({ ...formData, account_id: val })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map(a => (
+                    <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -377,8 +440,7 @@ export const BudgetManagement = () => {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Budget Name</TableHead>
-                  <TableHead>Category</TableHead>
+                  <TableHead>Account</TableHead>
                   <TableHead className="text-right">Budgeted</TableHead>
                   <TableHead className="text-right">Actual</TableHead>
                   <TableHead className="text-right">Variance</TableHead>
@@ -396,8 +458,7 @@ export const BudgetManagement = () => {
 
                   return (
                     <TableRow key={budget.id}>
-                      <TableCell className="font-medium">{budget.budget_name}</TableCell>
-                      <TableCell>{budget.category}</TableCell>
+                      <TableCell className="font-medium">{accounts.find(a => a.id === String(budget.account_id || ''))?.account_name || budget.budget_name}</TableCell>
                       <TableCell className="text-right font-mono">
                         {formatCurrency(budget.budgeted_amount)}
                       </TableCell>
@@ -452,15 +513,7 @@ export const BudgetManagement = () => {
             <DialogTitle>{editingBudget ? "Edit Budget" : "Create Budget"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <Label>Budget Name *</Label>
-              <Input
-                value={formData.budget_name}
-                onChange={(e) => setFormData({ ...formData, budget_name: e.target.value })}
-                placeholder="e.g., Q1 Marketing Budget"
-                required
-              />
-            </div>
+            
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Year *</Label>
@@ -491,18 +544,22 @@ export const BudgetManagement = () => {
                 </Select>
               </div>
             </div>
+            
             <div>
-              <Label>Category *</Label>
-              <Select value={formData.category} onValueChange={(val) => setFormData({ ...formData, category: val })} required>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select category" />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((cat) => (
-                    <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label>Account *</Label>
+              <div className="flex gap-2">
+                <Select value={formData.account_id} onValueChange={(val) => setFormData({ ...formData, account_id: val })}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select account" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {accounts.map(a => (
+                      <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button type="button" variant="outline" onClick={() => setAccountSearchOpen(true)}>Search</Button>
+              </div>
             </div>
             <div>
               <Label>Budgeted Amount (R) *</Label>
@@ -534,6 +591,27 @@ export const BudgetManagement = () => {
           </form>
         </DialogContent>
       </Dialog>
+
+      <CommandDialog open={accountSearchOpen} onOpenChange={setAccountSearchOpen}>
+        <CommandInput placeholder="Search chart of accounts..." />
+        <CommandList>
+          <CommandEmpty>No accounts found</CommandEmpty>
+          <CommandGroup heading="Expense">
+            {accounts.filter(a => (a.account_type || '').toLowerCase() === 'expense').map(a => (
+              <CommandItem key={a.id} onSelect={() => { setFormData(prev => ({ ...prev, account_id: a.id })); setAccountSearchOpen(false); }}>
+                {a.account_name}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          <CommandGroup heading="Income">
+            {accounts.filter(a => (a.account_type || '').toLowerCase() === 'income').map(a => (
+              <CommandItem key={a.id} onSelect={() => { setFormData(prev => ({ ...prev, account_id: a.id })); setAccountSearchOpen(false); }}>
+                {a.account_name}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        </CommandList>
+      </CommandDialog>
     </div>
   );
 };

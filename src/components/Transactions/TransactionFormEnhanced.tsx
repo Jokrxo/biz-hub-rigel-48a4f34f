@@ -142,7 +142,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     debitAccount: "",
     creditAccount: "",
     amount: "",
-    vatRate: "15"
+    vatRate: "0"
   });
 
   useEffect(() => {
@@ -160,7 +160,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         debitAccount: "",
         creditAccount: "",
         amount: "",
-        vatRate: "15"
+        vatRate: "0"
       });
       setDebitSearch("");
       setCreditSearch("");
@@ -182,7 +182,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         debitAccount: editData.debit_account_id || prev.debitAccount,
         creditAccount: editData.credit_account_id || prev.creditAccount,
         amount: String(Math.abs(editData.total_amount || 0)),
-        vatRate: prev.vatRate
+        vatRate: editData.vat_rate ? String(editData.vat_rate) : "0"
       }));
       setLockAccounts(Boolean(editData.lockType));
       setLockType(String(editData.lockType || ''));

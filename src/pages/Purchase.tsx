@@ -7,9 +7,10 @@ import { Bills } from "@/components/Purchase/Bills";
 import { PurchaseOrders } from "@/components/Purchase/PurchaseOrders";
 import { Suppliers } from "@/components/Purchase/Suppliers";
 import { PurchaseTransactions } from "@/components/Purchase/PurchaseTransactions";
+import { APDashboard } from "@/components/Purchase/APDashboard";
 
 export default function PurchasePage() {
-  const [activeTab, setActiveTab] = useState("overview");
+  const [activeTab, setActiveTab] = useState("ap-dashboard");
 
   return (
     <>
@@ -23,19 +24,20 @@ export default function PurchasePage() {
 
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList>
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="bills">Bills</TabsTrigger>
+              <TabsTrigger value="ap-dashboard">AP Dashboard</TabsTrigger>
               <TabsTrigger value="orders">Purchase Orders</TabsTrigger>
+              <TabsTrigger value="bills">Bills</TabsTrigger>
               <TabsTrigger value="transactions">Transactions (Purchase)</TabsTrigger>
               <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
             </TabsList>
 
-            <TabsContent value="overview">
-              <PurchaseOverview />
-            </TabsContent>
 
             <TabsContent value="bills">
               <Bills />
+            </TabsContent>
+
+            <TabsContent value="ap-dashboard">
+              <APDashboard />
             </TabsContent>
 
             <TabsContent value="orders">
