@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { exportFinancialReportToExcel, exportFinancialReportToPDF } from "@/lib/export-utils";
 import type { FinancialReportLine } from "@/lib/export-utils";
@@ -69,7 +69,7 @@ export const EnhancedFinancialReports = () => {
 
       // Backfill any missing postings from existing invoices to ledger
       try {
-        await supabase.rpc('backfill_invoice_postings', { _company_id: profile.company_id });
+        await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id });
       } catch (bfErr: any) {
         console.warn('Backfill failed or function missing:', bfErr?.message || bfErr);
       }

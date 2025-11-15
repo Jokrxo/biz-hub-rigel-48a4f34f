@@ -5,7 +5,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { useAuth } from "@/context/AuthContext";
 import { Bell, Menu, Search, Plus, LogOut, Building2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 
 interface DashboardHeaderProps {
@@ -68,6 +68,73 @@ const UserMenu = () => {
 
 export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [notifications, setNotifications] = useState<Array<{ id: string; title: string; description: string; created_at: string; read: boolean }>>([]);
+  const [companyId, setCompanyId] = useState<string | null>(null);
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('user_id', user?.id)
+          .maybeSingle();
+        if (!profile?.company_id) return;
+        setCompanyId(profile.company_id);
+
+        const channel = supabase
+          .channel('notifications')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, payload => {
+            const row: any = payload?.new || payload?.old || {};
+            if (row.company_id && row.company_id !== profile.company_id) return;
+            const status = String(row.status || '').toLowerCase();
+            const title = status === 'approved' || status === 'posted' ? 'Transaction Posted' : 'Transaction Updated';
+            const desc = `${row.description || 'Transaction'} • ${row.transaction_date || ''}`;
+            pushNotification(title, desc);
+          })
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, payload => {
+            const row: any = payload?.new || payload?.old || {};
+            if (row.company_id && row.company_id !== profile.company_id) return;
+            const status = String(row.status || '').toLowerCase();
+            if (status === 'sent') {
+              pushNotification('Invoice Sent', `Invoice ${row.invoice_number || row.id}`);
+            } else if (status === 'paid') {
+              pushNotification('Invoice Paid', `Invoice ${row.invoice_number || row.id}`);
+            } else {
+              pushNotification('Invoice Updated', `Invoice ${row.invoice_number || row.id}`);
+            }
+          })
+          .on('postgres_changes', { event: 'insert', schema: 'public', table: 'bank_accounts' }, payload => {
+            const row: any = payload?.new || {};
+            if (row.company_id && row.company_id !== profile.company_id) return;
+            pushNotification('Bank Account Added', `${row.bank_name || ''} • ${row.account_name || ''}`);
+          })
+          .on('postgres_changes', { event: 'insert', schema: 'public', table: 'chart_of_accounts' }, payload => {
+            const row: any = payload?.new || {};
+            if (row.company_id && row.company_id !== profile.company_id) return;
+            pushNotification('Account Created', `${row.account_code || ''} • ${row.account_name || ''}`);
+          })
+          .subscribe();
+
+        return () => {
+          supabase.removeChannel(channel);
+        };
+      } catch (e) {
+        // non-blocking
+      }
+    };
+    init();
+  }, [user?.id]);
+
+  const pushNotification = (title: string, description: string) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setNotifications(prev => [{ id, title, description, created_at: new Date().toISOString(), read: false }, ...prev].slice(0, 50));
+  };
+
+  const markAllRead = () => setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  const clearAll = () => setNotifications([]);
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
@@ -100,12 +167,42 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
         </Button>
 
         <div className="relative">
-          <Button variant="ghost" size="sm" className="relative">
-            <Bell className="h-5 w-5" />
-            <Badge className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-destructive text-xs">
-              3
-            </Badge>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="relative">
+                <Bell className="h-5 w-5" />
+                {unreadCount > 0 && (
+                  <Badge className="absolute -top-1 -right-1 h-5 min-w-5 rounded-full bg-destructive text-xs flex items-center justify-center">
+                    {unreadCount}
+                  </Badge>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-80">
+              <DropdownMenuLabel className="flex items-center justify-between">
+                <span>Notifications</span>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="xs" onClick={markAllRead}>Mark all read</Button>
+                  <Button variant="ghost" size="xs" onClick={clearAll}>Clear</Button>
+                </div>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {notifications.length === 0 ? (
+                <div className="p-3 text-sm text-muted-foreground">No notifications yet</div>
+              ) : (
+                notifications.slice(0, 10).map(n => (
+                  <DropdownMenuItem key={n.id} className="flex flex-col items-start gap-1">
+                    <div className="flex items-center gap-2 w-full">
+                      {!n.read && <span className="h-2 w-2 rounded-full bg-primary" />}
+                      <span className="font-medium text-sm">{n.title}</span>
+                      <span className="ml-auto text-xs text-muted-foreground">{new Date(n.created_at).toLocaleString()}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground w-full">{n.description}</div>
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         <UserMenu />

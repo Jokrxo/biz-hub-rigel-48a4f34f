@@ -18,7 +18,7 @@ import {
   Wallet
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/integrations/supabase/client";
 
 interface SidebarProps {
   open: boolean;

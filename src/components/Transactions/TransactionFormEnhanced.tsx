@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/integrations/supabase/client";
 import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandDialog } from "@/components/ui/command";
@@ -58,6 +58,13 @@ const ACCOUNTING_ELEMENTS = [
     description: "A transaction where the business receives money for goods or services sold.",
     debitType: "asset",
     creditTypes: ["income", "revenue"],
+  },
+  { 
+    value: "receipt", 
+    label: "Receivable Collection", 
+    debitType: 'asset', 
+    creditTypes: ['asset'],
+    description: "Collect receivable (Dr Bank / Cr Accounts Receivable)"
   },
   { 
     value: "asset", 
@@ -121,6 +128,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [debitIncludeAll, setDebitIncludeAll] = useState(false);
   const [creditIncludeAll, setCreditIncludeAll] = useState(false);
   const [chartOpen, setChartOpen] = useState(false);
+  const [lockAccounts, setLockAccounts] = useState(false);
+  const [lockType, setLockType] = useState<string | null>(null);
   
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -168,13 +177,44 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         reference: editData.reference_number || "",
         bankAccountId: editData.bank_account_id || "",
         element: (editData.transaction_type || (Number(editData.total_amount || 0) >= 0 ? 'income' : 'expense')),
+        paymentMethod: editData.payment_method || prev.paymentMethod,
         debitAccount: editData.debit_account_id || prev.debitAccount,
         creditAccount: editData.credit_account_id || prev.creditAccount,
         amount: String(Math.abs(editData.total_amount || 0)),
         vatRate: prev.vatRate
       }));
+      setLockAccounts(Boolean(editData.lockType));
+      setLockType(String(editData.lockType || ''));
     } catch {}
   }, [open, editData]);
+
+  // Ensure locked flows always have required accounts set once accounts are loaded
+  useEffect(() => {
+    if (!open || !lockAccounts || accounts.length === 0) return;
+    const lower = accounts.map(a => ({
+      ...a,
+      account_type: (a.account_type || '').toLowerCase(),
+      account_name: (a.account_name || '').toLowerCase(),
+      account_code: (a.account_code || '').toString(),
+    }));
+    const pick = (type: string, codes: string[], names: string[]) => {
+      const byCode = lower.find(a => codes.includes(a.account_code) && a.account_type === type.toLowerCase());
+      if (byCode) return byCode.id;
+      const byName = lower.find(a => a.account_type === type.toLowerCase() && names.some(n => a.account_name.includes(n)));
+      if (byName) return byName.id;
+      const byType = lower.find(a => a.account_type === type.toLowerCase());
+      return byType?.id || '';
+    };
+    if (lockType === 'sent') {
+      const arId = form.debitAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
+      const revId = form.creditAccount || pick('income', ['4000'], ['sales revenue','revenue','sales','income']);
+      setForm(prev => ({ ...prev, debitAccount: arId, creditAccount: revId }));
+    } else if (lockType === 'paid') {
+      const bankId = form.debitAccount || pick('asset', ['1100'], ['bank','cash']);
+      const arId = form.creditAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
+      setForm(prev => ({ ...prev, debitAccount: bankId, creditAccount: arId }));
+    }
+  }, [open, lockAccounts, lockType, accounts]);
 
   // Filter accounts based on search input
   const debitSource = debitIncludeAll ? accounts : debitAccounts;
@@ -223,14 +263,18 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     setCreditAccounts(credits);
 
     // Auto-select accounts based on element and payment method
-    autoSelectAccounts(config, debits, credits);
+    if (!lockAccounts) {
+      autoSelectAccounts(config, debits, credits);
+    }
 
     // Fallback defaults: if not selected yet, choose the first available
-    setForm(prev => ({
-      ...prev,
-      debitAccount: prev.debitAccount || (debits[0]?.id || ""),
-      creditAccount: prev.creditAccount || (credits[0]?.id || ""),
-    }));
+    if (!lockAccounts) {
+      setForm(prev => ({
+        ...prev,
+        debitAccount: prev.debitAccount || (debits[0]?.id || ""),
+        creditAccount: prev.creditAccount || (credits[0]?.id || ""),
+      }));
+    }
   }, [form.element, form.paymentMethod, accounts, form.debitAccount, form.creditAccount]);
 
   const loadData = async () => {
@@ -277,6 +321,32 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       }
       
       setAccounts(accts || []);
+
+      if (lockAccounts && accts && accts.length > 0) {
+        const lower = accts.map(a => ({
+          ...a,
+          account_type: (a.account_type || '').toLowerCase(),
+          account_name: (a.account_name || '').toLowerCase(),
+          account_code: (a.account_code || '').toString(),
+        }));
+        const pick = (type: string, codes: string[], names: string[]) => {
+          const byCode = lower.find(a => codes.includes(a.account_code) && a.account_type === type.toLowerCase());
+          if (byCode) return byCode.id;
+          const byName = lower.find(a => a.account_type === type.toLowerCase() && names.some(n => a.account_name.includes(n)));
+          if (byName) return byName.id;
+          const byType = lower.find(a => a.account_type === type.toLowerCase());
+          return byType?.id || '';
+        };
+        if (lockType === 'sent') {
+          const arId = form.debitAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
+          const revId = form.creditAccount || pick('income', ['4000'], ['revenue','sales','income']);
+          setForm(prev => ({ ...prev, debitAccount: arId, creditAccount: revId }));
+        } else if (lockType === 'paid') {
+          const bankId = form.debitAccount || pick('asset', ['1100'], ['bank','cash']);
+          const arId = form.creditAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
+          setForm(prev => ({ ...prev, debitAccount: bankId, creditAccount: arId }));
+        }
+      }
     } catch (error: any) {
       toast({ title: "Error loading data", description: error.message, variant: "destructive" });
     }
@@ -373,7 +443,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       }
 
       // If editing, update the transaction header fields and account mapping
-      if (editData) {
+      if (editData && editData.id) {
         // Guard: ensure we have a valid transaction id to post against
         if (!editData.id) {
           toast({ 
@@ -483,7 +553,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
         const { error: ledgerErr } = await supabase
           .from("ledger_entries")
-          .insert(ledgerRows);
+          .insert(ledgerRows as any);
         if (ledgerErr) throw ledgerErr;
 
         // Optional: mark transaction approved for clarity in UI
@@ -674,8 +744,29 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
       }
 
-      if (vatAmount > 0 && vatAccount && vatAccount.id) {
-        // VAT-inclusive transaction
+      // Locked invoice flows: override element-specific VAT handling
+      if (lockType === 'sent') {
+        // Accrual issuance: Dr AR (total), Cr Revenue (net), Cr VAT Output (vat)
+        if (vatAmount > 0 && vatAccount && vatAccount.id) {
+          entries.push(
+            { transaction_id: transaction.id, account_id: form.debitAccount, debit: amount, credit: 0, description: sanitizedDescription, status: 'pending' },
+            { transaction_id: transaction.id, account_id: form.creditAccount, debit: 0, credit: netAmount, description: sanitizedDescription, status: 'pending' },
+            { transaction_id: transaction.id, account_id: vatAccount.id, debit: 0, credit: vatAmount, description: 'VAT Output', status: 'pending' }
+          );
+        } else {
+          entries.push(
+            { transaction_id: transaction.id, account_id: form.debitAccount, debit: amount, credit: 0, description: sanitizedDescription, status: 'pending' },
+            { transaction_id: transaction.id, account_id: form.creditAccount, debit: 0, credit: amount, description: sanitizedDescription, status: 'pending' }
+          );
+        }
+      } else if (lockType === 'paid') {
+        // Payment collection: Dr Bank (amount), Cr AR (amount) — no VAT
+        entries.push(
+          { transaction_id: transaction.id, account_id: form.debitAccount, debit: amount, credit: 0, description: sanitizedDescription, status: 'pending' },
+          { transaction_id: transaction.id, account_id: form.creditAccount, debit: 0, credit: amount, description: sanitizedDescription, status: 'pending' }
+        );
+      } else if (vatAmount > 0 && vatAccount && vatAccount.id) {
+        // General VAT-inclusive transaction (non-locked)
         if (form.element === 'expense') {
           // Expense with VAT: Debit Expense (net), Debit VAT Input (vat), Credit Bank (total)
           entries.push(
@@ -915,7 +1006,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
         const { error: ledgerInsErr } = await supabase
           .from('ledger_entries')
-          .insert(ledgerRowsNew);
+          .insert(ledgerRowsNew as any);
         if (ledgerInsErr) {
           console.error('Ledger entries insert error:', ledgerInsErr);
           throw ledgerInsErr;
@@ -973,6 +1064,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [accountSearchTarget, setAccountSearchTarget] = useState<"debit"|"credit">("debit");
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalIncludeAll, setGlobalIncludeAll] = useState(false);
+  const disableAccountSelection = lockAccounts && Boolean(form.debitAccount) && Boolean(form.creditAccount);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1110,7 +1202,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="element">Accounting Element *</Label>
-                <Select value={form.element} onValueChange={(val) => setForm({ ...form, element: val, debitAccount: "", creditAccount: "" })}>
+                <Select value={form.element} onValueChange={(val) => setForm({ ...form, element: val, debitAccount: "", creditAccount: "" })} disabled={lockAccounts}>
                   <SelectTrigger id="element">
                     <SelectValue placeholder="Select element" />
                   </SelectTrigger>
@@ -1126,7 +1218,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
               <div>
                 <Label htmlFor="paymentMethod">Payment Method *</Label>
-                <Select value={form.paymentMethod} onValueChange={(val) => setForm({ ...form, paymentMethod: val })}>
+                <Select value={form.paymentMethod} onValueChange={(val) => setForm({ ...form, paymentMethod: val })} disabled={lockAccounts}>
                   <SelectTrigger id="paymentMethod">
                     <SelectValue />
                   </SelectTrigger>
@@ -1160,8 +1252,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   Account Selection (Double-Entry)
                 </h3>
                 <div className="flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => setChartOpen(true)}>Chart of Accounts</Button>
-                  <Button type="button" variant="outline" onClick={() => { setAccountSearchTarget("debit"); setAccountSearchOpen(true); }}>Search Accounts (Ctrl+K)</Button>
+                  <Button type="button" variant="outline" onClick={() => setChartOpen(true)} disabled={disableAccountSelection}>Chart of Accounts</Button>
+                  <Button type="button" variant="outline" onClick={() => { setAccountSearchTarget("debit"); setAccountSearchOpen(true); }} disabled={disableAccountSelection}>Search Accounts (Ctrl+K)</Button>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -1176,7 +1268,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           debitAccount: val,
                           creditAccount: prev.creditAccount === val ? "" : prev.creditAccount,
                         }));
-                      }} disabled={debitSource.length === 0}>
+                      }} disabled={disableAccountSelection || debitSource.length === 0}>
                         <SelectTrigger id="debitAccount">
                           <SelectValue placeholder="Select debit account" />
                         </SelectTrigger>
@@ -1191,7 +1283,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     </div>
                     <Popover open={debitSearchOpen} onOpenChange={setDebitSearchOpen}>
                       <PopoverTrigger asChild>
-                        <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search debit accounts">
+                        <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search debit accounts" disabled={disableAccountSelection}>
                           <Search className="h-4 w-4" />
                         </Button>
                       </PopoverTrigger>
@@ -1239,6 +1331,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     size="sm"
                     className="px-2"
                     onClick={() => { setAccountSearchTarget("debit"); setAccountSearchOpen(true); }}
+                    disabled={disableAccountSelection}
                   >
                     Search
                   </Button>
@@ -1259,7 +1352,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           creditAccount: val,
                           debitAccount: prev.debitAccount === val ? "" : prev.debitAccount,
                         }));
-                      }} disabled={creditSource.length === 0}>
+                      }} disabled={disableAccountSelection || creditSource.length === 0}>
                         <SelectTrigger id="creditAccount">
                           <SelectValue placeholder="Select credit account" />
                         </SelectTrigger>
@@ -1274,7 +1367,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     </div>
                     <Popover open={creditSearchOpen} onOpenChange={setCreditSearchOpen}>
                       <PopoverTrigger asChild>
-                        <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search credit accounts">
+                        <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search credit accounts" disabled={disableAccountSelection}>
                           <Search className="h-4 w-4" />
                         </Button>
                       </PopoverTrigger>
@@ -1322,6 +1415,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                         size="sm"
                         className="px-2"
                         onClick={() => { setAccountSearchTarget("credit"); setAccountSearchOpen(true); }}
+                        disabled={disableAccountSelection}
                       >
                         Search
                       </Button>

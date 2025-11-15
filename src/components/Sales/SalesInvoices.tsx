@@ -8,7 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/lib/supabase";
+import { supabase } from "@/integrations/supabase/client";
+import { transactionsApi } from "@/lib/transactions-api";
+import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
@@ -72,6 +74,8 @@ export const SalesInvoices = () => {
   const [sentDialogOpen, setSentDialogOpen] = useState(false);
   const [sentDate, setSentDate] = useState<string>(todayStr);
   const [sentInvoice, setSentInvoice] = useState<any>(null);
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [journalEditData, setJournalEditData] = useState<any>(null);
 
   useEffect(() => {
     loadData();
@@ -128,8 +132,8 @@ export const SalesInvoices = () => {
       setInvoices(data || []);
 
       try {
-        await supabase.rpc('backfill_invoice_postings', { _company_id: profile.company_id });
-        await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
+        await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id });
+        await (supabase as any).rpc('refresh_afs_cache', { _company_id: profile.company_id });
       } catch {}
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -146,8 +150,8 @@ export const SalesInvoices = () => {
         .update({ status: "sent", sent_at: new Date(sentDate).toISOString() })
         .eq("id", sentInvoice.id);
       if (error) throw error;
-      await postInvoiceSent(sentInvoice, sentDate);
-      toast({ title: "Success", description: "Invoice posted as Sent" });
+      await openJournalForSent(sentInvoice, sentDate);
+      toast({ title: "Success", description: "Opening journal to post invoice" });
       setSentDialogOpen(false);
       setSentInvoice(null);
       loadData();
@@ -349,7 +353,7 @@ export const SalesInvoices = () => {
   };
 
   const loadAccounts = async (companyId: string) => {
-    try { await supabase.rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
+    try { await (supabase as any).rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
     const { data } = await supabase
       .from("chart_of_accounts")
       .select("id, account_name, account_type, account_code")
@@ -418,7 +422,11 @@ export const SalesInvoices = () => {
   const postInvoiceSent = async (inv: any, postDateStr?: string) => {
     try {
       setPosting(true);
-      await supabase.rpc('post_invoice_sent', { _invoice_id: inv.id, _post_date: postDateStr || inv.invoice_date });
+      try {
+        await (supabase as any).rpc('post_invoice_sent', { _invoice_id: inv.id, _post_date: postDateStr || inv.invoice_date });
+      } catch (rpcErr) {
+        await transactionsApi.postInvoiceSentClient(inv, postDateStr || inv.invoice_date);
+      }
       const companyId = await getCompanyId();
       if (companyId) {
         try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
@@ -431,11 +439,74 @@ export const SalesInvoices = () => {
     }
   };
 
+  const openJournalForSent = async (inv: any, postDateStr?: string) => {
+    const companyId = await getCompanyId();
+    if (!companyId) return;
+    try { await supabase.rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
+    let accounts = await loadAccounts(companyId);
+    const pick = (
+      type: string,
+      codes: string[],
+      names: string[]
+    ) => {
+      const id = findAccountByCodeOrName(accounts, type, codes, names);
+      if (id) return id;
+      const lower = accounts.map(a => ({
+        ...a,
+        account_type: (a.account_type || '').toLowerCase(),
+        account_name: (a.account_name || '').toLowerCase(),
+        account_code: (a.account_code || '').toString(),
+      }));
+      const byType = lower.filter(a => a.account_type === type.toLowerCase());
+      return byType[0]?.id || null;
+    };
+    let arId = pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
+    let revId = pick('income', ['4000'], ['sales revenue','revenue','sales','income']);
+    if (!arId) {
+      const { data } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1200', account_name: 'Accounts Receivable', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      arId = (data as any)?.id || arId;
+      accounts = await loadAccounts(companyId);
+    }
+    if (!revId) {
+      const { data } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '4000', account_name: 'Sales Revenue', account_type: 'income', is_active: true })
+        .select('id')
+        .single();
+      revId = (data as any)?.id || revId;
+      accounts = await loadAccounts(companyId);
+    }
+    const amount = Number(inv.total_amount || inv.subtotal || 0);
+    const editData = {
+      id: null,
+      transaction_date: postDateStr || inv.invoice_date,
+      description: `Invoice ${inv.invoice_number || inv.id} issued`,
+      reference_number: inv.invoice_number || null,
+      transaction_type: 'income',
+      payment_method: 'accrual',
+      debit_account_id: arId,
+      credit_account_id: revId,
+      total_amount: amount,
+      bank_account_id: null,
+      lockType: 'sent',
+    };
+    setJournalEditData(editData);
+    setJournalOpen(true);
+  };
+
   const postInvoicePaid = async (inv: any, payDateStr?: string, bankAccountId?: string) => {
     try {
       setPosting(true);
       const amt = Number(inv._payment_amount || inv.total_amount || 0);
-      await supabase.rpc('post_invoice_paid', { _invoice_id: inv.id, _payment_date: payDateStr || todayStr, _bank_account_id: bankAccountId, _amount: amt });
+      try {
+        await (supabase as any).rpc('post_invoice_paid', { _invoice_id: inv.id, _payment_date: payDateStr || todayStr, _bank_account_id: bankAccountId, _amount: amt });
+      } catch (rpcErr) {
+        await transactionsApi.postInvoicePaidClient(inv, payDateStr || todayStr, bankAccountId as string, amt);
+      }
       const companyId = await getCompanyId();
       if (companyId) {
         try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
@@ -446,6 +517,65 @@ export const SalesInvoices = () => {
     } finally {
       setPosting(false);
     }
+  };
+
+  const openJournalForPaid = async (inv: any, payDateStr?: string, bankAccountId?: string, amount?: number) => {
+    const companyId = await getCompanyId();
+    if (!companyId) return;
+    try { await supabase.rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
+    let accounts = await loadAccounts(companyId);
+    const pick = (
+      type: string,
+      codes: string[],
+      names: string[]
+    ) => {
+      const id = findAccountByCodeOrName(accounts, type, codes, names);
+      if (id) return id;
+      const lower = accounts.map(a => ({
+        ...a,
+        account_type: (a.account_type || '').toLowerCase(),
+        account_name: (a.account_name || '').toLowerCase(),
+        account_code: (a.account_code || '').toString(),
+      }));
+      const byType = lower.filter(a => a.account_type === type.toLowerCase());
+      return byType[0]?.id || null;
+    };
+    let bankLedgerId = pick('asset', ['1100'], ['bank','cash']);
+    let arId = pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
+    if (!bankLedgerId) {
+      const { data } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1100', account_name: 'Bank', account_type: 'asset', is_active: true, is_cash_equivalent: true, financial_statement_category: 'current_asset' })
+        .select('id')
+        .single();
+      bankLedgerId = (data as any)?.id || bankLedgerId;
+      accounts = await loadAccounts(companyId);
+    }
+    if (!arId) {
+      const { data } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1200', account_name: 'Accounts Receivable', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      arId = (data as any)?.id || arId;
+      accounts = await loadAccounts(companyId);
+    }
+    const amt = Number(amount || inv._payment_amount || inv.total_amount || 0);
+    const editData = {
+      id: null,
+      transaction_date: payDateStr || todayStr,
+      description: `Payment for invoice ${inv.invoice_number || inv.id}`,
+      reference_number: inv.invoice_number || null,
+      transaction_type: 'receipt',
+      payment_method: 'bank',
+      bank_account_id: bankAccountId || null,
+      debit_account_id: bankLedgerId,
+      credit_account_id: arId,
+      total_amount: amt,
+      lockType: 'paid',
+    };
+    setJournalEditData(editData);
+    setJournalOpen(true);
   };
 
   const updateStatus = async (id: string, newStatus: string) => {
@@ -526,7 +656,7 @@ export const SalesInvoices = () => {
         .eq("id", paymentInvoice.id);
       if (error) throw error;
       const invForPost = { ...paymentInvoice, _payment_amount: amount };
-      await postInvoicePaid(invForPost, paymentDate, selectedBankId);
+      await openJournalForPaid(invForPost, paymentDate, selectedBankId, amount);
       if (amount >= outstanding) {
         try {
           await supabase.from('invoices').update({ paid_at: new Date(paymentDate).toISOString() }).eq('id', paymentInvoice.id);
@@ -534,7 +664,7 @@ export const SalesInvoices = () => {
           toast({ title: "Paid date not recorded", description: "Database missing paid_at column; payment posted though.", variant: "default" });
         }
       }
-      toast({ title: "Success", description: "Payment posted" });
+      toast({ title: "Success", description: "Opening journal to post payment" });
       setPaymentDialogOpen(false);
       setPaymentInvoice(null);
       loadData();
@@ -995,6 +1125,13 @@ export const SalesInvoices = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <TransactionFormEnhanced
+        open={journalOpen}
+        onOpenChange={setJournalOpen}
+        onSuccess={loadData}
+        editData={journalEditData}
+      />
 
       {/* Send Invoice Dialog */}
       <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
