@@ -190,12 +190,12 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
         // Insert ledger legs explicitly to ensure TB and SFP reflect cash
         const legs = isInflow
           ? [
-              { transaction_id: tx.id, account_id: (bankLedger as any).id, debit: amount, credit: 0, description, status: 'posted' },
-              { transaction_id: tx.id, account_id: (uncIncome as any).id, debit: 0, credit: amount, description, status: 'posted' },
+              { transaction_id: tx.id, account_id: (bankLedger as any).id, debit: amount, credit: 0, description, status: 'approved' },
+              { transaction_id: tx.id, account_id: (uncIncome as any).id, debit: 0, credit: amount, description, status: 'approved' },
             ]
           : [
-              { transaction_id: tx.id, account_id: (uncExpense as any).id, debit: amount, credit: 0, description, status: 'posted' },
-              { transaction_id: tx.id, account_id: (bankLedger as any).id, debit: 0, credit: amount, description, status: 'posted' },
+              { transaction_id: tx.id, account_id: (uncExpense as any).id, debit: amount, credit: 0, description, status: 'approved' },
+              { transaction_id: tx.id, account_id: (bankLedger as any).id, debit: 0, credit: amount, description, status: 'approved' },
             ];
 
         // Write to transaction_entries (for app detail views)

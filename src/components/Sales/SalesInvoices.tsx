@@ -442,7 +442,7 @@ export const SalesInvoices = () => {
   const openJournalForSent = async (inv: any, postDateStr?: string) => {
     const companyId = await getCompanyId();
     if (!companyId) return;
-    try { await supabase.rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
+    try { await (supabase as any).rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
     let accounts = await loadAccounts(companyId);
     const pick = (
       type: string,
@@ -522,7 +522,7 @@ export const SalesInvoices = () => {
   const openJournalForPaid = async (inv: any, payDateStr?: string, bankAccountId?: string, amount?: number) => {
     const companyId = await getCompanyId();
     if (!companyId) return;
-    try { await supabase.rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
+    try { await (supabase as any).rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
     let accounts = await loadAccounts(companyId);
     const pick = (
       type: string,
@@ -657,13 +657,9 @@ export const SalesInvoices = () => {
       if (error) throw error;
       const invForPost = { ...paymentInvoice, _payment_amount: amount };
       await openJournalForPaid(invForPost, paymentDate, selectedBankId, amount);
-      if (amount >= outstanding) {
-        try {
-          await supabase.from('invoices').update({ paid_at: new Date(paymentDate).toISOString() }).eq('id', paymentInvoice.id);
-        } catch (e) {
-          toast({ title: "Paid date not recorded", description: "Database missing paid_at column; payment posted though.", variant: "default" });
-        }
-      }
+      // Optionally record paid date if schema supports it (non-blocking)
+      // if your invoices table includes paid_at, you can enable the following:
+      // await (supabase as any).from('invoices').update({ paid_at: new Date(paymentDate).toISOString() }).eq('id', paymentInvoice.id);
       toast({ title: "Success", description: "Opening journal to post payment" });
       setPaymentDialogOpen(false);
       setPaymentInvoice(null);

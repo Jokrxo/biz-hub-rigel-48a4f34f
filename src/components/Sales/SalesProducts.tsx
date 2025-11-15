@@ -18,6 +18,7 @@ interface Product {
   name: string;
   description: string | null;
   unit_price: number;
+  cost_price?: number;
   quantity_on_hand: number;
   item_type: string;
 }
@@ -35,6 +36,7 @@ export const SalesProducts = () => {
     name: "",
     description: "",
     unit_price: "",
+    cost_price: "",
     quantity_on_hand: "",
   });
 
@@ -80,19 +82,15 @@ export const SalesProducts = () => {
     }
   };
 
-  const openDialog = (product?: Product) => {
-    if (product) {
-      setEditingProduct(product);
-      setFormData({
-        name: product.name,
-        description: product.description || "",
-        unit_price: product.unit_price.toString(),
-        quantity_on_hand: product.quantity_on_hand.toString(),
-      });
-    } else {
-      setEditingProduct(null);
-      resetForm();
-    }
+  const openDialog = (product: Product) => {
+    setEditingProduct(product);
+    setFormData({
+      name: product.name,
+      description: product.description || "",
+      unit_price: product.unit_price.toString(),
+      cost_price: (product.cost_price ?? 0).toString(),
+      quantity_on_hand: product.quantity_on_hand.toString(),
+    });
     setDialogOpen(true);
   };
 
@@ -119,34 +117,13 @@ export const SalesProducts = () => {
         .eq("user_id", user?.id)
         .single();
 
-      if (editingProduct) {
-        // Update existing product
-        const { error } = await supabase
-          .from("items")
-          .update({
-            name: formData.name,
-            description: formData.description || null,
-            unit_price: parseFloat(formData.unit_price),
-            quantity_on_hand: parseFloat(formData.quantity_on_hand),
-          })
-          .eq("id", editingProduct.id);
-
-        if (error) throw error;
-        toast({ title: "Success", description: "Product updated successfully" });
-      } else {
-        // Create new product
-        const { error } = await supabase.from("items").insert({
-          company_id: profile!.company_id,
-          name: formData.name,
-          description: formData.description || null,
-          unit_price: parseFloat(formData.unit_price),
-          quantity_on_hand: parseFloat(formData.quantity_on_hand),
-          item_type: "product",
-        });
-
-        if (error) throw error;
-        toast({ title: "Success", description: "Product added successfully" });
-      }
+      if (!editingProduct) return;
+      const { error } = await supabase
+        .from("items")
+        .update({ unit_price: parseFloat(formData.unit_price) })
+        .eq("id", editingProduct.id);
+      if (error) throw error;
+      toast({ title: "Success", description: "Selling price updated" });
 
       setDialogOpen(false);
       setEditingProduct(null);
@@ -211,12 +188,7 @@ export const SalesProducts = () => {
             <Package className="h-5 w-5 text-primary" />
             Products & Services
           </CardTitle>
-          {canEdit && (
-            <Button className="bg-gradient-primary" onClick={() => openDialog()}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Product
-            </Button>
-          )}
+          {/* Creation via Purchase only; no manual add */}
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -225,47 +197,49 @@ export const SalesProducts = () => {
             <div className="text-center py-8 text-muted-foreground">No products added yet</div>
           ) : (
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Product Name</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Unit Price</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="text-right">Total Value</TableHead>
-                  {canEdit && <TableHead>Actions</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {products.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell className="font-medium">{product.name}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">
-                      {product.description || "-"}
-                    </TableCell>
-                    <TableCell className="text-right">R {Number(product.unit_price).toLocaleString('en-ZA')}</TableCell>
-                    <TableCell className="text-right">
-                      <Badge variant={product.quantity_on_hand < 10 ? "destructive" : "secondary"}>
-                        {product.quantity_on_hand}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-semibold">
-                      R {(product.unit_price * product.quantity_on_hand).toLocaleString('en-ZA')}
-                    </TableCell>
-                    {canEdit && (
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => openDialog(product)}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => deleteProduct(product.id)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Product Name</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead className="text-right">Cost Price</TableHead>
+              <TableHead className="text-right">Unit Price</TableHead>
+              <TableHead className="text-right">Stock</TableHead>
+              <TableHead className="text-right">Total Value</TableHead>
+              {canEdit && <TableHead>Actions</TableHead>}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {products.map((product) => (
+              <TableRow key={product.id}>
+                <TableCell className="font-medium">{product.name}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">
+                  {product.description || "-"}
+                </TableCell>
+                <TableCell className="text-right">R {Number(product.cost_price ?? 0).toLocaleString('en-ZA')}</TableCell>
+                <TableCell className="text-right">R {Number(product.unit_price).toLocaleString('en-ZA')}</TableCell>
+                <TableCell className="text-right">
+                  <Badge variant={product.quantity_on_hand < 10 ? "destructive" : "secondary"}>
+                    {product.quantity_on_hand}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right font-semibold">
+                  R {(product.unit_price * product.quantity_on_hand).toLocaleString('en-ZA')}
+                </TableCell>
+                {canEdit && (
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => openDialog(product)}>
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => deleteProduct(product.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                )}
+              </TableRow>
+            ))}
+          </TableBody>
             </Table>
           )}
         </CardContent>
@@ -274,28 +248,22 @@ export const SalesProducts = () => {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingProduct ? "Edit Product" : "Add New Product"}</DialogTitle>
+            <DialogTitle>Edit Selling Price</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <Label>Product Name *</Label>
-              <Input
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Enter product name"
-                required
-              />
+              <Label>Product</Label>
+              <Input value={formData.name} disabled />
             </div>
             <div>
               <Label>Description</Label>
-              <Textarea
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                placeholder="Product description (optional)"
-                rows={2}
-              />
+              <Textarea value={formData.description} rows={2} disabled />
             </div>
             <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Cost Price (R)</Label>
+                <Input value={formData.cost_price} disabled />
+              </div>
               <div>
                 <Label>Selling Price (R) *</Label>
                 <Input
@@ -307,23 +275,15 @@ export const SalesProducts = () => {
                 />
               </div>
               <div>
-                <Label>Quantity in Stock *</Label>
-                <Input
-                  type="number"
-                  step="1"
-                  value={formData.quantity_on_hand}
-                  onChange={(e) => setFormData({ ...formData, quantity_on_hand: e.target.value })}
-                  required
-                />
+                <Label>Quantity in Stock</Label>
+                <Input value={formData.quantity_on_hand} disabled />
               </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); setEditingProduct(null); resetForm(); }}>
                 Cancel
               </Button>
-              <Button type="submit" className="bg-gradient-primary">
-                {editingProduct ? "Update Product" : "Add Product"}
-              </Button>
+              <Button type="submit" className="bg-gradient-primary">Update Price</Button>
             </DialogFooter>
           </form>
         </DialogContent>

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { transactionsApi } from "@/lib/transactions-api";
 
 interface Supplier {
   id: string;
@@ -44,6 +45,12 @@ export const PurchaseOrdersManagement = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  const [sentLoading, setSentLoading] = useState<string | null>(null);
+  const [payDialogOpen, setPayDialogOpen] = useState(false);
+  const [payOrder, setPayOrder] = useState<PurchaseOrder | null>(null);
+  const [payDate, setPayDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; account_name: string }>>([]);
+  const [selectedBankId, setSelectedBankId] = useState<string>("");
   const { toast } = useToast();
 
   const [form, setForm] = useState({
@@ -61,15 +68,15 @@ export const PurchaseOrdersManagement = () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) { setOrders([]); setSuppliers([]); return; }
 
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
-      if (!profile) return;
+      if (!profile) { setOrders([]); setSuppliers([]); return; }
 
       // Load suppliers
       const { data: suppliersData } = await supabase
@@ -79,21 +86,21 @@ export const PurchaseOrdersManagement = () => {
         .order("name");
 
       setSuppliers(suppliersData || []);
+      const supplierNameMap = new Map<string, string>();
+      (suppliersData || []).forEach((s: any) => supplierNameMap.set(s.id, s.name));
 
-      // Load purchase orders with supplier details
-      const { data: ordersData } = await supabase
+      // Load purchase orders
+      const { data: ordersData, error: ordersErr } = await supabase
         .from("purchase_orders")
-        .select(`
-          *,
-          supplier:suppliers(name)
-        `)
-        .eq("company_id", profile.company_id)
-        .order("created_at", { ascending: false });
+        .select("id, po_number, po_date, status, subtotal, tax_amount, total_amount, supplier_id")
+        .eq("company_id", (profile as any).company_id)
+        .order("po_date", { ascending: false });
+      if (ordersErr) throw ordersErr;
 
       // Map the data to match expected structure
-      const mappedOrders = (ordersData || []).map(order => ({
+      const mappedOrders = (ordersData || []).map((order: any) => ({
         ...order,
-        suppliers: order.supplier
+        supplierName: supplierNameMap.get(order.supplier_id) || "N/A",
       }));
 
       setOrders(mappedOrders as any);
@@ -195,7 +202,22 @@ export const PurchaseOrdersManagement = () => {
 
       toast({ title: "Success", description: "Purchase order created successfully" });
       setShowForm(false);
-      loadData();
+      const supplierName = suppliers.find(s => s.id === form.supplier_id)?.name || "N/A";
+      setOrders(prev => ([
+        {
+          id: po.id,
+          po_number: po.po_number,
+          po_date: po.po_date,
+          status: po.status,
+          subtotal: po.subtotal,
+          tax_amount: po.tax_amount,
+          total_amount: po.total_amount,
+          supplier_id: po.supplier_id,
+          suppliers: { name: supplierName },
+          supplierName
+        } as any,
+        ...prev
+      ]));
       
       // Reset form
       setForm({
@@ -219,6 +241,123 @@ export const PurchaseOrdersManagement = () => {
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  useEffect(() => {
+    const loadBankAccounts = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("company_id")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (!profile) return;
+        const { data } = await supabase
+          .from("bank_accounts")
+          .select("id, account_name")
+          .eq("company_id", (profile as any).company_id)
+          .order("created_at", { ascending: false });
+        setBankAccounts((data || []).map((b: any) => ({ id: b.id, account_name: b.account_name })));
+      } catch {}
+    };
+    loadBankAccounts();
+  }, []);
+
+  const markSent = async (order: PurchaseOrder) => {
+    try {
+      setSentLoading(order.id);
+      const { error } = await supabase
+        .from("purchase_orders")
+        .update({ status: "sent" })
+        .eq("id", order.id);
+      if (error) throw error;
+      await transactionsApi.postPurchaseSentClient(order, order.po_date);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("company_id")
+            .eq("user_id", user.id)
+            .maybeSingle();
+          if (profile) {
+            const { data: poItems } = await supabase
+              .from("purchase_order_items")
+              .select("description, quantity, unit_price")
+              .eq("purchase_order_id", order.id);
+            for (const it of (poItems || [])) {
+              const name = String(it.description || '').trim();
+              if (!name) continue;
+              const { data: existing } = await supabase
+                .from("items")
+                .select("id, quantity_on_hand")
+                .eq("company_id", (profile as any).company_id)
+                .eq("item_type", "product")
+                .eq("name", name)
+                .maybeSingle();
+              if (existing?.id) {
+                await supabase
+                  .from("items")
+                  .update({ 
+                    quantity_on_hand: Number(existing.quantity_on_hand || 0) + Number(it.quantity || 0),
+                    cost_price: Number(it.unit_price || 0)
+                  })
+                  .eq("id", existing.id);
+              } else {
+                await supabase
+                  .from("items")
+                  .insert({
+                    company_id: (profile as any).company_id,
+                    name,
+                    description: name,
+                    unit_price: Number(it.unit_price || 0),
+                    cost_price: Number(it.unit_price || 0),
+                    quantity_on_hand: Number(it.quantity || 0),
+                    item_type: "product",
+                  });
+              }
+            }
+          }
+        }
+      } catch {}
+      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: "sent" } : o));
+      toast({ title: "Success", description: "Purchase order marked as Sent and posted" });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setSentLoading(null);
+    }
+  };
+
+  const openPayDialog = (order: PurchaseOrder) => {
+    setPayOrder(order);
+    setPayDate(new Date().toISOString().slice(0, 10));
+    setPayDialogOpen(true);
+  };
+
+  const confirmPayment = async () => {
+    if (!payOrder || !selectedBankId) return;
+    try {
+      await transactionsApi.postPurchasePaidClient(
+        payOrder,
+        payDate,
+        selectedBankId,
+        Number((payOrder as any).total_amount || 0)
+      );
+      const { error } = await supabase
+        .from("purchase_orders")
+        .update({ status: "paid" })
+        .eq("id", (payOrder as any).id);
+      if (error) throw error;
+      setOrders(prev => prev.map(o => o.id === (payOrder as any).id ? { ...o, status: "paid" } : o));
+      toast({ title: "Success", description: "Payment posted and Purchase order marked as Paid" });
+      setPayDialogOpen(false);
+      setPayOrder(null);
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
     }
   };
 
@@ -258,32 +397,44 @@ export const PurchaseOrdersManagement = () => {
                   <TableHead>Supplier</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Total</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {orders.map(order => (
-                  <TableRow key={order.id}>
+                <TableHead>Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {orders.map(order => (
+                <TableRow key={order.id}>
                     <TableCell className="font-mono">{order.po_number}</TableCell>
                     <TableCell>{new Date(order.po_date).toLocaleDateString("en-ZA")}</TableCell>
-                    <TableCell>{order.suppliers?.name || "N/A"}</TableCell>
+                    <TableCell>{(order as any).supplierName || "N/A"}</TableCell>
                     <TableCell>
                       <Badge variant={order.status === "draft" ? "secondary" : "default"}>
                         {order.status}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right font-mono">
-                      R {order.total_amount.toLocaleString("en-ZA")}
-                    </TableCell>
-                    <TableCell>
+                  <TableCell className="text-right font-mono">
+                    R {order.total_amount.toLocaleString("en-ZA")}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-2">
+                      {order.status === 'draft' && (
+                        <Button size="sm" onClick={() => markSent(order)} disabled={sentLoading === order.id}>
+                          Sent
+                        </Button>
+                      )}
+                      {order.status === 'sent' && (
+                        <Button size="sm" variant="outline" onClick={() => openPayDialog(order)}>
+                          Paid
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" onClick={() => deletePO(order.id)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
           )}
         </CardContent>
       </Card>
@@ -415,6 +566,36 @@ export const PurchaseOrdersManagement = () => {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
             <Button onClick={handleSubmit}>Create Purchase Order</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={payDialogOpen} onOpenChange={setPayDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record Payment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Date</Label>
+              <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+            </div>
+            <div>
+              <Label>Bank Account</Label>
+              <Select value={selectedBankId} onValueChange={setSelectedBankId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select bank" />
+                </SelectTrigger>
+                <SelectContent>
+                  {bankAccounts.map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPayDialogOpen(false)}>Cancel</Button>
+            <Button onClick={confirmPayment}>Confirm</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

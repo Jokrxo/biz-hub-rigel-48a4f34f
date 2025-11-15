@@ -72,6 +72,9 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
   const [notifications, setNotifications] = useState<Array<{ id: string; title: string; description: string; created_at: string; read: boolean }>>([]);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const unreadCount = notifications.filter(n => !n.read).length;
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState<Array<{ type: string; label: string; sublabel?: string; navigateTo: string }>>([]);
 
   useEffect(() => {
     const init = async () => {
@@ -84,9 +87,9 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
         if (!profile?.company_id) return;
         setCompanyId(profile.company_id);
 
-        const channel = supabase
+        const channel = (supabase as any)
           .channel('notifications')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, payload => {
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload: any) => {
             const row: any = payload?.new || payload?.old || {};
             if (row.company_id && row.company_id !== profile.company_id) return;
             const status = String(row.status || '').toLowerCase();
@@ -94,7 +97,7 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
             const desc = `${row.description || 'Transaction'} • ${row.transaction_date || ''}`;
             pushNotification(title, desc);
           })
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, payload => {
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, (payload: any) => {
             const row: any = payload?.new || payload?.old || {};
             if (row.company_id && row.company_id !== profile.company_id) return;
             const status = String(row.status || '').toLowerCase();
@@ -106,12 +109,12 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
               pushNotification('Invoice Updated', `Invoice ${row.invoice_number || row.id}`);
             }
           })
-          .on('postgres_changes', { event: 'insert', schema: 'public', table: 'bank_accounts' }, payload => {
+          .on('postgres_changes', { event: 'insert', schema: 'public', table: 'bank_accounts' }, (payload: any) => {
             const row: any = payload?.new || {};
             if (row.company_id && row.company_id !== profile.company_id) return;
             pushNotification('Bank Account Added', `${row.bank_name || ''} • ${row.account_name || ''}`);
           })
-          .on('postgres_changes', { event: 'insert', schema: 'public', table: 'chart_of_accounts' }, payload => {
+          .on('postgres_changes', { event: 'insert', schema: 'public', table: 'chart_of_accounts' }, (payload: any) => {
             const row: any = payload?.new || {};
             if (row.company_id && row.company_id !== profile.company_id) return;
             pushNotification('Account Created', `${row.account_code || ''} • ${row.account_name || ''}`);
@@ -119,7 +122,7 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
           .subscribe();
 
         return () => {
-          supabase.removeChannel(channel);
+          (supabase as any).removeChannel(channel);
         };
       } catch (e) {
         // non-blocking
@@ -136,6 +139,56 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
   const markAllRead = () => setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   const clearAll = () => setNotifications([]);
 
+  useEffect(() => {
+    const handler = setTimeout(async () => {
+      const q = (searchQuery || "").trim();
+      if (!q) { setSearchResults([]); return; }
+      try {
+        const results: Array<{ type: string; label: string; sublabel?: string; navigateTo: string }> = [];
+        const tx = await supabase
+          .from('transactions')
+          .select('id, description, transaction_date')
+          .ilike('description', `%${q}%`)
+          .limit(5);
+        (tx.data || []).forEach((row: any) => {
+          results.push({ type: 'Transaction', label: row.description || 'Transaction', sublabel: row.transaction_date || '', navigateTo: '/transactions' });
+        });
+        const inv = await supabase
+          .from('invoices')
+          .select('id, invoice_number, customer_name')
+          .or(`invoice_number.ilike.%${q}%,customer_name.ilike.%${q}%`)
+          .limit(5);
+        (inv.data || []).forEach((row: any) => {
+          results.push({ type: 'Invoice', label: row.invoice_number || String(row.id), sublabel: row.customer_name || '', navigateTo: '/sales?tab=invoices' });
+        });
+        const cust = await supabase
+          .from('customers')
+          .select('id, name, email')
+          .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
+          .limit(5);
+        (cust.data || []).forEach((row: any) => {
+          results.push({ type: 'Customer', label: row.name || 'Customer', sublabel: row.email || '', navigateTo: '/customers' });
+        });
+        const items = await supabase
+          .from('items')
+          .select('id, name, description')
+          .or(`name.ilike.%${q}%,description.ilike.%${q}%`)
+          .limit(5);
+        (items.data || []).forEach((row: any) => {
+          results.push({ type: 'Product', label: row.name || 'Item', sublabel: row.description || '', navigateTo: '/sales?tab=products' });
+        });
+        setSearchResults(results.slice(0, 10));
+      } catch {
+        setSearchResults([]);
+      }
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
+
+  const executeSearch = () => {
+    setSearchOpen(true);
+  };
+
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
       <div className="flex items-center gap-4">
@@ -151,20 +204,32 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
         <div className="relative w-96">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search transactions, invoices, clients..."
+            placeholder="Search transactions, invoices, customers..."
             className="pl-10 bg-muted/50"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onFocus={() => setSearchOpen(true)}
+            onKeyDown={(e) => { if (e.key === 'Enter') executeSearch(); }}
           />
+          <Button variant="outline" size="sm" className="absolute right-2 top-1/2 -translate-y-1/2" onClick={executeSearch}>Search</Button>
+          {searchOpen && (searchResults.length > 0 ? (
+            <div className="absolute mt-2 w-full rounded-md border bg-background shadow z-50">
+              {searchResults.map((r, idx) => (
+                <button key={idx} className="w-full text-left px-3 py-2 hover:bg-muted flex items-center gap-2" onClick={() => { navigate(r.navigateTo); setSearchOpen(false); }}>
+                  <span className="text-xs text-muted-foreground">{r.type}</span>
+                  <span className="text-sm font-medium">{r.label}</span>
+                  {r.sublabel && <span className="ml-auto text-xs text-muted-foreground">{r.sublabel}</span>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            searchQuery && <div className="absolute mt-2 w-full rounded-md border bg-background shadow z-50 p-3 text-sm text-muted-foreground">No results</div>
+          ))}
         </div>
       </div>
 
       <div className="flex items-center gap-4">
-        <Button 
-          className="bg-gradient-primary hover:opacity-90 transition-opacity"
-          onClick={() => navigate('/transactions')}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          New Transaction
-        </Button>
+        <Button variant="outline" onClick={() => navigate('/settings')}>Profile</Button>
 
         <div className="relative">
           <DropdownMenu>
@@ -182,8 +247,8 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
               <DropdownMenuLabel className="flex items-center justify-between">
                 <span>Notifications</span>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="xs" onClick={markAllRead}>Mark all read</Button>
-                  <Button variant="ghost" size="xs" onClick={clearAll}>Clear</Button>
+                  <Button variant="outline" size="sm" onClick={markAllRead}>Mark all read</Button>
+                  <Button variant="ghost" size="sm" onClick={clearAll}>Clear</Button>
                 </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />

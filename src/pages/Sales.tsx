@@ -12,7 +12,7 @@ export default function SalesPage() {
   const location = useLocation();
   const [activeTab, setActiveTab] = useState(() => {
     const tabParam = new URLSearchParams(window.location.search).get('tab');
-    return tabParam || "invoices";
+    return tabParam || "ar-dashboard";
   });
 
   useEffect(() => {

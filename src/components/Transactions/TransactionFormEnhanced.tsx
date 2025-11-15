@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
+import { toast as notify } from "@/components/ui/sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -1013,7 +1014,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
       } catch (ledErr: any) {
         // If ledger insert fails, surface a toast but continue, as transaction_entries exist
-        toast({ title: 'Warning', description: `Posted entries saved, but AFS ledger sync failed: ${ledErr.message}` });
+        notify.error("Ledger sync warning", { description: `Entries saved, but AFS sync failed: ${ledErr.message}`, duration: 6000 });
       }
 
       // Update bank balance if bank account is involved
@@ -1044,14 +1045,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
       } catch {}
 
-      toast({ 
-        title: "Success", 
-        description: "Transaction posted successfully with double-entry accounting" 
-      });
+      notify.success("Transaction posted", { description: `Dr ${debitAccountName || 'Debit'} / Cr ${creditAccountName || 'Credit'} • ${form.date}`, duration: 6000 });
       onOpenChange(false);
       onSuccess();
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      notify.error("Posting failed", { description: error.message, duration: 6000 });
     } finally {
       setLoading(false);
     }

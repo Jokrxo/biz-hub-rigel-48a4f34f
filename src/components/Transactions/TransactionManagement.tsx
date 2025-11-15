@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, Suspense, lazy } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+ 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -345,75 +345,43 @@ export const TransactionManagement = () => {
         </Suspense>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="card-professional">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Income</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-primary">R {derived.totalIncome.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
-          </CardContent>
-        </Card>
-        <Card className="card-professional">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Expenses</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-accent">R {derived.totalExpenses.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
-          </CardContent>
-        </Card>
-        <Card className="card-professional">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Net Profit</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className={`text-2xl font-bold ${derived.totalIncome - derived.totalExpenses >= 0 ? 'text-primary' : 'text-destructive'}`}>
-              R {(derived.totalIncome - derived.totalExpenses).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
-            </div>
-          </CardContent>
-        </Card>
+      {/* Summary cards removed for a cleaner, list-focused layout */}
+
+      <div className="p-4 rounded-md border">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="relative flex-1 min-w-64">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search transactions..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10" />
+          </div>
+          <Select value={filterType} onValueChange={setFilterType}>
+            <SelectTrigger className="w-40"><SelectValue placeholder="Type" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              <SelectItem value="income">Income</SelectItem>
+              <SelectItem value="expense">Expense</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filterStatus} onValueChange={setFilterStatus}>
+            <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="unposted">Unposted</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="rejected">Rejected</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" className="gap-2" onClick={handleExport}><Download className="h-4 w-4" />Export</Button>
+        </div>
       </div>
 
-      <Card className="card-professional">
-        <CardContent className="p-6">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="relative flex-1 min-w-64">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input placeholder="Search transactions..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10" />
-            </div>
-            <Select value={filterType} onValueChange={setFilterType}>
-              <SelectTrigger className="w-40"><SelectValue placeholder="Type" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="income">Income</SelectItem>
-                <SelectItem value="expense">Expense</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="unposted">Unposted</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button variant="outline" className="gap-2" onClick={handleExport}><Download className="h-4 w-4" />Export</Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="card-professional">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Receipt className="h-5 w-5 text-primary" />
-            Transactions ({derived.filtered.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-md border">
-            <Table>
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <Receipt className="h-5 w-5 text-primary" />
+          <h2 className="text-lg font-semibold">Transactions ({derived.filtered.length})</h2>
+        </div>
+        <div className="rounded-md border">
+          <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-32"><Button variant="ghost" className="gap-1 p-0 h-auto font-medium">Date <ArrowUpDown className="h-3 w-3" /></Button></TableHead>
@@ -483,10 +451,9 @@ export const TransactionManagement = () => {
                   </TableRow>
                 ))}
               </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
+          </Table>
+        </div>
+      </div>
     </div>
   );
 };

@@ -5,8 +5,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PurchaseOverview } from "@/components/Purchase/PurchaseOverview";
 import { Bills } from "@/components/Purchase/Bills";
 import { PurchaseOrders } from "@/components/Purchase/PurchaseOrders";
-import { Expenses } from "@/components/Purchase/Expenses";
 import { Suppliers } from "@/components/Purchase/Suppliers";
+import { PurchaseTransactions } from "@/components/Purchase/PurchaseTransactions";
 
 export default function PurchasePage() {
   const [activeTab, setActiveTab] = useState("overview");
@@ -18,7 +18,7 @@ export default function PurchasePage() {
         <div className="space-y-6">
           <div>
             <h1 className="text-3xl font-bold">Purchase</h1>
-            <p className="text-muted-foreground mt-1">Manage bills, purchase orders, and suppliers</p>
+            <p className="text-muted-foreground mt-1">Manage bills, purchase orders, transactions, and suppliers</p>
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -26,7 +26,7 @@ export default function PurchasePage() {
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="bills">Bills</TabsTrigger>
               <TabsTrigger value="orders">Purchase Orders</TabsTrigger>
-              <TabsTrigger value="expenses">Expenses</TabsTrigger>
+              <TabsTrigger value="transactions">Transactions (Purchase)</TabsTrigger>
               <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
             </TabsList>
 
@@ -42,8 +42,9 @@ export default function PurchasePage() {
               <PurchaseOrders />
             </TabsContent>
 
-            <TabsContent value="expenses">
-              <Expenses />
+
+            <TabsContent value="transactions">
+              <PurchaseTransactions />
             </TabsContent>
 
             <TabsContent value="suppliers">

@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Building2, Save, Upload, Image as ImageIcon } from "lucide-react";
+import { Building2, Save, Upload, Image as ImageIcon, Mail, Phone, MapPin, Tag, Globe } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { toast as notify } from "@/components/ui/sonner";
 import { useAuth } from "@/context/AuthContext";
 
 interface CompanyData {
@@ -25,6 +26,7 @@ export const CompanySettings = () => {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
   const [companyData, setCompanyData] = useState<CompanyData>({
     name: "",
     code: "",
@@ -107,9 +109,9 @@ export const CompanySettings = () => {
       if (updateError) throw updateError;
 
       setLogoUrl(publicUrl);
-      toast({ title: "Success", description: "Logo uploaded successfully" });
+      notify.success("Logo uploaded", { description: "Your company logo has been updated", duration: 5000 });
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      notify.error("Logo upload failed", { description: error.message, duration: 6000 });
     } finally {
       setUploading(false);
     }
@@ -158,9 +160,9 @@ export const CompanySettings = () => {
       // Reload company data to show updated information
       await loadCompanyData();
 
-      toast({ title: "Success", description: "Company details updated successfully" });
+      notify.success("Company details saved", { description: "Your changes have been applied", duration: 5000 });
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      notify.error("Update failed", { description: error.message, duration: 6000 });
     }
   };
 
@@ -171,49 +173,81 @@ export const CompanySettings = () => {
       {/* Company Information Display Card */}
       <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-primary" />
-            Company Overview
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              Company Overview
+            </CardTitle>
+            {logoUrl ? (
+              <div className="w-14 h-14 rounded-md border overflow-hidden">
+                <img src={logoUrl} alt="Company Logo" className="w-full h-full object-cover" />
+              </div>
+            ) : (
+              <div className="w-14 h-14 rounded-md border flex items-center justify-center text-muted-foreground">
+                <ImageIcon className="h-6 w-6" />
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Company Name</p>
-              <p className="text-lg font-semibold">{companyData.name || "Not set"}</p>
+            <div className="flex items-center gap-3 p-3 rounded-md border bg-background/50">
+              <Building2 className="h-5 w-5 text-primary" />
+              <div>
+                <div className="text-xs text-muted-foreground">Company Name</div>
+                <div className="text-sm font-semibold">{companyData.name || "Not set"}</div>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-medium text-muted-foreground">Company Code</p>
-              <p className="text-lg font-semibold">{companyData.code || "Not set"}</p>
+            <div className="flex items-center gap-3 p-3 rounded-md border bg-background/50">
+              <Tag className="h-5 w-5 text-primary" />
+              <div>
+                <div className="text-xs text-muted-foreground">Company Code</div>
+                <div className="text-sm font-semibold">{companyData.code || "Not set"}</div>
+              </div>
             </div>
             {companyData.email && (
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Email</p>
-                <p className="text-lg">{companyData.email}</p>
+              <div className="flex items-center gap-3 p-3 rounded-md border bg-background/50">
+                <Mail className="h-5 w-5 text-primary" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Email</div>
+                  <div className="text-sm font-semibold">{companyData.email}</div>
+                </div>
               </div>
             )}
             {companyData.phone && (
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Phone</p>
-                <p className="text-lg">{companyData.phone}</p>
+              <div className="flex items-center gap-3 p-3 rounded-md border bg-background/50">
+                <Phone className="h-5 w-5 text-primary" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Phone</div>
+                  <div className="text-sm font-semibold">{companyData.phone}</div>
+                </div>
               </div>
             )}
             {companyData.address && (
-              <div className="md:col-span-2">
-                <p className="text-sm font-medium text-muted-foreground">Address</p>
-                <p className="text-lg">{companyData.address}</p>
+              <div className="md:col-span-2 flex items-center gap-3 p-3 rounded-md border bg-background/50">
+                <MapPin className="h-5 w-5 text-primary" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Address</div>
+                  <div className="text-sm font-semibold">{companyData.address}</div>
+                </div>
               </div>
             )}
             {companyData.business_type && (
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Business Type</p>
-                <p className="text-lg capitalize">{companyData.business_type.replace('_', ' ')}</p>
+              <div className="flex items-center gap-3 p-3 rounded-md border bg-background/50">
+                <Building2 className="h-5 w-5 text-primary" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Business Type</div>
+                  <div className="text-sm font-semibold capitalize">{companyData.business_type.replace('_', ' ')}</div>
+                </div>
               </div>
             )}
             {companyData.default_currency && (
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Currency</p>
-                <p className="text-lg">{companyData.default_currency}</p>
+              <div className="flex items-center gap-3 p-3 rounded-md border bg-background/50">
+                <Globe className="h-5 w-5 text-primary" />
+                <div>
+                  <div className="text-xs text-muted-foreground">Currency</div>
+                  <div className="text-sm font-semibold">{companyData.default_currency}</div>
+                </div>
               </div>
             )}
           </div>
@@ -223,12 +257,17 @@ export const CompanySettings = () => {
       {/* Company Settings Form */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-primary" />
-            Edit Company Information
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              Company Settings
+            </CardTitle>
+            <Button variant="outline" onClick={() => setEditing((e) => !e)}>{editing ? "Close" : "Edit"}</Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
+        {editing ? (
+        <>
         <div className="space-y-4">
           <Label>Company Logo</Label>
           <div className="flex items-center gap-4">
@@ -360,6 +399,10 @@ export const CompanySettings = () => {
           <Save className="h-4 w-4 mr-2" />
           Save Company Details
         </Button>
+        </>
+        ) : (
+          <div className="text-sm text-muted-foreground">Press Edit to modify company settings.</div>
+        )}
       </CardContent>
     </Card>
     </div>
