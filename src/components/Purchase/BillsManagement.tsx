@@ -191,6 +191,13 @@ export const BillsManagement = () => {
       const billNumber = `BILL-${Date.now().toString().slice(-6)}`;
       const totals = calculateTotals();
 
+      // Validate items
+      const invalid = formData.items.some(it => !String(it.description || '').trim() || Number(it.quantity || 0) <= 0 || Number(it.unit_price || 0) < 0);
+      if (invalid) {
+        toast({ title: "Invalid Items", description: "Each item needs a name, quantity > 0 and non-negative price", variant: "destructive" });
+        return;
+      }
+
       const { data: bill, error: billError } = await supabase
         .from("bills")
         .insert({
@@ -225,6 +232,61 @@ export const BillsManagement = () => {
         .insert(items);
 
       if (itemsError) throw itemsError;
+
+      try {
+        const { data: existingItems } = await supabase
+          .from("items")
+          .select("id,name,quantity_on_hand")
+          .eq("company_id", profile!.company_id)
+          .eq("item_type", "product");
+
+        const existingMap = new Map<string, { id: string; qty: number }>();
+        (existingItems || []).forEach((it: any) => {
+          existingMap.set(String(it.name || '').trim().toLowerCase(), { id: it.id, qty: Number(it.quantity_on_hand || 0) });
+        });
+
+        const toInsert: any[] = [];
+        const updatePromises: Promise<any>[] = [];
+
+        items.forEach((bi) => {
+          const nameKey = String(bi.description || '').trim().toLowerCase();
+          if (!nameKey) return;
+          const found = existingMap.get(nameKey);
+          if (found) {
+            updatePromises.push(
+              supabase
+                .from("items")
+                .update({
+                  cost_price: Number((bi as any).unit_price || 0),
+                  quantity_on_hand: found.qty + Number((bi as any).quantity || 0)
+                })
+                .eq("id", found.id)
+            );
+          } else {
+            toInsert.push({
+              company_id: profile!.company_id,
+              name: String((bi as any).description || '').trim(),
+              description: String((bi as any).description || '').trim(),
+              item_type: "product",
+              unit_price: Number((bi as any).unit_price || 0),
+              cost_price: Number((bi as any).unit_price || 0),
+              quantity_on_hand: Number((bi as any).quantity || 0)
+            });
+          }
+        });
+
+        if (toInsert.length > 0) {
+          const { error: insertErr } = await supabase.from("items").insert(toInsert);
+          if (insertErr) throw insertErr;
+        }
+        if (updatePromises.length > 0) {
+          await Promise.all(updatePromises);
+        }
+        toast({ title: "Products Updated", description: "Purchased items synced to Sales products" });
+      } catch (syncErr: any) {
+        console.error("Products sync error:", syncErr);
+        toast({ title: "Product Sync Failed", description: String(syncErr?.message || syncErr), variant: "destructive" });
+      }
 
       toast({ title: "Success", description: "Bill created successfully" });
       setDialogOpen(false);

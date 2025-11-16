@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
 
 interface AuthContextValue {
@@ -20,6 +20,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     // Get initial session with error handling
     const initializeAuth = async () => {
+      if (!hasSupabaseEnv) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) {
@@ -51,6 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (email: string, password: string) => {
+    if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
   };
@@ -170,6 +176,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signup = async (name: string, email: string, password: string) => {
+    if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
     const { data, error } = await supabase.auth.signUp({ 
       email, 
       password,
@@ -192,11 +199,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const forgotPassword = async (email: string) => {
+    if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
     const { error } = await supabase.auth.resetPasswordForEmail(email);
     if (error) throw error;
   };
 
   const logout = async () => {
+    if (!hasSupabaseEnv) { setUser(null); return; }
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   };

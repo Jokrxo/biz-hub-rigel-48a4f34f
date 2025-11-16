@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useEffect, useMemo, useState } from "react";
 import { Users, FileText, Calculator, Plus, Check, BarChart } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useRoles } from "@/hooks/use-roles";
 import { buildPayslipPDF, type PayslipForPDF } from "@/lib/payslip-export";
@@ -34,8 +34,9 @@ export default function Payroll() {
 
   useEffect(() => {
     const loadCompany = async () => {
+      if (!hasSupabaseEnv) { setCompanyId(""); return; }
       const { data: profile } = await supabase
-        .from("profiles")
+        .from("profiles" as any)
         .select("company_id")
         .eq("user_id", user?.id)
         .maybeSingle();
@@ -146,13 +147,13 @@ function PayrollDashboard({ companyId }: { companyId: string }) {
   const [totals, setTotals] = useState<{ employees: number; gross: number; paye: number; uif: number; sdl: number; overtime: number; net: number }>({ employees: 0, gross: 0, paye: 0, uif: 0, sdl: 0, overtime: 0, net: 0 });
   useEffect(() => {
     const load = async () => {
-      const { count: empCount } = await supabase.from("employees").select("id", { count: "exact", head: true }).eq("company_id", companyId);
+      const { count: empCount } = await supabase.from("employees" as any).select("id", { count: "exact", head: true } as any).eq("company_id", companyId);
       const { data: lines } = await supabase
-        .from("pay_run_lines")
+        .from("pay_run_lines" as any)
         .select("gross, net, paye, uif_emp, uif_er, sdl_er, details")
         .in(
           "pay_run_id",
-          (await supabase.from("pay_runs").select("id").eq("company_id", companyId)).data?.map((r: any) => r.id) || []
+          (await supabase.from("pay_runs" as any).select("id").eq("company_id", companyId)).data?.map((r: any) => r.id) || []
         );
       const gross = (lines || []).reduce((s, l: any) => s + (l.gross || 0), 0);
       const net = (lines || []).reduce((s, l: any) => s + (l.net || 0), 0);
@@ -183,7 +184,7 @@ function PayrollSetup({ companyId, canEdit }: { companyId: string; canEdit: bool
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     const load = async () => {
-      const { data } = await supabase.from("payroll_settings").select("*").eq("company_id", companyId).maybeSingle();
+      const { data } = await supabase.from("payroll_settings" as any).select("*").eq("company_id", companyId).maybeSingle();
       if (data) setSettings(data);
       setLoading(false);
     };
@@ -192,8 +193,8 @@ function PayrollSetup({ companyId, canEdit }: { companyId: string; canEdit: bool
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     const payload = { company_id: companyId, tax_brackets: settings.tax_brackets, pension_rules: settings.pension_rules, uif_percent: settings.uif_percent, sdl_percent: settings.sdl_percent, overtime_rules: settings.overtime_rules, allowances: settings.allowances };
-    const existing = await supabase.from("payroll_settings").select("id").eq("company_id", companyId).maybeSingle();
-    const { error } = existing.data ? await supabase.from("payroll_settings").update(payload).eq("id", existing.data.id) : await supabase.from("payroll_settings").insert(payload);
+    const { data: existingData } = await supabase.from("payroll_settings" as any).select("id").eq("company_id", companyId).maybeSingle();
+    const { error } = existingData ? await supabase.from("payroll_settings" as any).update(payload as any).eq("id", (existingData as any).id) : await supabase.from("payroll_settings" as any).insert(payload as any);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Saved", description: "Setup saved" });
   };
@@ -242,7 +243,7 @@ function PayrollPeriods({ companyId, canEdit }: { companyId: string; canEdit: bo
   const [periods, setPeriods] = useState<any[]>([]);
   const [form, setForm] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
   const load = async () => {
-    const { data } = await supabase.from("payroll_periods").select("*").eq("company_id", companyId).order("start_date", { ascending: false });
+    const { data } = await supabase.from("payroll_periods" as any).select("*").eq("company_id", companyId).order("start_date", { ascending: false });
     setPeriods(data || []);
   };
   useEffect(() => { if (companyId) load(); }, [companyId]);
@@ -251,13 +252,13 @@ function PayrollPeriods({ companyId, canEdit }: { companyId: string; canEdit: bo
     const start = new Date(form.year, form.month - 1, 1);
     const end = new Date(form.year, form.month, 0);
     const payload = { company_id: companyId, year: form.year, month: form.month, name: `${form.year}-${String(form.month).padStart(2, '0')}`, start_date: start.toISOString().split('T')[0], end_date: end.toISOString().split('T')[0], status: 'open' };
-    const { error } = await supabase.from("payroll_periods").insert(payload);
+    const { error } = await supabase.from("payroll_periods" as any).insert(payload as any);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Success", description: "Period created" });
     load();
   };
   const close = async (id: string) => {
-    const { error } = await supabase.from("payroll_periods").update({ status: 'closed' }).eq("id", id);
+    const { error } = await supabase.from("payroll_periods" as any).update({ status: 'closed' } as any).eq("id", id);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     load();
   };
@@ -318,19 +319,19 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
   const [run, setRun] = useState<any>(null);
   useEffect(() => {
     const load = async () => {
-      const { data: ps } = await supabase.from("payroll_periods").select("*").eq("company_id", companyId).order("start_date", { ascending: false });
-      setPeriods(ps || []);
-      const { data: emps } = await supabase.from("employees").select("*").eq("company_id", companyId).order("first_name", { ascending: true });
-      setEmployees(emps || []);
+      const { data: ps } = await supabase.from("payroll_periods" as any).select("*").eq("company_id", companyId).order("start_date", { ascending: false });
+      setPeriods((ps || []) as any);
+      const { data: emps } = await supabase.from("employees" as any).select("*").eq("company_id", companyId).order("first_name", { ascending: true });
+      setEmployees((emps || []) as any);
     };
     if (companyId) load();
   }, [companyId]);
-  const ensureRun = async () => {
+  const ensureRun = async (): Promise<any> => {
     const p = periods.find((x: any) => x.id === period);
     if (!p) { toast({ title: "Error", description: "Select a period", variant: "destructive" }); return null; }
-    const { data: existing } = await supabase.from("pay_runs").select("*").eq("company_id", companyId).eq("period_start", p.start_date).eq("period_end", p.end_date).maybeSingle();
+    const { data: existing } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).eq("period_start", p.start_date).eq("period_end", p.end_date).maybeSingle();
     if (existing) { setRun(existing); return existing; }
-    const { data, error } = await supabase.from("pay_runs").insert({ company_id: companyId, period_start: p.start_date, period_end: p.end_date, status: 'draft' }).select("*").single();
+    const { data, error } = await supabase.from("pay_runs" as any).insert({ company_id: companyId, period_start: p.start_date, period_end: p.end_date, status: 'draft' } as any).select("*").single();
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return null; }
     setRun(data); return data;
   };
@@ -347,8 +348,8 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
     const details = { hours, overtime_hours: overtimeHours, overtime_amount: 0, bonuses, commission };
     const calc = { paye: +(gross * 0.18).toFixed(2), uif_emp: +(gross * 0.01).toFixed(2), uif_er: +(gross * 0.01).toFixed(2), sdl_er: +(gross * 0.01).toFixed(2) };
     const net = +(gross - calc.paye - calc.uif_emp).toFixed(2);
-    const payload = { pay_run_id: r.id, employee_id: form.employee_id, gross, net, paye: calc.paye, uif_emp: calc.uif_emp, uif_er: calc.uif_er, sdl_er: calc.sdl_er, details };
-    const { error } = await supabase.from("pay_run_lines").insert(payload);
+    const payload = { pay_run_id: (r as any).id, employee_id: form.employee_id, gross, net, paye: calc.paye, uif_emp: calc.uif_emp, uif_er: calc.uif_er, sdl_er: calc.sdl_er, details };
+    const { error } = await supabase.from("pay_run_lines" as any).insert(payload as any);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Success", description: "Captured payroll for employee" });
     setForm({ employee_id: "", hours: "", overtime_hours: "", bonuses: "", commission: "" });
@@ -411,14 +412,14 @@ function PayslipPreview({ companyId }: { companyId: string }) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   useEffect(() => {
     const load = async () => {
-      const { data: rs } = await supabase.from("pay_runs").select("*").eq("company_id", companyId).order("period_start", { ascending: false });
+      const { data: rs } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false });
       setRuns(rs || []);
     };
     if (companyId) load();
   }, [companyId]);
   const pickRun = async (id: string) => {
     setRun(runs.find(r => r.id === id));
-    const { data } = await supabase.from("pay_run_lines").select("*").eq("pay_run_id", id);
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", id);
     setLines(data || []);
   };
   useEffect(() => {
@@ -502,13 +503,13 @@ function PayrollReports({ companyId }: { companyId: string }) {
   const [lines, setLines] = useState<any[]>([]);
   useEffect(() => {
     const load = async () => {
-      const { data: rs } = await supabase.from("pay_runs").select("*").eq("company_id", companyId).order("period_start", { ascending: false });
+      const { data: rs } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false });
       setRuns(rs || []);
     };
     if (companyId) load();
   }, [companyId]);
   const pick = async (id: string) => {
-    const { data } = await supabase.from("pay_run_lines").select("*").eq("pay_run_id", id);
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", id);
     setLines(data || []);
   };
   const totals = {
@@ -571,15 +572,15 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from("employees").insert({
-        company_id: companyId,
-        first_name: form.first_name,
-        last_name: form.last_name,
-        email: form.email || null,
-        id_number: form.id_number || null,
-        start_date: form.start_date || null,
-        active: true,
-      });
+    const { error } = await supabase.from("employees" as any).insert({
+      company_id: companyId,
+      first_name: form.first_name,
+      last_name: form.last_name,
+      email: form.email || null,
+      id_number: form.id_number || null,
+      start_date: form.start_date || null,
+      active: true,
+    } as any);
       if (error) throw error;
       toast({ title: "Success", description: "Employee created" });
       setDialogOpen(false);
@@ -677,7 +678,7 @@ function PayItemsTab({ companyId, canEdit }: { companyId: string; canEdit: boole
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from("pay_items")
+        .from("pay_items" as any)
         .select("id, code, name, type, taxable")
         .eq("company_id", companyId)
         .order("code", { ascending: true });
@@ -695,13 +696,13 @@ function PayItemsTab({ companyId, canEdit }: { companyId: string; canEdit: boole
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const { error } = await supabase.from("pay_items").insert({
+      const { error } = await supabase.from("pay_items" as any).insert({
         company_id: companyId,
         code: form.code,
         name: form.name,
         type: form.type,
         taxable: form.taxable,
-      });
+      } as any);
       if (error) throw error;
       toast({ title: "Success", description: "Pay item created" });
       setDialogOpen(false);
@@ -808,7 +809,7 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from("pay_runs")
+        .from("pay_runs" as any)
         .select("*")
         .eq("company_id", companyId)
         .order("period_start", { ascending: false });
@@ -822,12 +823,12 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
   };
 
   const loadEmployees = async () => {
-    const { data } = await supabase.from("employees").select("*").eq("company_id", companyId).order("first_name", { ascending: true });
+    const { data } = await supabase.from("employees" as any).select("*").eq("company_id", companyId).order("first_name", { ascending: true });
     setEmployees((data || []) as any);
   };
 
   const loadLines = async (runId: string) => {
-    const { data } = await supabase.from("pay_run_lines").select("*").eq("pay_run_id", runId);
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", runId);
     setLines((data || []) as any);
   };
 
@@ -837,8 +838,8 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
     e.preventDefault();
     try {
       const { data, error } = await supabase
-        .from("pay_runs")
-        .insert({ company_id: companyId, period_start: form.period_start, period_end: form.period_end, status: "draft" })
+        .from("pay_runs" as any)
+        .insert({ company_id: companyId, period_start: form.period_start, period_end: form.period_end, status: "draft" } as any)
         .select("*")
         .single();
       if (error) throw error;
@@ -868,7 +869,7 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
     if (!addLine.employee_id || gross <= 0) { toast({ title: "Error", description: "Select employee and enter gross", variant: "destructive" }); return; }
     const c = calcLine(gross);
     const payload = { pay_run_id: selectedRun.id, employee_id: addLine.employee_id, gross, net: c.net, paye: c.paye, uif_emp: c.uif_emp, uif_er: c.uif_er, sdl_er: c.sdl_er };
-    const { error } = await supabase.from("pay_run_lines").insert(payload);
+    const { error } = await supabase.from("pay_run_lines" as any).insert(payload as any);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     setAddLine({ employee_id: "", gross: "" });
     loadLines(selectedRun.id);

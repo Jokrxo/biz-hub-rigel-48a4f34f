@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Plus, Download, FileText, ArrowRight, Mail } from "lucide-react";
 import { buildQuotePDF, type QuoteForPDF, type QuoteItemForPDF, type CompanyForPDF } from '@/lib/quote-export';
 import { addLogoToPDF, fetchLogoDataUrl } from '@/lib/invoice-export';
+import { formatDate } from '@/lib/utils';
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
@@ -34,6 +35,7 @@ export default function QuotesPage() {
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
+  const [dateFormat, setDateFormat] = useState<string>('DD/MM/YYYY');
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -161,6 +163,13 @@ export default function QuotesPage() {
 
   useEffect(() => {
     loadQuotes();
+  }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('appSettings');
+    if (saved) {
+      try { setDateFormat(JSON.parse(saved).dateFormat || 'DD/MM/YYYY'); } catch {}
+    }
   }, []);
 
   const loadQuotes = async () => {
@@ -418,8 +427,8 @@ export default function QuotesPage() {
                           <TableRow key={quote.id}>
                             <TableCell className="font-medium">{quote.quote_number}</TableCell>
                             <TableCell>{quote.customer_name}</TableCell>
-                            <TableCell>{new Date(quote.quote_date).toLocaleDateString()}</TableCell>
-                            <TableCell>{quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString() : "-"}</TableCell>
+                        <TableCell>{formatDate(quote.quote_date, dateFormat)}</TableCell>
+                        <TableCell>{quote.expiry_date ? formatDate(quote.expiry_date, dateFormat) : "-"}</TableCell>
                             <TableCell className="text-right font-semibold">R {quote.total_amount.toLocaleString()}</TableCell>
                             <TableCell>
                               <span className={`px-2 py-1 rounded text-xs ${

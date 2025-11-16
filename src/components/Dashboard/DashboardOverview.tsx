@@ -436,35 +436,95 @@ export const DashboardOverview = () => {
       const donut = Array.from(totals.values()).map(b => ({ name: b.name, value: b.amount, pct: (b.amount / totalUnpaid) * 100 }));
       setArDonut(donut);
 
-      const { data: apData, error: apErr } = await supabase
+      // Load AP from Bills
+      const { data: apBills, error: apErr } = await supabase
         .from('bills')
-        .select('id, supplier_name, bill_date, due_date, total_amount, status')
+        .select('id, supplier_id, bill_date, due_date, total_amount, status')
         .eq('company_id', profile.company_id)
-        .not('status', 'in', ['("paid")','("cancelled")'])
         .order('bill_date', { ascending: false });
+      let apRowsLocal: Array<{ id: string; supplier_name: string; total_amount: number; status: string; bill_date?: string; due_date?: string | null; source?: string }> = [];
       if (!apErr) {
-        const apRowsLocal = (apData || []).map((r: any) => ({
+        const supplierIds = Array.from(new Set((apBills || []).map((b: any) => b.supplier_id).filter(Boolean)));
+        let nameMap: Record<string, string> = {};
+        if (supplierIds.length > 0) {
+          const { data: supps } = await supabase
+            .from('suppliers')
+            .select('id, name')
+            .in('id', supplierIds);
+          (supps || []).forEach((s: any) => { nameMap[s.id] = s.name; });
+        }
+        apRowsLocal = (apBills || []).filter((r: any) => !['paid','cancelled'].includes(String(r.status))).map((r: any) => ({
           id: r.id,
-          supplier_name: r.supplier_name || 'Unknown',
-          total_amount: r.status === 'paid' ? 0 : Number(r.total_amount || 0),
+          supplier_name: nameMap[r.supplier_id] || 'Unknown',
+          total_amount: Number(r.total_amount || 0),
           status: r.status,
           bill_date: r.bill_date,
-          due_date: r.due_date || null
+          due_date: r.due_date || null,
+          source: 'bills'
         }));
-        setApRows(apRowsLocal);
-        const apTotals = new Map<string, { name: string; amount: number }>();
-        apRowsLocal.forEach(r => {
-          const key = r.supplier_name || 'Unknown';
-          const curr = apTotals.get(key) || { name: key, amount: 0 };
-          curr.amount += r.total_amount || 0;
-          apTotals.set(key, curr);
-        });
-        const apTop = Array.from(apTotals.values()).sort((a, b) => b.amount - a.amount).slice(0, 10).map(r => ({ name: r.name, amount: r.amount }));
-        setApTop10(apTop);
-        const apTotalUnpaid = apRowsLocal.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 1;
-        const apDonutData = Array.from(apTotals.values()).map(b => ({ name: b.name, value: b.amount, pct: (b.amount / apTotalUnpaid) * 100 }));
-        setApDonut(apDonutData);
       }
+
+      // Load AP from Purchase Orders and compute outstanding
+      const { data: apPOs } = await supabase
+        .from('purchase_orders')
+        .select('id, supplier_id, po_number, po_date, total_amount, status')
+        .eq('company_id', profile.company_id)
+        .order('po_date', { ascending: false });
+      let poRowsLocal: Array<{ id: string; supplier_name: string; total_amount: number; status: string; due_date?: string | null; bill_date?: string; source?: string }> = [];
+      if (apPOs && apPOs.length > 0) {
+        const supplierIdsPO = Array.from(new Set((apPOs || []).map((p: any) => p.supplier_id).filter(Boolean)));
+        let nameMapPO: Record<string, string> = {};
+        if (supplierIdsPO.length > 0) {
+          const { data: suppsPO } = await supabase
+            .from('suppliers')
+            .select('id, name')
+            .in('id', supplierIdsPO);
+          (suppsPO || []).forEach((s: any) => { nameMapPO[s.id] = s.name; });
+        }
+        const poNumbers = (apPOs || []).map((p: any) => p.po_number).filter(Boolean);
+        let payMap: Record<string, number> = {};
+        if (poNumbers.length > 0) {
+          const { data: pays } = await supabase
+            .from('transactions')
+            .select('reference_number, total_amount, transaction_type, status')
+            .in('reference_number', poNumbers)
+            .eq('transaction_type', 'payment')
+            .eq('status', 'posted');
+          (pays || []).forEach((t: any) => {
+            const ref = String(t.reference_number || '');
+            payMap[ref] = (payMap[ref] || 0) + Number(t.total_amount || 0);
+          });
+        }
+        poRowsLocal = (apPOs || []).filter((p: any) => String(p.status) !== 'paid').map((p: any) => {
+          const supplierName = nameMapPO[p.supplier_id] || 'Unknown';
+          const paidAmt = payMap[String(p.po_number || '')] || 0;
+          const outstanding = Math.max(0, Number(p.total_amount || 0) - paidAmt);
+          return {
+            id: p.id,
+            supplier_name: supplierName,
+            total_amount: outstanding,
+            status: p.status,
+            bill_date: p.po_date,
+            due_date: null,
+            source: 'purchase_orders'
+          };
+        }).filter(r => r.total_amount > 0);
+      }
+
+      const allApRowsLocal = [...apRowsLocal, ...poRowsLocal];
+      setApRows(allApRowsLocal);
+      const apTotals = new Map<string, { name: string; amount: number }>();
+      allApRowsLocal.forEach(r => {
+        const key = r.supplier_name || 'Unknown';
+        const curr = apTotals.get(key) || { name: key, amount: 0 };
+        curr.amount += r.total_amount || 0;
+        apTotals.set(key, curr);
+      });
+      const apTop = Array.from(apTotals.values()).sort((a, b) => b.amount - a.amount).slice(0, 10).map(r => ({ name: r.name, amount: r.amount }));
+      setApTop10(apTop);
+      const apTotalUnpaid = allApRowsLocal.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 1;
+      const apDonutData = Array.from(apTotals.values()).map(b => ({ name: b.name, value: b.amount, pct: (b.amount / apTotalUnpaid) * 100 }));
+      setApDonut(apDonutData);
 
       const nowStr = new Date().toISOString().split('T')[0];
       const arOverdue = rows.filter(r => r.total_amount > 0 && r.due_date && r.due_date < nowStr);
@@ -510,7 +570,7 @@ export const DashboardOverview = () => {
       setArAging(Array.from(arAgingMap.values()));
 
       const apAgingMap = new Map<string, any>();
-      apRows.forEach(r => {
+      allApRowsLocal.forEach(r => {
         const key = r.supplier_name || 'Unknown';
         const isOverdue = r.total_amount > 0 && r.due_date && r.due_date < nowStr;
         const a = r.due_date ? new Date(r.due_date).getTime() : 0;
@@ -524,7 +584,7 @@ export const DashboardOverview = () => {
       });
       setApAging(Array.from(apAgingMap.values()));
 
-      const apOverdue = apRows.filter(r => r.total_amount > 0 && r.due_date && r.due_date < nowStr);
+      const apOverdue = allApRowsLocal.filter(r => r.total_amount > 0 && r.due_date && r.due_date < nowStr);
       const apUnder30 = apOverdue.filter(r => {
         const a = r.due_date ? new Date(r.due_date).getTime() : 0;
         const b = new Date(nowStr).getTime();
@@ -544,7 +604,7 @@ export const DashboardOverview = () => {
         return d >= 90;
       });
       setApKpis({
-        unpaidTotal: apRows.reduce((s, r) => s + (r.total_amount || 0), 0),
+        unpaidTotal: allApRowsLocal.reduce((s, r) => s + (r.total_amount || 0), 0),
         overdueTotal: apOverdue.reduce((s, r) => s + (r.total_amount || 0), 0),
         overdueUnder30Total: apUnder30.reduce((s, r) => s + (r.total_amount || 0), 0),
         overdue30Total: ap30.reduce((s, r) => s + (r.total_amount || 0), 0),

@@ -10,6 +10,12 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertTriangle, CheckCircle2, Building2, AlertCircle } from "lucide-react";
 
+// Loan calculation function
+const calculateMonthlyRepayment = (principal: number, monthlyRate: number, termMonths: number): number => {
+  if (monthlyRate === 0) return principal / termMonths;
+  return (principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
+};
+
 interface Account {
   id: string;
   account_code: string;
@@ -36,7 +42,10 @@ const TRANSACTION_TYPES = [
   { value: "income", label: "Income Received", icon: "💰", description: "Record income (Dr Bank or Receivable / Cr Revenue)" },
   { value: "asset", label: "Asset Purchase", icon: "🏢", description: "Buy fixed asset (Dr Asset / Cr Bank or Payable)" },
   { value: "liability", label: "Liability Payment", icon: "💳", description: "Pay liability (Dr Liability / Cr Bank)" },
-  { value: "equity", label: "Capital Contribution", icon: "💎", description: "Owner investment (Dr Bank / Cr Capital)" }
+  { value: "equity", label: "Capital Contribution", icon: "💎", description: "Owner investment (Dr Bank / Cr Capital)" },
+  { value: "loan_received", label: "Loan Received", icon: "🏦", description: "Receive loan from bank (Dr Bank / Cr Loan Payable)" },
+  { value: "loan_repayment", label: "Loan Repayment", icon: "💵", description: "Repay loan principal (Dr Loan Payable / Cr Bank)" },
+  { value: "loan_interest", label: "Loan Interest", icon: "📈", description: "Pay loan interest (Dr Interest Expense / Cr Bank)" }
 ];
 
 export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: TransactionFormProps) => {
@@ -48,6 +57,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
   const [creditAccounts, setCreditAccounts] = useState<Account[]>([]);
   const [autoClassification, setAutoClassification] = useState<{ type: string; category: string } | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
+  const [loans, setLoans] = useState<any[]>([]);
   
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -58,7 +68,10 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     debitAccount: "",
     creditAccount: "",
     amount: "",
-    vatRate: "0"
+    vatRate: "0",
+    loanId: "",
+    interestRate: "",
+    loanTerm: ""
   });
   const [companyId, setCompanyId] = useState<string>("");
   const [validationError, setValidationError] = useState<string>("");
@@ -89,7 +102,10 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         debitAccount: "",
         creditAccount: "",
         amount: editData.total_amount?.toString() || "",
-        vatRate: editData.vat_rate ? String(editData.vat_rate) : "0"
+        vatRate: editData.vat_rate ? String(editData.vat_rate) : "0",
+        loanId: "",
+        interestRate: "",
+        loanTerm: ""
       });
     }
   }, [editData, bankAccounts]);
@@ -141,10 +157,21 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
 
       if (bankError) throw bankError;
 
+      // Load active loans for loan transactions
+      const { data: loansData, error: loansError } = await supabase
+        .from("loans")
+        .select("id, reference, loan_type, outstanding_balance, status")
+        .eq("company_id", profile.company_id)
+        .eq("status", "active")
+        .order("reference");
+
+      if (loansError) throw loansError;
+
       setAccounts(accountsData || []);
       setDebitAccounts(accountsData || []);
       setCreditAccounts(accountsData || []);
       setBankAccounts(bankData || []);
+      setLoans(loansData || []);
 
       if (!bankData || bankData.length === 0) {
         toast({
@@ -205,7 +232,15 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
   };
 
   const handleTransactionTypeChange = async (txType: string) => {
-    setForm({ ...form, transactionType: txType, debitAccount: "", creditAccount: "" });
+    setForm({ 
+      ...form, 
+      transactionType: txType, 
+      debitAccount: "", 
+      creditAccount: "",
+      loanId: "",
+      interestRate: "",
+      loanTerm: ""
+    });
     
     if (!txType) {
       setDebitAccounts([]);
@@ -225,27 +260,138 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
 
       if (!profile?.company_id) return;
 
-      // Get smart account suggestions from database
-      const { data: debitSuggestions } = await supabase.rpc('get_account_suggestions', {
-        _company_id: profile.company_id,
-        _transaction_element: txType,
-        _side: 'debit'
-      });
+      // Handle loan-specific account suggestions
+      let debitSuggestions = [];
+      let creditSuggestions = [];
 
-      const { data: creditSuggestions } = await supabase.rpc('get_account_suggestions', {
-        _company_id: profile.company_id,
-        _transaction_element: txType,
-        _side: 'credit'
-      });
+      if (txType === 'loan_received') {
+        // Loan received: Dr Bank, Cr Loan Payable
+        const { data: bankAccounts } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type")
+          .eq("company_id", profile.company_id)
+          .eq("account_type", "asset")
+          .like("account_name", "%bank%")
+          .or("account_code.eq.1100"); // Default bank account
 
-      setDebitAccounts(debitSuggestions || []);
-      setCreditAccounts(creditSuggestions || []);
+        const { data: loanPayable } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type")
+          .eq("company_id", profile.company_id)
+          .eq("account_type", "liability")
+          .or("account_code.eq.2300,account_code.eq.2400"); // Short/long term loans
 
-      if ((!debitSuggestions || debitSuggestions.length === 0) || 
-          (!creditSuggestions || creditSuggestions.length === 0)) {
+        debitSuggestions = bankAccounts || [];
+        creditSuggestions = loanPayable || [];
+      } else if (txType === 'loan_repayment') {
+        // Loan repayment: Dr Loan Payable, Cr Bank
+        const { data: loanPayable } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type")
+          .eq("company_id", profile.company_id)
+          .eq("account_type", "liability")
+          .or("account_code.eq.2300,account_code.eq.2400"); // Short/long term loans
+
+        const { data: bankAccounts } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type")
+          .eq("company_id", profile.company_id)
+          .eq("account_type", "asset")
+          .like("account_name", "%bank%")
+          .or("account_code.eq.1100"); // Default bank account
+
+        debitSuggestions = loanPayable || [];
+        creditSuggestions = bankAccounts || [];
+      } else if (txType === 'loan_interest') {
+        // Loan interest: Dr Interest Expense, Cr Bank
+        const { data: interestExpense } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type")
+          .eq("company_id", profile.company_id)
+          .eq("account_type", "expense")
+          .like("account_name", "%interest%");
+
+        const { data: bankAccounts } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type")
+          .eq("company_id", profile.company_id)
+          .eq("account_type", "asset")
+          .like("account_name", "%bank%")
+          .or("account_code.eq.1100"); // Default bank account
+
+        debitSuggestions = interestExpense || [];
+        creditSuggestions = bankAccounts || [];
+      } else {
+        // Use existing RPC for other transaction types
+        const { data: debitData } = await supabase.rpc('get_account_suggestions', {
+          _company_id: profile.company_id,
+          _transaction_element: txType,
+          _side: 'debit'
+        });
+
+        const { data: creditData } = await supabase.rpc('get_account_suggestions', {
+          _company_id: profile.company_id,
+          _transaction_element: txType,
+          _side: 'credit'
+        });
+
+        debitSuggestions = debitData || [];
+        creditSuggestions = creditData || [];
+      }
+
+      setDebitAccounts(debitSuggestions);
+      setCreditAccounts(creditSuggestions);
+
+      // Auto-select recommended accounts for loan transactions
+      if (txType === 'loan_received') {
+        // Auto-select first bank account for debit
+        const firstBank = debitSuggestions.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank'));
+        if (firstBank) {
+          setForm(prev => ({ ...prev, debitAccount: firstBank.id }));
+        }
+        
+        // Auto-select first loan payable account for credit
+        const firstLoanPayable = creditSuggestions.find(acc => 
+          acc.account_type === 'liability' && (acc.account_code === '2300' || acc.account_code === '2400')
+        );
+        if (firstLoanPayable) {
+          setForm(prev => ({ ...prev, creditAccount: firstLoanPayable.id }));
+        }
+      } else if (txType === 'loan_repayment') {
+        // Auto-select first loan payable account for debit
+        const firstLoanPayable = debitSuggestions.find(acc => 
+          acc.account_type === 'liability' && (acc.account_code === '2300' || acc.account_code === '2400')
+        );
+        if (firstLoanPayable) {
+          setForm(prev => ({ ...prev, debitAccount: firstLoanPayable.id }));
+        }
+        
+        // Auto-select first bank account for credit
+        const firstBank = creditSuggestions.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank'));
+        if (firstBank) {
+          setForm(prev => ({ ...prev, creditAccount: firstBank.id }));
+        }
+      } else if (txType === 'loan_interest') {
+        // Auto-select interest expense for debit
+        const interestExpense = debitSuggestions.find(acc => 
+          acc.account_type === 'expense' && acc.account_name.toLowerCase().includes('interest')
+        );
+        if (interestExpense) {
+          setForm(prev => ({ ...prev, debitAccount: interestExpense.id }));
+        }
+        
+        // Auto-select first bank account for credit
+        const firstBank = creditSuggestions.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank'));
+        if (firstBank) {
+          setForm(prev => ({ ...prev, creditAccount: firstBank.id }));
+        }
+      }
+
+      // Validate loan transactions have required accounts
+      if (txType.startsWith('loan_') && (debitSuggestions.length === 0 || creditSuggestions.length === 0)) {
         toast({ 
-          title: "Chart of Accounts Missing", 
-          description: `Please add accounts for this transaction type in Chart of Accounts.`,
+          title: "Missing Loan Accounts", 
+          description: `Please ensure you have the required accounts for loan transactions in Chart of Accounts.`,
           variant: "destructive" 
         });
       }
@@ -268,6 +414,25 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       if (!form.debitAccount) missingFields.push("Debit Account");
       if (!form.creditAccount) missingFields.push("Credit Account");
       if (!form.amount) missingFields.push("Amount");
+      
+      // Loan-specific validation
+      if (form.transactionType.startsWith('loan_')) {
+        if (!form.bankAccount || form.bankAccount === "__none__") {
+          missingFields.push("Bank Account (required for loan transactions)");
+        }
+        
+        if (form.transactionType === 'loan_repayment' && !form.loanId) {
+          missingFields.push("Loan Selection (required for loan repayment)");
+        }
+        
+        if (form.transactionType === 'loan_received' && !form.interestRate) {
+          missingFields.push("Interest Rate (required for new loans)");
+        }
+        
+        if (form.transactionType === 'loan_received' && !form.loanTerm) {
+          missingFields.push("Loan Term (required for new loans)");
+        }
+      }
       
       if (missingFields.length > 0) {
         toast({ 
@@ -591,6 +756,82 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         }
       }
 
+      // Handle loan-specific operations
+      if (form.transactionType === 'loan_received') {
+        // Create a new loan record
+        const monthlyRepayment = calculateMonthlyRepayment(
+          parseFloat(form.amount),
+          parseFloat(form.interestRate) / 100 / 12, // Monthly rate
+          parseInt(form.loanTerm)
+        );
+
+        const { error: loanError } = await supabase
+          .from("loans")
+          .insert({
+            company_id: profile.company_id,
+            reference: form.reference || `LOAN-${Date.now()}`,
+            loan_type: parseInt(form.loanTerm) <= 12 ? 'short' : 'long',
+            principal: parseFloat(form.amount),
+            interest_rate: parseFloat(form.interestRate),
+            start_date: form.date,
+            term_months: parseInt(form.loanTerm),
+            monthly_repayment: monthlyRepayment,
+            status: 'active',
+            outstanding_balance: parseFloat(form.amount)
+          });
+
+        if (loanError) {
+          console.error("Loan creation error:", loanError);
+          toast({ 
+            title: "Loan Creation Failed", 
+            description: "Transaction was posted but loan record could not be created: " + loanError.message, 
+            variant: "destructive" 
+          });
+        } else {
+          toast({ 
+            title: "Loan Created Successfully", 
+            description: "New loan record created with monthly repayment of R " + monthlyRepayment.toFixed(2) 
+          });
+        }
+      } else if (form.transactionType === 'loan_repayment' && form.loanId) {
+        // Update loan outstanding balance
+        const { data: loanData } = await supabase
+          .from("loans")
+          .select("outstanding_balance")
+          .eq("id", form.loanId)
+          .single();
+
+        if (loanData) {
+          const newBalance = Math.max(0, loanData.outstanding_balance - parseFloat(form.amount));
+          const { error: updateError } = await supabase
+            .from("loans")
+            .update({ 
+              outstanding_balance: newBalance,
+              status: newBalance === 0 ? 'completed' : 'active'
+            })
+            .eq("id", form.loanId);
+
+          if (updateError) {
+            console.error("Loan update error:", updateError);
+          }
+        }
+      } else if (form.transactionType === 'loan_interest' && form.loanId) {
+        // Record loan interest payment
+        const { error: interestError } = await supabase
+          .from("loan_payments")
+          .insert({
+            loan_id: form.loanId,
+            payment_date: form.date,
+            amount: parseFloat(form.amount),
+            principal_component: 0,
+            interest_component: parseFloat(form.amount)
+          });
+
+        if (interestError) {
+          console.error("Interest payment recording error:", interestError);
+        }
+      }
+
       // Refresh AFS cache after successful posting
       await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
       
@@ -611,7 +852,10 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         debitAccount: "",
         creditAccount: "",
         amount: "",
-        vatRate: "0"
+        vatRate: "0",
+        loanId: "",
+        interestRate: "",
+        loanTerm: ""
       });
       setAutoClassification(null);
       setDuplicateWarning(false);
@@ -754,35 +998,221 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             )}
           </div>
 
+          {/* Loan-specific fields */}
+          {form.transactionType.startsWith('loan_') && (
+            <div className="space-y-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <div className="text-sm font-medium text-blue-800">Loan Transaction Details</div>
+              
+              {form.transactionType === 'loan_received' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Interest Rate (% per annum) *</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={form.interestRate}
+                      onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
+                      placeholder="e.g., 8.5"
+                    />
+                  </div>
+                  <div>
+                    <Label>Loan Term (months) *</Label>
+                    <Input
+                      type="number"
+                      value={form.loanTerm}
+                      onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
+                      placeholder="e.g., 12"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {(form.transactionType === 'loan_repayment' || form.transactionType === 'loan_interest') && (
+                <div>
+                  <Label>Select Loan *</Label>
+                  <Select value={form.loanId} onValueChange={(val) => setForm({ ...form, loanId: val })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a loan" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {loans.map(loan => (
+                        <SelectItem key={loan.id} value={loan.id}>
+                          {loan.reference} - {loan.loan_type === 'short' ? 'Short-term' : 'Long-term'} 
+                          (Outstanding: R {loan.outstanding_balance?.toFixed(2)})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              <div className="text-xs text-blue-600">
+                {form.transactionType === 'loan_received' && 
+                  "This will create a new loan record and post the transaction to your accounts."}
+                {form.transactionType === 'loan_repayment' && 
+                  "This will reduce the loan outstanding balance and post the principal repayment."}
+                {form.transactionType === 'loan_interest' && 
+                  "This will post interest expense and update the loan interest records."}
+              </div>
+            </div>
+          )}
+
+          {form.transactionType === 'loan_received' && (
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-start gap-3">
+                <div className="text-blue-600">🏦</div>
+                <div className="text-sm">
+                  <p className="font-medium text-blue-900 mb-1">Loan Received Transaction</p>
+                  <p className="text-blue-700">
+                    When you receive a loan: <strong>Debit Bank Account</strong> (cash increases) and <strong>Credit Loan Account</strong> (liability increases).
+                    Select your bank account below to receive the funds, and choose either 2300 (Short-term) or 2400 (Long-term) loan account.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {form.transactionType === 'loan_repayment' && (
+            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-start gap-3">
+                <div className="text-green-600">💳</div>
+                <div className="text-sm">
+                  <p className="font-medium text-green-900 mb-1">Loan Repayment Transaction</p>
+                  <p className="text-green-700">
+                    When repaying loan principal: <strong>Debit Loan Account</strong> (liability decreases) and <strong>Credit Bank Account</strong> (cash decreases).
+                    This reduces your outstanding loan balance.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {form.transactionType === 'loan_interest' && (
+            <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+              <div className="flex items-start gap-3">
+                <div className="text-orange-600">📈</div>
+                <div className="text-sm">
+                  <p className="font-medium text-orange-900 mb-1">Loan Interest Payment</p>
+                  <p className="text-orange-700">
+                    When paying loan interest: <strong>Debit Interest Expense</strong> (expense increases) and <strong>Credit Bank Account</strong> (cash decreases).
+                    This records the cost of borrowing, separate from principal repayment.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
             <div>
-              <Label>Debit Account * (Dr)</Label>
+              <Label className="flex items-center gap-2">
+                Debit Account * (Dr)
+                {form.transactionType === 'loan_received' && (
+                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700">
+                    💰 Cash Received
+                  </Badge>
+                )}
+                {form.transactionType === 'loan_repayment' && (
+                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">
+                    💳 Reduce Loan
+                  </Badge>
+                )}
+                {form.transactionType === 'loan_interest' && (
+                  <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700">
+                    📈 Interest Expense
+                  </Badge>
+                )}
+              </Label>
               <Select value={form.debitAccount} onValueChange={(val) => setForm({ ...form, debitAccount: val })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select debit account" />
+                <SelectTrigger className={form.transactionType?.startsWith('loan_') && !form.debitAccount ? "border-orange-300" : ""}>
+                  <SelectValue 
+                    placeholder={form.transactionType === 'loan_received' ? "Select Bank Account (Cash Received)" : 
+                                 form.transactionType === 'loan_repayment' ? "Select Loan Account (Reduce Loan)" :
+                                 form.transactionType === 'loan_interest' ? "Select Interest Expense" :
+                                 "Select debit account"} 
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  {debitAccounts.map(acc => (
-                    <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id}>
-                      {acc.account_code} - {acc.account_name} [{(acc as any).account_type ?? ""}]
-                    </SelectItem>
-                  ))}
+                  {debitAccounts.length === 0 ? (
+                    <div className="p-4 text-center text-sm text-gray-500">
+                      No accounts available for this transaction type
+                    </div>
+                  ) : (
+                    debitAccounts.map(acc => (
+                      <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs bg-gray-100 px-1 rounded">{acc.account_code}</span>
+                          <span>{acc.account_name}</span>
+                          <span className="text-xs text-gray-500">[{acc.account_type}]</span>
+                          {form.transactionType === 'loan_received' && acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank') && (
+                            <Badge variant="secondary" className="text-xs">💰 Recommended</Badge>
+                          )}
+                          {form.transactionType === 'loan_repayment' && (acc.account_code === '2300' || acc.account_code === '2400') && (
+                            <Badge variant="secondary" className="text-xs">💳 Loan Account</Badge>
+                          )}
+                          {form.transactionType === 'loan_interest' && acc.account_type === 'expense' && acc.account_name.toLowerCase().includes('interest') && (
+                            <Badge variant="secondary" className="text-xs">📈 Interest</Badge>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
             
             <div>
-              <Label>Credit Account * (Cr)</Label>
+              <Label className="flex items-center gap-2">
+                Credit Account * (Cr)
+                {form.transactionType === 'loan_received' && (
+                  <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700">
+                    🏦 Loan Liability
+                  </Badge>
+                )}
+                {form.transactionType === 'loan_repayment' && (
+                  <Badge variant="outline" className="text-xs bg-red-50 text-red-700">
+                    💸 Cash Paid
+                  </Badge>
+                )}
+                {form.transactionType === 'loan_interest' && (
+                  <Badge variant="outline" className="text-xs bg-red-50 text-red-700">
+                    💸 Cash Paid
+                  </Badge>
+                )}
+              </Label>
               <Select value={form.creditAccount} onValueChange={(val) => setForm({ ...form, creditAccount: val })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select credit account" />
+                <SelectTrigger className={form.transactionType?.startsWith('loan_') && !form.creditAccount ? "border-orange-300" : ""}>
+                  <SelectValue 
+                    placeholder={form.transactionType === 'loan_received' ? "Select Loan Account (Create Liability)" : 
+                                 form.transactionType === 'loan_repayment' ? "Select Bank Account (Cash Paid)" :
+                                 form.transactionType === 'loan_interest' ? "Select Bank Account (Cash Paid)" :
+                                 "Select credit account"} 
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  {creditAccounts.map(acc => (
-                    <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id}>
-                      {acc.account_code} - {acc.account_name} [{(acc as any).account_type ?? ""}]
-                    </SelectItem>
-                  ))}
+                  {creditAccounts.length === 0 ? (
+                    <div className="p-4 text-center text-sm text-gray-500">
+                      No accounts available for this transaction type
+                    </div>
+                  ) : (
+                    creditAccounts.map(acc => (
+                      <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id}>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs bg-gray-100 px-1 rounded">{acc.account_code}</span>
+                          <span>{acc.account_name}</span>
+                          <span className="text-xs text-gray-500">[{acc.account_type}]</span>
+                          {form.transactionType === 'loan_received' && (acc.account_code === '2300' || acc.account_code === '2400') && (
+                            <Badge variant="secondary" className="text-xs">🏦 Loan Payable</Badge>
+                          )}
+                          {form.transactionType === 'loan_repayment' && acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank') && (
+                            <Badge variant="secondary" className="text-xs">💸 Bank Account</Badge>
+                          )}
+                          {form.transactionType === 'loan_interest' && acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank') && (
+                            <Badge variant="secondary" className="text-xs">💸 Bank Account</Badge>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -799,21 +1229,48 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                 placeholder="0.00"
               />
             </div>
-            <div>
-              <Label>VAT Rate (%)</Label>
-              <Select value={form.vatRate} onValueChange={(val) => setForm({ ...form, vatRate: val })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">0% (No VAT)</SelectItem>
-                  <SelectItem value="15">15% (Standard)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {form.transactionType?.startsWith('loan_') ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Interest Rate (%)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={form.interestRate}
+                    onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
+                    placeholder="e.g. 10"
+                  />
+                </div>
+                {form.transactionType === 'loan_received' && (
+                  <div>
+                    <Label>Term (months)</Label>
+                    <Input
+                      type="number"
+                      step="1"
+                      value={form.loanTerm}
+                      onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
+                      placeholder="e.g. 12"
+                    />
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <Label>VAT Rate (%)</Label>
+                <Select value={form.vatRate} onValueChange={(val) => setForm({ ...form, vatRate: val })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">0% (No VAT)</SelectItem>
+                    <SelectItem value="15">15% (Standard)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
 
-          {form.amount && (
+          {form.amount && !form.transactionType?.startsWith('loan_') && (
             <div className="p-4 bg-primary/5 rounded-lg border border-primary/10">
               <div className="flex justify-between text-sm">
                 <span>Amount:</span>

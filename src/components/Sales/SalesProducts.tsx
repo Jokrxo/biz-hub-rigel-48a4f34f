@@ -31,6 +31,15 @@ export const SalesProducts = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const { isAdmin, isAccountant } = useRoles();
+  const canEdit = isAdmin || isAccountant;
+  const [companyId, setCompanyId] = useState<string>("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({
+    name: "",
+    description: "",
+    unit_price: "",
+    cost_price: ""
+  });
 
   const [formData, setFormData] = useState({
     name: "",
@@ -65,6 +74,7 @@ export const SalesProducts = () => {
         .maybeSingle();
 
       if (!profile) return;
+      setCompanyId(profile.company_id as string);
 
       const { data, error } = await supabase
         .from("items")
@@ -146,7 +156,53 @@ export const SalesProducts = () => {
     }
   };
 
-  const canEdit = isAdmin || isAccountant;
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canEdit) {
+      toast({ title: "Permission denied", variant: "destructive" });
+      return;
+    }
+    try {
+      const name = createForm.name.trim();
+      if (!name) {
+        toast({ title: "Name required", description: "Enter a product name", variant: "destructive" });
+        return;
+      }
+      const unit = parseFloat(createForm.unit_price || "0");
+      if (!unit || unit <= 0) {
+        toast({ title: "Invalid price", description: "Enter a valid selling price", variant: "destructive" });
+        return;
+      }
+      const cost = createForm.cost_price ? parseFloat(createForm.cost_price) : 0;
+      const { data: { user: u } } = await supabase.auth.getUser();
+      if (!u) throw new Error("Not authenticated");
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", u.id)
+        .single();
+      const company_id = (profile as any)?.company_id || companyId;
+      if (!company_id) throw new Error("Company context missing");
+      const { error } = await supabase
+        .from("items")
+        .insert({
+          company_id,
+          name,
+          description: (createForm.description || "").trim(),
+          item_type: "product",
+          unit_price: unit,
+          cost_price: cost,
+          quantity_on_hand: 0
+        } as any);
+      if (error) throw error;
+      toast({ title: "Product created", description: "Product added to catalog" });
+      setCreateOpen(false);
+      setCreateForm({ name: "", description: "", unit_price: "", cost_price: "" });
+      loadProducts();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
 
   const totalValue = products.reduce((sum, p) => sum + (p.unit_price * p.quantity_on_hand), 0);
 
@@ -188,7 +244,11 @@ export const SalesProducts = () => {
             <Package className="h-5 w-5 text-primary" />
             Products & Services
           </CardTitle>
-          {/* Creation via Purchase only; no manual add */}
+          {canEdit && (
+            <Button size="sm" className="bg-gradient-primary" onClick={() => setCreateOpen(true)}>
+              + New Product
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -244,6 +304,38 @@ export const SalesProducts = () => {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New Product</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <div>
+              <Label>Product Name *</Label>
+              <Input value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} required />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Textarea value={createForm.description} onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })} rows={2} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Selling Price (R) *</Label>
+                <Input type="number" step="0.01" value={createForm.unit_price} onChange={(e) => setCreateForm({ ...createForm, unit_price: e.target.value })} required />
+              </div>
+              <div>
+                <Label>Cost Price (R)</Label>
+                <Input type="number" step="0.01" value={createForm.cost_price} onChange={(e) => setCreateForm({ ...createForm, cost_price: e.target.value })} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+              <Button type="submit" className="bg-gradient-primary">Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

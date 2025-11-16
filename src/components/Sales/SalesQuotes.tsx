@@ -14,6 +14,7 @@ import { useRoles } from "@/hooks/use-roles";
 import { ArrowRight, Plus, Trash2, FileText, Download, Mail } from "lucide-react";
 import { buildQuotePDF, type QuoteForPDF, type QuoteItemForPDF, type CompanyForPDF } from '@/lib/quote-export';
 import { addLogoToPDF, fetchLogoDataUrl } from '@/lib/invoice-export';
+import { formatDate } from '@/lib/utils';
 
 interface Quote {
   id: string;
@@ -50,6 +51,7 @@ export const SalesQuotes = () => {
   const [sendMessage, setSendMessage] = useState<string>('');
   const [sending, setSending] = useState<boolean>(false);
   const [selectedQuote, setSelectedQuote] = useState<any>(null);
+  const [dateFormat, setDateFormat] = useState<string>('DD/MM/YYYY');
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
@@ -67,6 +69,13 @@ export const SalesQuotes = () => {
     return () => {
       supabase.removeChannel(channel);
     };
+  }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('appSettings');
+    if (saved) {
+      try { setDateFormat(JSON.parse(saved).dateFormat || 'DD/MM/YYYY'); } catch {}
+    }
   }, []);
 
   const loadQuotes = async () => {
@@ -455,8 +464,8 @@ export const SalesQuotes = () => {
                     <TableRow key={quote.id}>
                       <TableCell className="font-medium">{quote.quote_number}</TableCell>
                       <TableCell>{quote.customer_name}</TableCell>
-                      <TableCell>{new Date(quote.quote_date).toLocaleDateString('en-ZA')}</TableCell>
-                      <TableCell>{quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-ZA') : "-"}</TableCell>
+                  <TableCell>{formatDate(quote.quote_date, dateFormat)}</TableCell>
+                  <TableCell>{quote.expiry_date ? formatDate(quote.expiry_date, dateFormat) : "-"}</TableCell>
                       <TableCell className="text-right font-semibold">R {Number(quote.total_amount).toLocaleString('en-ZA')}</TableCell>
                       <TableCell>
                         <Badge variant={

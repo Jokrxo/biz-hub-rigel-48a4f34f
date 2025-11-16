@@ -169,6 +169,12 @@ export const PurchaseOrdersManagement = () => {
         return;
       }
 
+      const invalid = form.items.some(it => !String(it.description || '').trim() || Number(it.quantity || 0) <= 0 || Number(it.unit_price || 0) < 0);
+      if (invalid) {
+        toast({ title: "Invalid Items", description: "Each item needs a name, quantity > 0 and non-negative price", variant: "destructive" });
+        return;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
@@ -219,6 +225,52 @@ export const PurchaseOrdersManagement = () => {
         .insert(items);
 
       if (itemsError) throw itemsError;
+
+      try {
+        const { data: existingItems } = await supabase
+          .from("items")
+          .select("id,name")
+          .eq("company_id", profile.company_id)
+          .eq("item_type", "product");
+
+        const existingSet = new Set<string>((existingItems || []).map((it: any) => String(it.name || '').trim().toLowerCase()));
+        const toInsert: any[] = [];
+        const updatePromises: Promise<any>[] = [];
+
+        items.forEach((poi) => {
+          const nameKey = String((poi as any).description || '').trim().toLowerCase();
+          if (!nameKey) return;
+          if (existingSet.has(nameKey)) {
+            updatePromises.push(
+              supabase
+                .from("items")
+                .update({ cost_price: Number((poi as any).unit_price || 0) })
+                .eq("company_id", profile.company_id)
+                .eq("item_type", "product")
+                .eq("name", String((poi as any).description || '').trim())
+            );
+          } else {
+            toInsert.push({
+              company_id: profile.company_id,
+              name: String((poi as any).description || '').trim(),
+              description: String((poi as any).description || '').trim(),
+              item_type: "product",
+              unit_price: Number((poi as any).unit_price || 0),
+              cost_price: Number((poi as any).unit_price || 0),
+              quantity_on_hand: 0
+            });
+          }
+        });
+
+        if (toInsert.length > 0) {
+          const { error: insErr } = await supabase.from("items").insert(toInsert);
+          if (insErr) throw insErr;
+        }
+        if (updatePromises.length > 0) { await Promise.all(updatePromises); }
+      } catch (syncErr: any) {
+        console.error("PO products sync error:", syncErr);
+        toast({ title: "Product Sync Failed", description: String(syncErr?.message || syncErr), variant: "destructive" });
+      }
 
       toast({ title: "Success", description: "Purchase order created successfully" });
       setShowForm(false);

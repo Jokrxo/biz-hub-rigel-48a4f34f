@@ -6,6 +6,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Settings2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { hasSupabaseEnv } from "@/integrations/supabase/client";
+import { useAuth } from "@/context/AuthContext";
 
 export const GeneralSettings = () => {
   const [settings, setSettings] = useState({
@@ -17,18 +20,96 @@ export const GeneralSettings = () => {
     language: "en",
   });
   const { toast } = useToast();
+  const { user } = useAuth();
 
-  const handleSave = () => {
-    localStorage.setItem("appSettings", JSON.stringify(settings));
-    toast({ title: "Success", description: "General settings saved successfully" });
+  const applyTheme = (theme: string) => {
+    const root = document.documentElement;
+    if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
+  };
+
+  const handleSave = async () => {
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      if (!profile?.company_id) throw new Error('Profile not found');
+      const payload = {
+        company_id: profile.company_id,
+        theme: settings.theme,
+        date_format: settings.dateFormat,
+        fiscal_year_start: parseInt(settings.fiscalYearStart || '1'),
+        enable_notifications: settings.enableNotifications,
+        enable_auto_backup: settings.enableAutoBackup,
+        language: settings.language,
+        updated_at: new Date().toISOString(),
+      };
+      const existing = await supabase
+        .from('app_settings')
+        .select('id')
+        .eq('company_id', profile.company_id)
+        .maybeSingle();
+      const { error } = existing.data
+        ? await supabase.from('app_settings').update(payload).eq('id', existing.data.id)
+        : await supabase.from('app_settings').insert(payload);
+      if (error) throw error;
+      localStorage.setItem('appSettings', JSON.stringify(settings));
+      applyTheme(settings.theme);
+      toast({ title: 'Success', description: 'General settings saved successfully' });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message || 'Failed to save settings', variant: 'destructive' });
+    }
   };
 
   useEffect(() => {
-    const saved = localStorage.getItem("appSettings");
-    if (saved) {
-      setSettings(JSON.parse(saved));
-    }
+    const init = async () => {
+      try {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('user_id', user?.id)
+          .maybeSingle();
+        const savedLocal = localStorage.getItem('appSettings');
+        let next = settings;
+        if (profile?.company_id) {
+          const { data } = await supabase
+            .from('app_settings')
+            .select('*')
+            .eq('company_id', profile.company_id)
+            .maybeSingle();
+          if (data) {
+            next = {
+              theme: (data as any).theme || 'light',
+              dateFormat: (data as any).date_format || 'DD/MM/YYYY',
+              fiscalYearStart: String((data as any).fiscal_year_start || 1),
+              enableNotifications: !!(data as any).enable_notifications,
+              enableAutoBackup: !!(data as any).enable_auto_backup,
+              language: (data as any).language || 'en',
+            };
+          }
+        } else if (savedLocal) {
+          next = JSON.parse(savedLocal);
+        }
+        setSettings(next);
+        applyTheme(next.theme);
+      } catch {}
+    };
+    init();
   }, []);
+
+  const [supUrl, setSupUrl] = useState("");
+  const [supKey, setSupKey] = useState("");
+  const saveSupabaseConfig = () => {
+    try {
+      localStorage.setItem('supabase_url', supUrl);
+      localStorage.setItem('supabase_anon_key', supKey);
+      toast({ title: 'Saved', description: 'Supabase configured. Reloading…' });
+      setTimeout(() => { window.location.reload(); }, 500);
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message || 'Failed to configure Supabase', variant: 'destructive' });
+    }
+  };
 
   return (
     <Card>

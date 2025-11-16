@@ -1196,6 +1196,381 @@ export type Database = {
           },
         ]
       }
+      employees: {
+        Row: {
+          id: string
+          company_id: string
+          first_name: string
+          last_name: string
+          email: string | null
+          id_number: string | null
+          tax_number: string | null
+          bank_name: string | null
+          bank_branch_code: string | null
+          bank_account_number: string | null
+          bank_account_type: string | null
+          salary_type: string | null
+          uif_covered: boolean | null
+          pension_rate: number | null
+          medical_aid_amount: number | null
+          start_date: string | null
+          active: boolean
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          first_name: string
+          last_name: string
+          email?: string | null
+          id_number?: string | null
+          tax_number?: string | null
+          bank_name?: string | null
+          bank_branch_code?: string | null
+          bank_account_number?: string | null
+          bank_account_type?: string | null
+          salary_type?: string | null
+          uif_covered?: boolean | null
+          pension_rate?: number | null
+          medical_aid_amount?: number | null
+          start_date?: string | null
+          active?: boolean
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          first_name?: string
+          last_name?: string
+          email?: string | null
+          id_number?: string | null
+          tax_number?: string | null
+          bank_name?: string | null
+          bank_branch_code?: string | null
+          bank_account_number?: string | null
+          bank_account_type?: string | null
+          salary_type?: string | null
+          uif_covered?: boolean | null
+          pension_rate?: number | null
+          medical_aid_amount?: number | null
+          start_date?: string | null
+          active?: boolean
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      pay_items: {
+        Row: {
+          id: string
+          company_id: string
+          code: string
+          name: string
+          type: string
+          taxable: boolean
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          code: string
+          name: string
+          type: string
+          taxable?: boolean
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          code?: string
+          name?: string
+          type?: string
+          taxable?: boolean
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      employee_pay_items: {
+        Row: {
+          id: string
+          employee_id: string
+          pay_item_id: string
+          amount: number | null
+          rate: number | null
+          unit: string | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          employee_id: string
+          pay_item_id: string
+          amount?: number | null
+          rate?: number | null
+          unit?: string | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          employee_id?: string
+          pay_item_id?: string
+          amount?: number | null
+          rate?: number | null
+          unit?: string | null
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      pay_runs: {
+        Row: {
+          id: string
+          company_id: string
+          period_start: string
+          period_end: string
+          status: string
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          period_start: string
+          period_end: string
+          status?: string
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          period_start?: string
+          period_end?: string
+          status?: string
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      pay_run_lines: {
+        Row: {
+          id: string
+          pay_run_id: string
+          employee_id: string
+          gross: number
+          net: number
+          paye: number
+          uif_emp: number
+          uif_er: number
+          sdl_er: number
+          details: Json | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          pay_run_id: string
+          employee_id: string
+          gross?: number
+          net?: number
+          paye?: number
+          uif_emp?: number
+          uif_er?: number
+          sdl_er?: number
+          details?: Json | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          pay_run_id?: string
+          employee_id?: string
+          gross?: number
+          net?: number
+          paye?: number
+          uif_emp?: number
+          uif_er?: number
+          sdl_er?: number
+          details?: Json | null
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      payroll_settings: {
+        Row: {
+          id: string
+          company_id: string
+          tax_brackets: Json | null
+          pension_rules: Json | null
+          uif_percent: number | null
+          sdl_percent: number | null
+          overtime_rules: Json | null
+          allowances: Json | null
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          tax_brackets?: Json | null
+          pension_rules?: Json | null
+          uif_percent?: number | null
+          sdl_percent?: number | null
+          overtime_rules?: Json | null
+          allowances?: Json | null
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          tax_brackets?: Json | null
+          pension_rules?: Json | null
+          uif_percent?: number | null
+          sdl_percent?: number | null
+          overtime_rules?: Json | null
+          allowances?: Json | null
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      payroll_periods: {
+        Row: {
+          id: string
+          company_id: string
+          year: number
+          month: number
+          name: string
+          start_date: string
+          end_date: string
+          status: string
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          year: number
+          month: number
+          name: string
+          start_date: string
+          end_date: string
+          status?: string
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          year?: number
+          month?: number
+          name?: string
+          start_date?: string
+          end_date?: string
+          status?: string
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      app_settings: {
+        Row: {
+          id: string
+          company_id: string
+          theme: string
+          date_format: string
+          fiscal_year_start: number
+          enable_notifications: boolean
+          enable_auto_backup: boolean
+          language: string
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          theme?: string
+          date_format?: string
+          fiscal_year_start?: number
+          enable_notifications?: boolean
+          enable_auto_backup?: boolean
+          language?: string
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          theme?: string
+          date_format?: string
+          fiscal_year_start?: number
+          enable_notifications?: boolean
+          enable_auto_backup?: boolean
+          language?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      loans: {
+        Row: {
+          id: string
+          company_id: string
+          reference: string
+          loan_type: string
+          principal: number
+          interest_rate: number
+          start_date: string
+          term_months: number
+          monthly_repayment: number | null
+          status: string
+          outstanding_balance: number
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          reference: string
+          loan_type: string
+          principal: number
+          interest_rate: number
+          start_date: string
+          term_months: number
+          monthly_repayment?: number | null
+          status?: string
+          outstanding_balance: number
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          reference?: string
+          loan_type?: string
+          principal?: number
+          interest_rate?: number
+          start_date?: string
+          term_months?: number
+          monthly_repayment?: number | null
+          status?: string
+          outstanding_balance?: number
+          created_at?: string | null
+        }
+        Relationships: []
+      }
+      loan_payments: {
+        Row: {
+          id: string
+          loan_id: string
+          payment_date: string
+          amount: number
+          principal_component: number
+          interest_component: number
+          created_at: string | null
+        }
+        Insert: {
+          id?: string
+          loan_id: string
+          payment_date: string
+          amount: number
+          principal_component: number
+          interest_component: number
+          created_at?: string | null
+        }
+        Update: {
+          id?: string
+          loan_id?: string
+          payment_date?: string
+          amount?: number
+          principal_component?: number
+          interest_component?: number
+          created_at?: string | null
+        }
+        Relationships: []
+      }
       sales: {
         Row: {
           branch_id: string | null
@@ -1790,6 +2165,9 @@ export type Database = {
           total_debits: number
         }[]
       }
+      post_pay_run_finalize: { Args: { _pay_run_id: string }; Returns: undefined }
+      post_pay_run_pay: { Args: { _pay_run_id: string; _amount: number }; Returns: undefined }
+      post_statutory_remit: { Args: { _company_id: string; _type: string; _amount: number; _reference: string }; Returns: undefined }
     }
     Enums: {
       app_role: "administrator" | "accountant" | "manager"

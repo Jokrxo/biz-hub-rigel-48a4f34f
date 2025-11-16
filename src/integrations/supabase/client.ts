@@ -2,13 +2,24 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = (import.meta as any)?.env?.VITE_SUPABASE_URL || "https://mzrdksmimgzkvbojjytc.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = (import.meta as any)?.env?.VITE_SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16cmRrc21pbWd6a3Zib2pqeXRjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkxMjY0ODksImV4cCI6MjA3NDcwMjQ4OX0.SQ02kj90D54NkfrJPvqo2iHLONKiP4iAnL4d3Ngiq2s";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+let lsUrl: string | null = null;
+let lsKey: string | null = null;
+try {
+  lsUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('supabase_url') : null;
+  lsKey = typeof localStorage !== 'undefined' ? localStorage.getItem('supabase_anon_key') : null;
+} catch {}
+const FALLBACK_URL = 'https://example.supabase.co';
+const FALLBACK_KEY = 'public-anon-key';
+const effectiveUrl = SUPABASE_URL || lsUrl || FALLBACK_URL;
+const effectiveKey = SUPABASE_PUBLISHABLE_KEY || lsKey || FALLBACK_KEY;
+const useFallback = effectiveUrl === FALLBACK_URL || effectiveKey === FALLBACK_KEY;
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+export const supabase = createClient<Database>(effectiveUrl, effectiveKey, {
   auth: {
     storage: localStorage,
     persistSession: true,
@@ -25,3 +36,5 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABL
     schema: 'public'
   }
 });
+
+export const hasSupabaseEnv = !!(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY) || !!(lsUrl && lsKey);

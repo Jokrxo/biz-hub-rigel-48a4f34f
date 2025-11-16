@@ -14,6 +14,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { ProtectedRoute } from "./components/Auth/ProtectedRoute";
 import { SupabaseSetup } from "./components/Setup/SupabaseSetup";
 import { PageLoader } from "./components/ui/loading-spinner";
+import "./debug-supabase";
 
 // Lazy load pages
 const Transactions = lazy(() => import("./pages/Transactions"));
@@ -29,7 +30,8 @@ const Customers = lazy(() => import("./pages/Customers"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Bank = lazy(() => import("./pages/Bank"));
 const Budget = lazy(() => import("./pages/Budget"));
-const Payroll = lazy(() => import("./pages/Payroll"));
+const Payroll = lazy(() => import("./pages/Payroll.tsx"));
+const Loans = lazy(() => import("./pages/Loans.tsx"));
 
 const queryClient = new QueryClient();
 
@@ -68,6 +70,7 @@ const App = () => {
             <Route path="/tax" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Tax /></Suspense></ProtectedRoute>} />
             <Route path="/customers" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Customers /></Suspense></ProtectedRoute>} />
             <Route path="/budget" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Budget /></Suspense></ProtectedRoute>} />
+            <Route path="/loans" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Loans /></Suspense></ProtectedRoute>} />
             <Route path="/payroll" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Payroll /></Suspense></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Settings /></Suspense></ProtectedRoute>} />
 
