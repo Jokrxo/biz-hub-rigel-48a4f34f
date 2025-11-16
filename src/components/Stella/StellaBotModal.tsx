@@ -1,0 +1,251 @@
+import { useEffect, useMemo, useState } from "react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/context/AuthContext";
+import { useNavigate } from "react-router-dom";
+import { Sparkles, Activity, Link as LinkIcon, ShieldCheck } from "lucide-react";
+
+interface FeedItem { id: string; title: string; description: string; ts: string }
+interface ChatMsg { role: 'bot' | 'user'; text: string; ts: string }
+
+interface StellaBotModalProps { open: boolean; onOpenChange: (v: boolean) => void }
+
+export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState("ask");
+  const [companyId, setCompanyId] = useState<string>("");
+  const [query, setQuery] = useState("");
+  const [answers, setAnswers] = useState<Array<{ label: string; detail?: string; navigateTo?: string }>>([]);
+  const [feed, setFeed] = useState<FeedItem[]>([]);
+  const [metrics, setMetrics] = useState<{ tx: number; inv: number; po: number; bills: number; budgets: number; bank: number; customers: number; items: number }>({ tx: 0, inv: 0, po: 0, bills: 0, budgets: 0, bank: 0, customers: 0, items: 0 });
+  const [messages, setMessages] = useState<ChatMsg[]>([{ role: 'bot', text: 'Hi, I am Stella. How can I help you today?', ts: new Date().toISOString() }]);
+  const [chatInput, setChatInput] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    const init = async () => {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .maybeSingle();
+      if (!profile?.company_id) return;
+      setCompanyId(profile.company_id);
+      await loadMetrics(profile.company_id);
+      wireRealtime(profile.company_id);
+    };
+    init();
+    return () => {};
+  }, [open]);
+
+  const loadMetrics = async (cid: string) => {
+    const [tx, inv, po, bills, budgets, bank, customers, items] = await Promise.all([
+      supabase.from("transactions").select("id", { count: "exact", head: true }).eq("company_id", cid),
+      supabase.from("invoices").select("id", { count: "exact", head: true }).eq("company_id", cid),
+      supabase.from("purchase_orders").select("id", { count: "exact", head: true }).eq("company_id", cid),
+      supabase.from("bills").select("id", { count: "exact", head: true }).eq("company_id", cid),
+      supabase.from("budgets").select("id", { count: "exact", head: true }).eq("company_id", cid),
+      supabase.from("bank_accounts").select("id", { count: "exact", head: true }).eq("company_id", cid),
+      supabase.from("customers").select("id", { count: "exact", head: true }).eq("company_id", cid),
+      supabase.from("items").select("id", { count: "exact", head: true }).eq("company_id", cid)
+    ]);
+    setMetrics({
+      tx: (tx.count as number) || 0,
+      inv: (inv.count as number) || 0,
+      po: (po.count as number) || 0,
+      bills: (bills.count as number) || 0,
+      budgets: (budgets.count as number) || 0,
+      bank: (bank.count as number) || 0,
+      customers: (customers.count as number) || 0,
+      items: (items.count as number) || 0
+    });
+  };
+
+  const wireRealtime = (cid: string) => {
+    const channel = (supabase as any)
+      .channel("stella")
+      .on("postgres_changes", { event: "*", schema: "public", table: "transactions", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("Transaction", payload))
+      .on("postgres_changes", { event: "*", schema: "public", table: "transaction_entries" }, (payload: any) => pushFeed("Entry", payload))
+      .on("postgres_changes", { event: "*", schema: "public", table: "invoices", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("Invoice", payload))
+      .on("postgres_changes", { event: "*", schema: "public", table: "bills", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("Bill", payload))
+      .on("postgres_changes", { event: "*", schema: "public", table: "purchase_orders", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("PO", payload))
+      .on("postgres_changes", { event: "*", schema: "public", table: "budgets", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("Budget", payload))
+      .on("postgres_changes", { event: "*", schema: "public", table: "bank_accounts", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("Bank", payload))
+      .on("postgres_changes", { event: "*", schema: "public", table: "items" }, (payload: any) => pushFeed("Item", payload))
+      .on("postgres_changes", { event: "*", schema: "public", table: "customers", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("Customer", payload))
+      .subscribe();
+    return () => { (supabase as any).removeChannel(channel) };
+  };
+
+  const pushFeed = (kind: string, payload: any) => {
+    const row: any = payload?.new || payload?.old || {};
+    if (row.company_id && companyId && row.company_id !== companyId) return;
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const title = `${kind} ${payload.eventType || payload.event || "update"}`;
+    const description = row.description || row.invoice_number || row.reference_number || row.account_name || row.name || String(row.id || "");
+    setFeed(prev => [{ id, title, description, ts: new Date().toISOString() }, ...prev].slice(0, 50));
+  };
+
+  const respond = (q: string) => {
+    const lower = q.trim().toLowerCase();
+    const res: string[] = [];
+    if (lower.includes('budget') && lower.includes('actual')) res.push('Budget actuals are computed from posted transaction entries for the selected month. Open Budget to view details.');
+    if (lower.includes('unpaid') && lower.includes('invoice')) res.push('Unpaid invoices are shown in Sales → Invoices with statuses and aging.');
+    if (lower.includes('bank') && lower.includes('balance')) res.push('Bank balances update on bank-type transactions. Open Bank for account summaries.');
+    if (lower.includes('purchase') || lower.includes('ap')) res.push('AP dashboard provides supplier KPIs and unpaid bills.');
+    if (lower.includes('vat')) res.push('VAT Input/Output entries post when a non-zero VAT rate is set.');
+    if (res.length === 0) res.push('I can help with Budget, Transactions, Sales, Purchase, Bank, and VAT. Ask me something like “budget actual for November” or “unpaid invoices”.');
+    return res.join(' ');
+  };
+
+  const sendChat = async () => {
+    const q = chatInput.trim();
+    if (!q) return;
+    const now = new Date().toISOString();
+    setMessages(prev => [...prev, { role: 'user', text: q, ts: now }]);
+    const lower = q.toLowerCase();
+    let answer: string | null = null;
+    if (companyId) {
+      if (lower.includes('unpaid') && lower.includes('invoice')) {
+        const { count } = await supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('company_id', companyId).neq('status', 'paid');
+        answer = `Unpaid invoices: ${count || 0}`;
+      } else if (lower.includes('recent') && lower.includes('transaction')) {
+        const { data } = await supabase.from('transactions').select('description, transaction_date, total_amount').eq('company_id', companyId).order('transaction_date', { ascending: false }).limit(5);
+        const list = (data || []).map((r: any) => `${r.transaction_date} • ${r.description || ''} • R ${(Number(r.total_amount || 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`).join('\n');
+        answer = list ? `Recent transactions:\n${list}` : 'No recent transactions found';
+      } else if (lower.includes('unpaid') && lower.includes('bill')) {
+        const { count } = await supabase.from('bills').select('id', { count: 'exact', head: true }).eq('company_id', companyId).neq('status', 'paid');
+        answer = `Unpaid bills: ${count || 0}`;
+      }
+    }
+    if (!answer) answer = respond(q);
+    setMessages(prev => [...prev, { role: 'bot', text: answer!, ts: new Date().toISOString() }]);
+    setChatInput("");
+  };
+
+  useEffect(() => {
+    const handler = setTimeout(async () => {
+      const q = query.trim().toLowerCase();
+      if (!q) { setAnswers([]); return; }
+      const res: Array<{ label: string; detail?: string; navigateTo?: string }> = [];
+      if (q.includes("budget") && q.includes("actual")) res.push({ label: "Budget actuals", detail: "Actuals come from posted transaction entries for selected month", navigateTo: "/budget" });
+      if (q.includes("unpaid") && q.includes("invoice")) res.push({ label: "Unpaid invoices", detail: "Open AR by customer", navigateTo: "/sales?tab=invoices" });
+      if (q.includes("bank") && q.includes("balance")) res.push({ label: "Bank balance", detail: "Open Bank module", navigateTo: "/bank" });
+      if (q.includes("purchase") || q.includes("ap")) res.push({ label: "AP dashboard", detail: "Supplier KPIs and aging", navigateTo: "/purchase?tab=ap-dashboard" });
+      if (q.includes("vat")) res.push({ label: "VAT overview", detail: "Input/Output VAT totals", navigateTo: "/tax?tab=vat" });
+      setAnswers(res.length > 0 ? res : [{ label: "Open Search", detail: "Use global search for detailed results", navigateTo: "/" }]);
+    }, 250);
+    return () => clearTimeout(handler);
+  }, [query]);
+
+  const metricBadges = useMemo(() => [
+    { label: "Transactions", value: metrics.tx },
+    { label: "Invoices", value: metrics.inv },
+    { label: "Purchase Orders", value: metrics.po },
+    { label: "Bills", value: metrics.bills },
+    { label: "Budgets", value: metrics.budgets },
+    { label: "Bank Accounts", value: metrics.bank },
+    { label: "Customers", value: metrics.customers },
+    { label: "Items", value: metrics.items }
+  ], [metrics]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" /> Stella Bot</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {metricBadges.map(m => (
+              <Badge key={m.label} variant="secondary">{m.label}: {m.value}</Badge>
+            ))}
+          </div>
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList>
+              <TabsTrigger value="chat">Chat</TabsTrigger>
+              <TabsTrigger value="ask">Ask</TabsTrigger>
+              <TabsTrigger value="feed">Live Feed</TabsTrigger>
+              <TabsTrigger value="shortcuts">Shortcuts</TabsTrigger>
+              <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
+            </TabsList>
+            <TabsContent value="chat">
+              <div className="space-y-3">
+                <div className="max-h-64 overflow-y-auto space-y-2 p-2 border rounded-md">
+                  {messages.map((m, i) => (
+                    <div key={i} className={`text-sm ${m.role === 'bot' ? 'text-muted-foreground' : 'text-foreground'}`}>
+                      <span className="font-medium mr-2">{m.role === 'bot' ? 'Stella' : 'You'}:</span>{m.text}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <Input placeholder="Type your question…" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') sendChat(); }} />
+                  <Button onClick={sendChat}>Send</Button>
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="ask">
+              <div className="space-y-3">
+                <Input placeholder="Ask Stella…" value={query} onChange={(e) => setQuery(e.target.value)} />
+                <div className="space-y-2">
+                  {answers.map((a, i) => (
+                    <Card key={i} className="hover:bg-muted/50">
+                      <CardContent className="p-3 flex items-center gap-3">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        <div className="flex-1">
+                          <div className="font-medium text-sm">{a.label}</div>
+                          {a.detail && <div className="text-xs text-muted-foreground">{a.detail}</div>}
+                        </div>
+                        {a.navigateTo && <Button variant="outline" size="sm" onClick={() => { navigate(a.navigateTo!); onOpenChange(false); }}><LinkIcon className="h-4 w-4 mr-1" />Open</Button>}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            </TabsContent>
+            <TabsContent value="feed">
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {feed.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No activity yet</div>
+                ) : feed.map(item => (
+                  <Card key={item.id}>
+                    <CardContent className="p-3 flex items-center gap-3">
+                      <Activity className="h-4 w-4" />
+                      <div className="flex-1">
+                        <div className="text-sm font-medium">{item.title}</div>
+                        <div className="text-xs text-muted-foreground">{item.description}</div>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">{new Date(item.ts).toLocaleString()}</div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </TabsContent>
+            <TabsContent value="shortcuts">
+              <div className="grid grid-cols-2 gap-2">
+                <Button onClick={() => { navigate('/transactions'); onOpenChange(false); }}>Transactions</Button>
+                <Button onClick={() => { navigate('/sales?tab=invoices'); onOpenChange(false); }}>Sales</Button>
+                <Button onClick={() => { navigate('/purchase?tab=ap-dashboard'); onOpenChange(false); }}>Purchase</Button>
+                <Button onClick={() => { navigate('/budget'); onOpenChange(false); }}>Budget</Button>
+                <Button onClick={() => { navigate('/bank'); onOpenChange(false); }}>Bank</Button>
+                <Button onClick={() => { navigate('/tax?tab=vat'); onOpenChange(false); }}>VAT</Button>
+              </div>
+            </TabsContent>
+            <TabsContent value="diagnostics">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><span className="text-sm">Company-scoped realtime enabled</span></div>
+                <div className="text-xs text-muted-foreground">Live updates bound to your company only.</div>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};

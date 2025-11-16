@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 
 interface VatRow {
@@ -10,6 +11,7 @@ interface VatRow {
   vatCollected: number; // output VAT (credits)
   vatRate: string;
 }
+interface DetailRow { date: string; description: string; net: number; vat: number; total: number }
 
 function formatMonth(dateStr: string) {
   const d = new Date(dateStr + "-01");
@@ -19,6 +21,19 @@ function formatMonth(dateStr: string) {
 export const SalesTaxReport = () => {
   const [rows, setRows] = useState<VatRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [details, setDetails] = useState<DetailRow[]>([]);
+  const exportCsv = () => {
+    const header = ['Period','Sales Excl VAT','VAT Collected','Tax Rate'];
+    const lines = rows.map(r => [r.period, r.salesExclVat.toFixed(2), r.vatCollected.toFixed(2), r.vatRate]);
+    const csv = [header.join(','), ...lines.map(l => l.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'sales-tax-report.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -33,45 +48,55 @@ export const SalesTaxReport = () => {
           .single();
         if (!profile?.company_id) return;
 
-        // Get last 6 months of VAT-related entries
+        // Get last 6 months
         const fromDate = new Date();
         fromDate.setMonth(fromDate.getMonth() - 6);
         const from = fromDate.toISOString().slice(0, 10);
 
-        // Pull transactions and entries joined to accounts
         const { data, error } = await supabase
           .from("transaction_entries")
           .select(`
             debit, credit, created_at,
-            transactions(transaction_date, company_id, vat_rate),
-            chart_of_accounts(account_name, account_type)
+            transactions(transaction_date, company_id, vat_rate, vat_inclusive, total_amount, description, status, transaction_type),
+            chart_of_accounts(account_name, account_type, account_code)
           `)
           .gte("created_at", from)
           .order("created_at", { ascending: false });
 
         if (error) throw error;
 
-        const filtered = (data || []).filter((e: any) => (e.transactions?.company_id === profile.company_id));
+        const filtered = (data || []).filter((e: any) => e.transactions?.company_id === profile.company_id && (e.transactions?.status === 'approved' || e.transactions?.status === 'posted'));
 
-        // Aggregate by year-month for VAT accounts (account name contains vat or tax)
-        const byMonth: Record<string, { vatCollected: number; salesExclVat: number; rate: number } > = {};
+        const byMonth: Record<string, { vatCollected: number; salesExclVat: number; rate: number }> = {};
+        const detail: DetailRow[] = [];
         for (const e of filtered as any[]) {
-          const accName = (e.chart_of_accounts?.account_name || "").toLowerCase();
-          const isVat = accName.includes("vat") || accName.includes("tax");
-          if (!isVat) continue;
-          const txDate = e.transactions?.transaction_date || e.created_at?.slice(0, 10);
-          const ym = (txDate || "").slice(0, 7); // YYYY-MM
-          if (!byMonth[ym]) byMonth[ym] = { vatCollected: 0, salesExclVat: 0, rate: e.transactions?.vat_rate || 15 };
-          // In SA, VAT Output is typically credits; treat credit as VAT collected
+          const accName = (e.chart_of_accounts?.account_name || '').toLowerCase();
+          const accCode = String(e.chart_of_accounts?.account_code || '');
+          const isVatOutput = accName.includes('vat output') || accName.includes('vat payable') || accCode === '2200' || accName.includes('vat');
+          const isIncomeTx = String(e.transactions?.transaction_type || '').toLowerCase() === 'income';
           const credit = Number(e.credit || 0);
           const debit = Number(e.debit || 0);
-          byMonth[ym].vatCollected += Math.max(0, credit - debit);
-          // Approximate sales excl VAT from VAT amount and rate
+          const txDate = e.transactions?.transaction_date || e.created_at?.slice(0, 10);
+          const ym = (txDate || '').slice(0, 7);
           const rate = Number(e.transactions?.vat_rate || 15);
-          if (rate > 0) {
-            const salesExcl = (credit - debit) * (100 / rate);
-            byMonth[ym].salesExclVat += Math.max(0, salesExcl);
-            byMonth[ym].rate = rate;
+          if (!byMonth[ym]) byMonth[ym] = { vatCollected: 0, salesExclVat: 0, rate };
+          if (isVatOutput && credit > debit && rate > 0) {
+            const vat = credit - debit;
+            byMonth[ym].vatCollected += vat;
+            const inclusive = Boolean(e.transactions?.vat_inclusive);
+            const total = Number(e.transactions?.total_amount || 0);
+            const netInclusive = inclusive ? total - (total / (1 + rate / 100)) : total;
+            const estimatedNet = netInclusive > 0 ? netInclusive : vat * (100 / rate);
+            byMonth[ym].salesExclVat += Math.max(0, estimatedNet);
+            detail.push({ date: txDate || '', description: e.transactions?.description || '', net: Math.max(0, estimatedNet), vat, total });
+          } else if (isIncomeTx && rate > 0) {
+            const inclusive = Boolean(e.transactions?.vat_inclusive);
+            const total = Number(e.transactions?.total_amount || 0);
+            const net = inclusive ? total - (total / (1 + rate / 100)) : total;
+            const vat = inclusive ? total - net : (net * rate) / 100;
+            byMonth[ym].vatCollected += Math.max(0, vat);
+            byMonth[ym].salesExclVat += Math.max(0, net);
+            detail.push({ date: txDate || '', description: e.transactions?.description || '', net, vat, total });
           }
         }
 
@@ -86,6 +111,7 @@ export const SalesTaxReport = () => {
           .reverse();
 
         setRows(result);
+        setDetails(detail.slice(0, 20));
       } catch (e) {
         setRows([]);
       } finally {
@@ -98,15 +124,16 @@ export const SalesTaxReport = () => {
   return (
     <Card className="mt-6">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <FileText className="h-5 w-5 text-primary" />
-          Sales Tax Report
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2"><FileText className="h-5 w-5 text-primary" /> Sales Tax Report</span>
+          <Button variant="outline" onClick={exportCsv}>Export</Button>
         </CardTitle>
       </CardHeader>
       <CardContent>
         {loading ? (
           <div className="py-6 text-muted-foreground">Loading VAT report…</div>
         ) : (
+          <>
           <Table>
             <TableHeader>
               <TableRow>
@@ -127,6 +154,32 @@ export const SalesTaxReport = () => {
               ))}
             </TableBody>
           </Table>
+          <div className="mt-6">
+            <CardTitle className="text-sm font-medium mb-2">Recent VAT-bearing Sales</CardTitle>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="text-right">Net</TableHead>
+                  <TableHead className="text-right">VAT</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {details.map((d, i) => (
+                  <TableRow key={i}>
+                    <TableCell>{d.date}</TableCell>
+                    <TableCell className="font-medium">{d.description}</TableCell>
+                    <TableCell className="text-right">R {d.net.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">R {d.vat.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                    <TableCell className="text-right">R {d.total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          </>
         )}
       </CardContent>
     </Card>

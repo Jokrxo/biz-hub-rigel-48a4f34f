@@ -2,6 +2,9 @@ import { useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { DashboardHeader } from "./DashboardHeader";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Bot } from "lucide-react";
+import { StellaBotModal } from "@/components/Stella/StellaBotModal";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -9,6 +12,7 @@ interface DashboardLayoutProps {
 
 export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [stellaOpen, setStellaOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-gradient-subtle">
@@ -27,6 +31,15 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
             {children}
           </div>
         </main>
+
+        <Button
+          className="fixed bottom-6 right-6 rounded-full shadow-lg bg-gradient-primary flex items-center gap-2"
+          onClick={() => setStellaOpen(true)}
+        >
+          <Bot className="h-5 w-5" />
+          Stella
+        </Button>
+        <StellaBotModal open={stellaOpen} onOpenChange={setStellaOpen} />
       </div>
     </div>
   );

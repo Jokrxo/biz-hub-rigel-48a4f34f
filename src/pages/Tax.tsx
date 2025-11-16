@@ -6,6 +6,7 @@ import { TaxOverview } from "@/components/Tax/TaxOverview";
 import { TaxRates } from "@/components/Tax/TaxRates";
 import { SalesTaxReport } from "@/components/Tax/SalesTaxReport";
 import { TaxReturns } from "@/components/Tax/TaxReturns";
+import { PurchaseTaxReport } from "@/components/Tax/PurchaseTaxReport";
 
 export default function TaxPage() {
   const [activeTab, setActiveTab] = useState("overview");
@@ -25,6 +26,7 @@ export default function TaxPage() {
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="rates">Tax Rates</TabsTrigger>
               <TabsTrigger value="sales-tax">Sales Tax Report</TabsTrigger>
+              <TabsTrigger value="tax-expense">Tax on Expense (Purchases)</TabsTrigger>
               <TabsTrigger value="returns">Tax Returns</TabsTrigger>
             </TabsList>
 
@@ -38,6 +40,10 @@ export default function TaxPage() {
 
             <TabsContent value="sales-tax">
               <SalesTaxReport />
+            </TabsContent>
+
+            <TabsContent value="tax-expense">
+              <PurchaseTaxReport />
             </TabsContent>
 
             <TabsContent value="returns">
