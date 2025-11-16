@@ -43,6 +43,14 @@ export const DashboardOverview = () => {
   const [arInvoices, setArInvoices] = useState<Array<{ id: string; customer_name: string; total_amount: number; status: string; invoice_date: string; due_date: string | null }>>([]);
   const [arTop10, setArTop10] = useState<any[]>([]);
   const [arDonut, setArDonut] = useState<any[]>([]);
+  const [incomeBreakdown, setIncomeBreakdown] = useState<any[]>([]);
+  const [apTop10, setApTop10] = useState<any[]>([]);
+  const [apDonut, setApDonut] = useState<any[]>([]);
+  const [apRows, setApRows] = useState<Array<{ id: string; supplier_name: string; total_amount: number; status: string; bill_date: string; due_date: string | null }>>([]);
+  const [arKpis, setArKpis] = useState<{ unpaidTotal: number; overdueTotal: number; overdueUnder30Total: number; overdue30Total: number; overdue90Total: number }>({ unpaidTotal: 0, overdueTotal: 0, overdueUnder30Total: 0, overdue30Total: 0, overdue90Total: 0 });
+  const [apKpis, setApKpis] = useState<{ unpaidTotal: number; overdueTotal: number; overdueUnder30Total: number; overdue30Total: number; overdue90Total: number }>({ unpaidTotal: 0, overdueTotal: 0, overdueUnder30Total: 0, overdue30Total: 0, overdue90Total: 0 });
+  const [arAging, setArAging] = useState<any[]>([]);
+  const [apAging, setApAging] = useState<any[]>([]);
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean }>({ hasCoa: true, hasBank: true });
   
   // Date filter state
@@ -51,16 +59,19 @@ export const DashboardOverview = () => {
   
   // Widget visibility settings
   const [widgets, setWidgets] = useState(() => {
-    const saved = localStorage.getItem('dashboardWidgets');
-    return saved ? JSON.parse(saved) : {
+    const defaultWidgets = {
       metrics: true,
       incomeExpense: true,
       expenseBreakdown: true,
       assetTrend: true,
       recentTransactions: true,
       trialBalance: true,
-      arUnpaid: true
+      arOverview: true,
+      apOverview: true,
     };
+    const saved = localStorage.getItem('dashboardWidgets');
+    const parsed = saved ? JSON.parse(saved) : {};
+    return { ...defaultWidgets, ...parsed };
   });
 
   useEffect(() => {
@@ -313,7 +324,6 @@ export const DashboardOverview = () => {
 
       setRecentTransactions(formatted);
 
-      // Generate chart data for last 6 months
       const monthsSeq: { label: string; key: string }[] = Array.from({ length: 6 }, (_, i) => {
         const d = new Date(selectedYear, selectedMonth - 1 - (5 - i), 1);
         const label = d.toLocaleDateString('en-ZA', { month: 'short' });
@@ -327,28 +337,25 @@ export const DashboardOverview = () => {
       }));
       setChartData(incomeExpenseData);
 
-      // Build income wheel (outer by month, inner recent 3 vs previous 3)
-      const incomeOuter = monthsSeq.map(m => ({ name: m.label, value: monthlyMap.get(m.key)?.income || 0 }));
-      const prev3Total = incomeOuter.slice(0,3).reduce((s, v) => s + (v.value || 0), 0);
-      const recent3Total = incomeOuter.slice(3).reduce((s, v) => s + (v.value || 0), 0);
-      setIncomeWheelOuter(incomeOuter);
+      const incTotals = new Map<string, number>();
+      transactions?.forEach(tx => {
+        if (!withinSelected(tx.transaction_date)) return;
+        tx.entries?.forEach((entry: any) => {
+          const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
+          if (!type.includes('income') && !type.includes('revenue')) return;
+          const name = entry.chart_of_accounts?.account_name || 'Income';
+          const amt = Math.abs((entry.debit || 0) - (entry.credit || 0));
+          incTotals.set(name, (incTotals.get(name) || 0) + amt);
+        });
+      });
+      const incSorted = Array.from(incTotals.entries()).sort((a,b) => b[1]-a[1]);
+      const incTop5 = incSorted.slice(0,5).map(([name, value]) => ({ name, value }));
+      const incOtherTotal = incSorted.slice(5).reduce((s, [,v]) => s+v, 0);
+      setIncomeBreakdown(incTop5);
       setIncomeWheelInner([
-        { name: 'Previous 3 months', value: prev3Total },
-        { name: 'Recent 3 months', value: recent3Total },
+        { name: 'Top 5', value: incTop5.reduce((s, v) => s + v.value, 0) },
+        { name: 'Other', value: incOtherTotal }
       ] as any);
-
-      // Fallback when income data missing: synthesize from current metrics
-      const totalIncomeSum = incomeOuter.reduce((s, v) => s + (v.value || 0), 0);
-      if (totalIncomeSum === 0 && metrics.totalIncome > 0) {
-        const synth = monthsSeq.map((m, i) => ({ name: m.label, value: Math.max(0, metrics.totalIncome * (0.4 + i * 0.12) / 3) }));
-        const prev3 = synth.slice(0,3).reduce((s, v) => s + v.value, 0);
-        const recent3 = synth.slice(3).reduce((s, v) => s + v.value, 0);
-        setIncomeWheelOuter(synth);
-        setIncomeWheelInner([
-          { name: 'Previous 3 months', value: prev3 },
-          { name: 'Recent 3 months', value: recent3 },
-        ] as any);
-      }
 
       // Expense breakdown - group by expense account name
       const expTotals = new Map<string, number>();
@@ -429,6 +436,121 @@ export const DashboardOverview = () => {
       const donut = Array.from(totals.values()).map(b => ({ name: b.name, value: b.amount, pct: (b.amount / totalUnpaid) * 100 }));
       setArDonut(donut);
 
+      const { data: apData, error: apErr } = await supabase
+        .from('bills')
+        .select('id, supplier_name, bill_date, due_date, total_amount, status')
+        .eq('company_id', profile.company_id)
+        .not('status', 'in', ['("paid")','("cancelled")'])
+        .order('bill_date', { ascending: false });
+      if (!apErr) {
+        const apRowsLocal = (apData || []).map((r: any) => ({
+          id: r.id,
+          supplier_name: r.supplier_name || 'Unknown',
+          total_amount: r.status === 'paid' ? 0 : Number(r.total_amount || 0),
+          status: r.status,
+          bill_date: r.bill_date,
+          due_date: r.due_date || null
+        }));
+        setApRows(apRowsLocal);
+        const apTotals = new Map<string, { name: string; amount: number }>();
+        apRowsLocal.forEach(r => {
+          const key = r.supplier_name || 'Unknown';
+          const curr = apTotals.get(key) || { name: key, amount: 0 };
+          curr.amount += r.total_amount || 0;
+          apTotals.set(key, curr);
+        });
+        const apTop = Array.from(apTotals.values()).sort((a, b) => b.amount - a.amount).slice(0, 10).map(r => ({ name: r.name, amount: r.amount }));
+        setApTop10(apTop);
+        const apTotalUnpaid = apRowsLocal.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 1;
+        const apDonutData = Array.from(apTotals.values()).map(b => ({ name: b.name, value: b.amount, pct: (b.amount / apTotalUnpaid) * 100 }));
+        setApDonut(apDonutData);
+      }
+
+      const nowStr = new Date().toISOString().split('T')[0];
+      const arOverdue = rows.filter(r => r.total_amount > 0 && r.due_date && r.due_date < nowStr);
+      const arOverUnder30 = arOverdue.filter(r => {
+        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
+        const b = new Date(nowStr).getTime();
+        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
+        return d > 0 && d <= 30;
+      });
+      const arOver30 = arOverdue.filter(r => {
+        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
+        const b = new Date(nowStr).getTime();
+        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
+        return d >= 31;
+      });
+      const arOver90 = arOverdue.filter(r => {
+        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
+        const b = new Date(nowStr).getTime();
+        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
+        return d >= 90;
+      });
+      setArKpis({
+        unpaidTotal: rows.reduce((s, r) => s + (r.total_amount || 0), 0),
+        overdueTotal: arOverdue.reduce((s, r) => s + (r.total_amount || 0), 0),
+        overdueUnder30Total: arOverUnder30.reduce((s, r) => s + (r.total_amount || 0), 0),
+        overdue30Total: arOver30.reduce((s, r) => s + (r.total_amount || 0), 0),
+        overdue90Total: arOver90.reduce((s, r) => s + (r.total_amount || 0), 0),
+      });
+
+      const arAgingMap = new Map<string, any>();
+      rows.forEach(r => {
+        const key = r.customer_name || 'Unknown';
+        const isOverdue = r.total_amount > 0 && r.due_date && r.due_date < nowStr;
+        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
+        const b = new Date(nowStr).getTime();
+        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
+        const bucket = !isOverdue ? 'current' : d <= 30 ? 'd1_30' : d <= 60 ? 'd31_60' : d <= 90 ? 'd61_90' : 'd91p';
+        const curr = arAgingMap.get(key) || { name: key, current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d91p: 0, due: 0 };
+        curr[bucket] += r.total_amount || 0;
+        curr.due += r.total_amount || 0;
+        arAgingMap.set(key, curr);
+      });
+      setArAging(Array.from(arAgingMap.values()));
+
+      const apAgingMap = new Map<string, any>();
+      apRows.forEach(r => {
+        const key = r.supplier_name || 'Unknown';
+        const isOverdue = r.total_amount > 0 && r.due_date && r.due_date < nowStr;
+        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
+        const b = new Date(nowStr).getTime();
+        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
+        const bucket = !isOverdue ? 'current' : d <= 30 ? 'd1_30' : d <= 60 ? 'd31_60' : d <= 90 ? 'd61_90' : 'd91p';
+        const curr = apAgingMap.get(key) || { name: key, current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d91p: 0, due: 0 };
+        curr[bucket] += r.total_amount || 0;
+        curr.due += r.total_amount || 0;
+        apAgingMap.set(key, curr);
+      });
+      setApAging(Array.from(apAgingMap.values()));
+
+      const apOverdue = apRows.filter(r => r.total_amount > 0 && r.due_date && r.due_date < nowStr);
+      const apUnder30 = apOverdue.filter(r => {
+        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
+        const b = new Date(nowStr).getTime();
+        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
+        return d > 0 && d <= 30;
+      });
+      const ap30 = apOverdue.filter(r => {
+        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
+        const b = new Date(nowStr).getTime();
+        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
+        return d >= 31;
+      });
+      const ap90 = apOverdue.filter(r => {
+        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
+        const b = new Date(nowStr).getTime();
+        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
+        return d >= 90;
+      });
+      setApKpis({
+        unpaidTotal: apRows.reduce((s, r) => s + (r.total_amount || 0), 0),
+        overdueTotal: apOverdue.reduce((s, r) => s + (r.total_amount || 0), 0),
+        overdueUnder30Total: apUnder30.reduce((s, r) => s + (r.total_amount || 0), 0),
+        overdue30Total: ap30.reduce((s, r) => s + (r.total_amount || 0), 0),
+        overdue90Total: ap90.reduce((s, r) => s + (r.total_amount || 0), 0),
+      });
+
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -475,7 +597,12 @@ export const DashboardOverview = () => {
     }
   ];
 
-  const COLORS = ['hsl(var(--primary))', 'hsl(var(--accent))', 'hsl(var(--chart-3))', 'hsl(var(--chart-4))', 'hsl(var(--chart-5))'];
+  const COLORS = [
+    '#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6',
+    '#06B6D4', '#84CC16', '#EC4899', '#F43F5E', '#10B981'
+  ];
+  const POS_COLORS = ['#22C55E', '#10B981', '#06B6D4', '#3B82F6'];
+  const NEG_COLORS = ['#EF4444', '#F97316', '#DC2626', '#F43F5E'];
   // @ts-ignore
   const [expenseWheelInner, setExpenseWheelInner] = useState<any[]>([]);
   // @ts-ignore
@@ -489,28 +616,7 @@ export const DashboardOverview = () => {
     </div>;
   }
 
-  // Show error state if no data could be loaded
-  if (!metrics.totalAssets && !metrics.totalLiabilities && !metrics.totalEquity && !metrics.totalIncome && !metrics.totalExpenses) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center space-y-4">
-          <div className="text-6xl">📊</div>
-          <h2 className="text-2xl font-bold">Dashboard Unavailable</h2>
-          <p className="text-muted-foreground max-w-md">
-            Unable to load dashboard data. This may be due to authentication issues or no financial data being available yet.
-          </p>
-          <div className="flex gap-3 justify-center">
-            <Button onClick={() => window.location.reload()}>
-              Retry
-            </Button>
-            <Button variant="outline" onClick={() => navigate('/login')}>
-              Login
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  
   return (
     <div className="space-y-6">
       {/* First-run setup banner */}
@@ -661,11 +767,11 @@ export const DashboardOverview = () => {
                     dataKey="value"
                   >
                     {incomeWheelInner.map((entry, index) => (
-                      <Cell key={`income-inner-${index}`} fill={index === 1 ? 'rgba(22,163,74,0.85)' : 'hsl(var(--muted))'} />
+                      <Cell key={`income-inner-${index}`} fill={index === 0 ? '#3B82F6' : '#22C55E'} />
                     ))}
                   </Pie>
                   <Pie
-                    data={incomeWheelOuter}
+                    data={incomeBreakdown}
                     cx="50%"
                     cy="50%"
                     innerRadius={60}
@@ -673,7 +779,7 @@ export const DashboardOverview = () => {
                     label={({ name, percent = 0 }) => `${name}: ${Math.round((percent || 0) * 100)}%`}
                     dataKey="value"
                   >
-                    {incomeWheelOuter.map((entry, index) => (
+                    {incomeBreakdown.map((entry, index) => (
                       <Cell key={`income-cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
@@ -688,7 +794,7 @@ export const DashboardOverview = () => {
                   <Legend />
                 </PieChart>
               </ResponsiveContainer>
-              {incomeWheelOuter.length === 0 && (
+              {incomeBreakdown.length === 0 && (
                 <div className="text-sm text-muted-foreground mt-2">No income data for the selected period</div>
               )}
             </CardContent>
@@ -747,7 +853,7 @@ export const DashboardOverview = () => {
 
         
 
-        {widgets.arUnpaid && (
+        {widgets.arOverview && (
           <Card className="card-professional">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -764,6 +870,33 @@ export const DashboardOverview = () => {
                   <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Unpaid']} />
                   <Legend />
                   <Bar dataKey="amount" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Unpaid" />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {widgets.apOverview && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-primary" />
+                AP Unpaid (Top Suppliers)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={apTop10} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis type="number" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} stroke="hsl(var(--muted-foreground))" />
+                  <YAxis type="category" dataKey="name" width={150} stroke="hsl(var(--muted-foreground))" />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Unpaid']} />
+                  <Legend />
+                  <Bar dataKey="amount" radius={[4, 4, 0, 0]} name="Unpaid">
+                    {apTop10.map((_, index) => (
+                      <Cell key={`ap-top10-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -795,7 +928,7 @@ export const DashboardOverview = () => {
                   <Legend />
                   <Bar dataKey="assets" barSize={10} name="Total Assets">
                     {assetTrend.map((entry, index) => (
-                      <Cell key={`asset-cell-${index}`} fill={entry.delta >= 0 ? 'rgba(22,163,74,0.85)' : 'rgba(220,38,38,0.85)'} />
+                      <Cell key={`asset-cell-${index}`} fill={entry.delta >= 0 ? POS_COLORS[index % POS_COLORS.length] : NEG_COLORS[index % NEG_COLORS.length]} />
                     ))}
                   </Bar>
                 </BarChart>
@@ -807,7 +940,7 @@ export const DashboardOverview = () => {
           </Card>
         )}
 
-        {widgets.arUnpaid && (
+        {widgets.arOverview && (
           <Card className="card-professional">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -821,6 +954,30 @@ export const DashboardOverview = () => {
                   <Pie data={arDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
                     {arDonut.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {widgets.apOverview && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-primary" />
+                Unpaid bills percentage by supplier
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={260}>
+                <PieChart>
+                  <Pie data={apDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                    {apDonut.map((entry, index) => (
+                      <Cell key={`ap-cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
                   <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
@@ -908,7 +1065,7 @@ export const DashboardOverview = () => {
               </CardContent>
             </Card>
           )}
-        </div>
       </div>
+    </div>
   );
 };

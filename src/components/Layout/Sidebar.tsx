@@ -38,6 +38,7 @@ const navItems = [
   { icon: Calculator, label: "Trial Balance", href: "/trial-balance" },
   { icon: TrendingUp, label: "Financial Reports", href: "/reports" },
   { icon: Wallet, label: "Budget", href: "/budget" },
+  { icon: DollarSign, label: "Payroll", href: "/payroll" },
   { icon: Users, label: "Customers", href: "/customers" },
   { icon: Settings, label: "Settings", href: "/settings" },
 ];

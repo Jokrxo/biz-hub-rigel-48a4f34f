@@ -16,6 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
 import { Download, Mail, Plus, Trash2, FileText } from "lucide-react";
 import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
+import { exportInvoicesToExcel } from '@/lib/export-utils';
 
 interface Invoice {
   id: string;
@@ -40,6 +41,9 @@ export const SalesInvoices = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [yearFilter, setYearFilter] = useState<string>('all');
+  const [monthFilter, setMonthFilter] = useState<string>('all');
   const { user } = useAuth();
   const { toast } = useToast();
   const { isAdmin, isAccountant } = useRoles();
@@ -62,6 +66,7 @@ export const SalesInvoices = () => {
   const [sendMessage, setSendMessage] = useState<string>('');
   const [sending, setSending] = useState<boolean>(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [companyEmail, setCompanyEmail] = useState<string>('');
 
   // Payment dialog state
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
@@ -91,6 +96,26 @@ export const SalesInvoices = () => {
     return () => {
       supabase.removeChannel(channel);
     };
+  }, []);
+
+  useEffect(() => {
+    const loadCompanyEmail = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (!profile?.company_id) return;
+      const { data: company } = await supabase
+        .from('companies')
+        .select('email')
+        .eq('id', profile.company_id)
+        .maybeSingle();
+      setCompanyEmail((company as any)?.email || '');
+    };
+    loadCompanyEmail();
   }, []);
 
   const loadData = async () => {
@@ -784,7 +809,8 @@ export const SalesInvoices = () => {
         publicUrl ? `\nDownload your invoice: ${publicUrl}` : '',
       ].join('\n');
       const body = encodeURIComponent(bodyLines);
-      window.location.href = `mailto:${sendEmail}?subject=${subject}&body=${body}`;
+      const ccParam = companyEmail ? `&cc=${encodeURIComponent(companyEmail)}` : '';
+      window.location.href = `mailto:${sendEmail}?subject=${subject}&body=${body}${ccParam}`;
       await supabase
         .from('invoices')
         .update({ status: 'sent', sent_at: new Date().toISOString() })
@@ -803,6 +829,42 @@ export const SalesInvoices = () => {
   const canEdit = isAdmin || isAccountant;
   const totals = calculateTotals();
 
+  const filteredInvoices = invoices.filter((inv) => {
+    const total = Number(inv.total_amount || 0);
+    const paid = Number(inv.amount_paid || 0);
+    const outstanding = Math.max(0, total - paid);
+    switch (statusFilter) {
+      case 'unpaid':
+        return inv.status !== 'paid' && outstanding > 0;
+      case 'paid':
+        return inv.status === 'paid' || outstanding === 0;
+      case 'draft':
+        return inv.status === 'draft';
+      case 'cancelled':
+        return inv.status === 'cancelled';
+      case 'overdue':
+        return inv.status === 'overdue';
+      default:
+        return true;
+    }
+  });
+  const filteredByDateInvoices = filteredInvoices.filter((inv) => {
+    const d = new Date(inv.invoice_date);
+    const matchesYear = yearFilter === 'all' || String(d.getFullYear()) === yearFilter;
+    const matchesMonth = monthFilter === 'all' || String(d.getMonth() + 1).padStart(2, '0') === monthFilter;
+    return matchesYear && matchesMonth;
+  });
+
+  const exportFilteredInvoicesDate = () => {
+    const filename = `invoices_${statusFilter}`;
+    exportInvoicesToExcel(filteredByDateInvoices as any, filename);
+  };
+
+  const exportFilteredInvoices = () => {
+    const filename = `invoices_${statusFilter}`;
+    exportInvoicesToExcel(filteredInvoices as any, filename);
+  };
+
   return (
     <Card className="mt-6">
       <CardHeader className="flex flex-row items-center justify-between">
@@ -810,12 +872,50 @@ export const SalesInvoices = () => {
           <FileText className="h-5 w-5 text-primary" />
           Sales Invoices
         </CardTitle>
-        {canEdit && (
-          <Button className="bg-gradient-primary" onClick={() => setDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Invoice
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <Select value={yearFilter} onValueChange={setYearFilter}>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Years</SelectItem>
+              {Array.from(new Set(invoices.map(i => new Date(i.invoice_date).getFullYear()))).sort((a,b)=>b-a).map(y => (
+                <SelectItem key={String(y)} value={String(y)}>{String(y)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={monthFilter} onValueChange={setMonthFilter}>
+            <SelectTrigger className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Months</SelectItem>
+              {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
+                <SelectItem key={m} value={m}>{new Date(2025, Number(m)-1, 1).toLocaleString('en-ZA', { month: 'long' })}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="unpaid">Unpaid</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+              <SelectItem value="overdue">Overdue</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button variant="outline" onClick={exportFilteredInvoicesDate}>Export</Button>
+          {canEdit && (
+            <Button className="bg-gradient-primary" onClick={() => setDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              New Invoice
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         {lastPosting && (
@@ -838,18 +938,20 @@ export const SalesInvoices = () => {
                 <TableHead>Date</TableHead>
                 <TableHead>Due Date</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
+                <TableHead className="text-right">Outstanding</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {invoices.map((invoice) => (
+              {filteredByDateInvoices.map((invoice) => (
                 <TableRow key={invoice.id}>
                   <TableCell className="font-medium">{invoice.invoice_number}</TableCell>
                   <TableCell>{invoice.customer_name}</TableCell>
                   <TableCell>{new Date(invoice.invoice_date).toLocaleDateString('en-ZA')}</TableCell>
                   <TableCell>{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-ZA') : "-"}</TableCell>
                   <TableCell className="text-right font-semibold">R {Number(invoice.total_amount).toLocaleString('en-ZA')}</TableCell>
+                  <TableCell className="text-right font-semibold text-primary">R {Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.amount_paid || 0)).toLocaleString('en-ZA')}</TableCell>
                   <TableCell>
                     <Select
                       value={invoice.status}
@@ -1134,7 +1236,7 @@ export const SalesInvoices = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Send invoice</DialogTitle>
-            <DialogDescription>Enter recipient email. A professional message is prefilled.</DialogDescription>
+            <DialogDescription>Enter recipient email. Message is prefilled. Sender CC: {companyEmail || 'not set'}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <Input type="email" placeholder="Recipient email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} />

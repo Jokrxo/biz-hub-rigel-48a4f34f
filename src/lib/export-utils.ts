@@ -133,3 +133,42 @@ export const exportFinancialReportToPDF = (
 
   doc.save(`${filename}.pdf`);
 };
+
+// Invoices export
+export interface ExportableInvoiceRow {
+  invoice_number: string;
+  customer_name: string;
+  invoice_date: string | Date;
+  due_date?: string | Date | null;
+  status: string;
+  total_amount: number;
+  amount_paid?: number;
+}
+
+export const exportInvoicesToExcel = (
+  rows: ExportableInvoiceRow[],
+  filename = 'invoices'
+) => {
+  const data = rows.map((inv) => {
+    const total = Number(inv.total_amount || 0);
+    const paid = Number(inv.amount_paid || 0);
+    const outstanding = Math.max(0, total - paid);
+    const invDate = typeof inv.invoice_date === 'string' ? new Date(inv.invoice_date) : inv.invoice_date;
+    const dueDateRaw = inv.due_date ?? null;
+    const dueDate = dueDateRaw ? (typeof dueDateRaw === 'string' ? new Date(dueDateRaw) : dueDateRaw) : null;
+    return {
+      'Invoice #': inv.invoice_number,
+      'Customer': inv.customer_name,
+      'Date': invDate.toLocaleDateString('en-ZA'),
+      'Due Date': dueDate ? dueDate.toLocaleDateString('en-ZA') : '-',
+      'Status': inv.status,
+      'Total': total,
+      'Paid': paid,
+      'Outstanding': outstanding,
+    };
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
+  XLSX.writeFile(wb, `${filename}.xlsx`);
+};

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
-import { ArrowRight, Plus, Trash2, FileText } from "lucide-react";
+import { ArrowRight, Plus, Trash2, FileText, Download, Mail } from "lucide-react";
+import { buildQuotePDF, type QuoteForPDF, type QuoteItemForPDF, type CompanyForPDF } from '@/lib/quote-export';
+import { addLogoToPDF, fetchLogoDataUrl } from '@/lib/invoice-export';
 
 interface Quote {
   id: string;
@@ -43,6 +45,13 @@ export const SalesQuotes = () => {
     notes: "",
     items: [{ description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
   });
+  const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [sendEmail, setSendEmail] = useState<string>('');
+  const [sendMessage, setSendMessage] = useState<string>('');
+  const [sending, setSending] = useState<boolean>(false);
+  const [selectedQuote, setSelectedQuote] = useState<any>(null);
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
 
   useEffect(() => {
     loadQuotes();
@@ -258,6 +267,115 @@ export const SalesQuotes = () => {
     }
   };
 
+  const fetchCompanyForPDF = async (): Promise<CompanyForPDF> => {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('name,email,phone,address,tax_number,vat_number,logo_url')
+      .limit(1)
+      .maybeSingle();
+    if (error || !data) {
+      return { name: 'Company' } as CompanyForPDF;
+    }
+    return {
+      name: (data as any).name,
+      email: (data as any).email,
+      phone: (data as any).phone,
+      address: (data as any).address,
+      tax_number: (data as any).tax_number ?? null,
+      vat_number: (data as any).vat_number ?? null,
+      logo_url: (data as any).logo_url ?? null,
+    } as CompanyForPDF;
+  };
+
+  const fetchQuoteItemsForPDF = async (quoteId: string): Promise<QuoteItemForPDF[]> => {
+    const { data, error } = await supabase
+      .from('quote_items')
+      .select('description,quantity,unit_price,tax_rate')
+      .eq('quote_id', quoteId);
+    if (error || !data) return [];
+    return data as any;
+  };
+
+  const mapQuoteForPDF = (q: any): QuoteForPDF => ({
+    quote_number: q.quote_number || String(q.id),
+    quote_date: q.quote_date || new Date().toISOString(),
+    expiry_date: q.expiry_date || null,
+    customer_name: q.customer_name || 'Customer',
+    customer_email: q.customer_email || null,
+    notes: q.notes || null,
+    subtotal: q.subtotal ?? (q.total_amount ?? 0) - (q.tax_amount ?? 0),
+    tax_amount: q.tax_amount ?? 0,
+    total_amount: q.total_amount ?? 0,
+  });
+
+  const handleDownloadQuote = async (q: any) => {
+    try {
+      const [company, items] = await Promise.all([
+        fetchCompanyForPDF(),
+        fetchQuoteItemsForPDF(q.id),
+      ]);
+      const dto = mapQuoteForPDF(q);
+      const doc = buildQuotePDF(dto, items as QuoteItemForPDF[], company);
+      const logoDataUrl = await fetchLogoDataUrl(company.logo_url);
+      if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
+      doc.save(`quote_${dto.quote_number}.pdf`);
+      toast({ title: 'Success', description: 'Quote PDF downloaded' });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message || 'Failed to download quote PDF', variant: 'destructive' });
+    }
+  };
+
+  const openSendDialog = (q: any) => {
+    setSelectedQuote(q);
+    const email = q.customer_email || '';
+    setSendEmail(email);
+    const totalText = q.total_amount ?? '';
+    const msg = `Hello,\n\nPlease find your Quote ${q.quote_number}.\nTotal: R ${totalText}.\n\nThank you.`;
+    setSendMessage(msg);
+    setSendDialogOpen(true);
+  };
+
+  const handleSendEmail = async () => {
+    if (!selectedQuote) return;
+    if (!sendEmail) { toast({ title: 'Error', description: 'Please enter recipient email', variant: 'destructive' }); return; }
+    setSending(true);
+    try {
+      const [company, items] = await Promise.all([
+        fetchCompanyForPDF(),
+        fetchQuoteItemsForPDF(selectedQuote.id),
+      ]);
+      const dto = mapQuoteForPDF(selectedQuote);
+      const doc = buildQuotePDF(dto, items as QuoteItemForPDF[], company);
+      const logoDataUrl = await fetchLogoDataUrl(company.logo_url);
+      if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
+      const blob = doc.output('blob');
+      const fileName = `quote_${dto.quote_number}.pdf`;
+      const path = `quotes/${fileName}`;
+      const { error: uploadErr } = await supabase.storage
+        .from('quotes')
+        .upload(path, blob, { contentType: 'application/pdf', upsert: true });
+      let publicUrl = '';
+      if (!uploadErr) {
+        const { data } = supabase.storage.from('quotes').getPublicUrl(path);
+        publicUrl = data?.publicUrl || '';
+      }
+      const subject = encodeURIComponent(`Quote ${dto.quote_number}`);
+      const bodyLines = [sendMessage, publicUrl ? `\nDownload your quote: ${publicUrl}` : ''].join('\n');
+      const body = encodeURIComponent(bodyLines);
+      window.location.href = `mailto:${sendEmail}?subject=${subject}&body=${body}`;
+      await supabase
+        .from('quotes')
+        .update({ status: 'sent' })
+        .eq('id', selectedQuote.id);
+      toast({ title: 'Success', description: 'Email compose opened with quote link' });
+      setSendDialogOpen(false);
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message || 'Failed to prepare email', variant: 'destructive' });
+    } finally {
+      setSending(false);
+    }
+  };
+
   const deleteQuote = async (id: string) => {
     if (!confirm("Delete this quote?")) return;
     try {
@@ -272,6 +390,14 @@ export const SalesQuotes = () => {
 
   const canEdit = isAdmin || isAccountant;
   const totals = calculateTotals();
+  const filteredQuotes = useMemo(() => {
+    return quotes.filter((q) => {
+      const qd = new Date(q.quote_date).getTime();
+      const afterStart = startDate ? qd >= new Date(startDate).getTime() : true;
+      const beforeEnd = endDate ? qd <= new Date(endDate).getTime() : true;
+      return afterStart && beforeEnd;
+    });
+  }, [quotes, startDate, endDate]);
 
   return (
     <Card className="mt-6">
@@ -295,59 +421,84 @@ export const SalesQuotes = () => {
             No quotes yet. Click "New Quote" to create one.
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Quote #</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Expiry</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {quotes.map((quote) => (
-                <TableRow key={quote.id}>
-                  <TableCell className="font-medium">{quote.quote_number}</TableCell>
-                  <TableCell>{quote.customer_name}</TableCell>
-                  <TableCell>{new Date(quote.quote_date).toLocaleDateString('en-ZA')}</TableCell>
-                  <TableCell>{quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-ZA') : "-"}</TableCell>
-                  <TableCell className="text-right font-semibold">R {Number(quote.total_amount).toLocaleString('en-ZA')}</TableCell>
-                  <TableCell>
-                    <Badge variant={
-                      quote.status === 'accepted' ? 'default' :
-                      quote.status === 'sent' ? 'secondary' :
-                      'outline'
-                    }>
-                      {quote.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      {quote.status !== 'accepted' && canEdit && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => convertToInvoice(quote.id, quote)}
-                          className="gap-2"
-                        >
-                          <ArrowRight className="h-3 w-3" />
-                          Convert
-                        </Button>
-                      )}
-                      {canEdit && (
-                        <Button size="sm" variant="ghost" onClick={() => deleteQuote(quote.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <>
+            <div className="flex items-end gap-3 mb-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>From</Label>
+                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                </div>
+                <div>
+                  <Label>To</Label>
+                  <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                </div>
+              </div>
+              <Button variant="outline" onClick={() => { setStartDate(""); setEndDate(""); }}>Clear</Button>
+            </div>
+            {filteredQuotes.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">No quotes in selected range</div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Quote #</TableHead>
+                    <TableHead>Customer</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Expiry</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredQuotes.map((quote) => (
+                    <TableRow key={quote.id}>
+                      <TableCell className="font-medium">{quote.quote_number}</TableCell>
+                      <TableCell>{quote.customer_name}</TableCell>
+                      <TableCell>{new Date(quote.quote_date).toLocaleDateString('en-ZA')}</TableCell>
+                      <TableCell>{quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-ZA') : "-"}</TableCell>
+                      <TableCell className="text-right font-semibold">R {Number(quote.total_amount).toLocaleString('en-ZA')}</TableCell>
+                      <TableCell>
+                        <Badge variant={
+                          quote.status === 'accepted' ? 'default' :
+                          quote.status === 'sent' ? 'secondary' :
+                          'outline'
+                        }>
+                          {quote.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-2">
+                          {quote.status !== 'accepted' && canEdit && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => convertToInvoice(quote.id, quote)}
+                              className="gap-2"
+                            >
+                              <ArrowRight className="h-3 w-3" />
+                              Convert
+                            </Button>
+                          )}
+                          <Button size="sm" variant="outline" onClick={() => handleDownloadQuote(quote)}>
+                            <Download className="h-3 w-3" />
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => openSendDialog(quote)} disabled={!quote.customer_email}>
+                            <Mail className="h-3 w-3" />
+                          </Button>
+                          {canEdit && (
+                            <Button size="sm" variant="ghost" onClick={() => deleteQuote(quote.id)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </>
         )}
       </CardContent>
 
@@ -497,6 +648,21 @@ export const SalesQuotes = () => {
               <Button type="submit" className="bg-gradient-primary">Create Quote</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send quote</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input type="email" placeholder="Recipient email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} />
+            <Textarea rows={6} value={sendMessage} onChange={(e) => setSendMessage(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSendDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleSendEmail} disabled={sending}>{sending ? 'Sending…' : 'Send'}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </Card>
