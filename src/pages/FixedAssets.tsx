@@ -8,7 +8,9 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Download, Trash2, Package } from "lucide-react";
+import { Plus, Download, Trash2, Package, Search } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
@@ -28,6 +30,8 @@ interface FixedAsset {
 
 export default function FixedAssetsPage() {
   const [assets, setAssets] = useState<FixedAsset[]>([]);
+  const [assetAccounts, setAssetAccounts] = useState<Array<{ id: string; account_code: string; account_name: string }>>([]);
+  const [assetSearchOpen, setAssetSearchOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [disposalDialogOpen, setDisposalDialogOpen] = useState(false);
@@ -41,6 +45,8 @@ export default function FixedAssetsPage() {
     cost: "",
     purchase_date: "",
     useful_life_years: "5",
+    depreciation_method: "straight_line",
+    asset_account_id: "",
   });
 
   const [disposalData, setDisposalData] = useState({
@@ -84,7 +90,7 @@ export default function FixedAssetsPage() {
       });
       
       setAssets(assetsWithDepreciation);
-      
+
       // Update depreciation in database
       for (const asset of assetsWithDepreciation) {
         if (asset.accumulated_depreciation !== data?.find(a => a.id === asset.id)?.accumulated_depreciation) {
@@ -93,6 +99,20 @@ export default function FixedAssetsPage() {
             .update({ accumulated_depreciation: asset.accumulated_depreciation })
             .eq("id", asset.id);
         }
+      }
+
+      // Load fixed asset accounts for posting selection
+      const { data: faAccounts } = await supabase
+        .from("chart_of_accounts")
+        .select("id, account_code, account_name, account_type, is_active")
+        .eq("company_id", profile.company_id)
+        .eq("is_active", true)
+        .eq("account_type", "asset")
+        .order("account_code");
+      const mapped = (faAccounts || []).map((a: any) => ({ id: String(a.id), account_code: String(a.account_code || ''), account_name: String(a.account_name || '') }));
+      setAssetAccounts(mapped);
+      if (!formData.asset_account_id && mapped.length > 0) {
+        setFormData(prev => ({ ...prev, asset_account_id: mapped[0].id }));
       }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -117,7 +137,7 @@ export default function FixedAssetsPage() {
 
       const { error } = await supabase.from("fixed_assets").insert({
         company_id: profile!.company_id,
-        description: formData.description,
+        description: `${formData.description} [method:${formData.depreciation_method}]`,
         cost: parseFloat(formData.cost),
         purchase_date: formData.purchase_date,
         useful_life_years: parseInt(formData.useful_life_years),
@@ -127,9 +147,68 @@ export default function FixedAssetsPage() {
 
       if (error) throw error;
 
+      try {
+        const costNum = parseFloat(formData.cost);
+        // Use selected asset account, fallback to heuristic
+        let assetAccountId = formData.asset_account_id;
+        if (!assetAccountId) {
+          const { data: assetAccs } = await supabase
+            .from("chart_of_accounts")
+            .select("id, account_code, account_name")
+            .eq("company_id", profile!.company_id)
+            .eq("is_active", true);
+          const assetAccount = (assetAccs || []).find(a => String(a.account_code || '').startsWith('15') || String(a.account_name || '').toLowerCase().includes('fixed asset'));
+          assetAccountId = String(assetAccount?.id || "");
+        }
+        const { data: equityAccs } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name")
+          .eq("company_id", profile!.company_id)
+          .eq("is_active", true);
+        const equityAccount = (equityAccs || []).find(a => String(a.account_code || '') === '3900' || String(a.account_name || '').toLowerCase().includes('opening balance equity'));
+        if (assetAccountId && equityAccount?.id && costNum > 0) {
+          const { data: tx, error: txErr } = await supabase
+            .from("transactions")
+            .insert({
+              company_id: profile!.company_id,
+              user_id: user!.id,
+              transaction_date: formData.purchase_date,
+              description: `Opening Fixed Asset - ${formData.description} [method:${formData.depreciation_method}]`,
+              reference_number: null,
+              total_amount: costNum,
+              bank_account_id: null,
+              transaction_type: "asset",
+              status: "pending"
+            })
+            .select("id")
+            .single();
+          if (!txErr && tx?.id) {
+            const entries = [
+              { transaction_id: tx.id, account_id: assetAccountId as string, debit: costNum, credit: 0, description: `Opening Fixed Asset - ${formData.description}`, status: 'approved' },
+              { transaction_id: tx.id, account_id: equityAccount.id as string, debit: 0, credit: costNum, description: `Opening Fixed Asset - ${formData.description}`, status: 'approved' }
+            ];
+            const { error: entErr } = await supabase.from("transaction_entries").insert(entries as any);
+            if (!entErr) {
+              await supabase.from("transactions").update({ status: 'approved' }).eq("id", tx.id);
+              const ledgerRows = entries.map(e => ({
+                company_id: profile!.company_id,
+                transaction_id: tx.id,
+                account_id: e.account_id,
+                entry_date: formData.purchase_date,
+                description: e.description,
+                debit: e.debit,
+                credit: e.credit,
+                is_reversed: false,
+              }));
+              await supabase.from('ledger_entries').insert(ledgerRows as any);
+            }
+          }
+        }
+      } catch {}
+
       toast({ title: "Success", description: "Fixed asset added successfully" });
       setDialogOpen(false);
-      setFormData({ description: "", cost: "", purchase_date: "", useful_life_years: "5" });
+      setFormData({ description: "", cost: "", purchase_date: "", useful_life_years: "5", depreciation_method: "straight_line", asset_account_id: formData.asset_account_id });
       loadAssets();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -206,12 +285,77 @@ export default function FixedAssetsPage() {
                     <form onSubmit={handleSubmit} className="space-y-4">
                       <div>
                         <Label>Description</Label>
-                        <Input
-                          value={formData.description}
-                          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                          placeholder="e.g., Office Equipment"
-                          required
-                        />
+                        <div className="grid grid-cols-2 gap-2 items-start">
+                          <Input
+                            value={formData.description}
+                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                            placeholder="e.g., Office Equipment"
+                            required
+                          />
+                          <div className="space-y-2">
+                            <Label className="text-xs">Select Fixed Asset (Chart of Accounts)</Label>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1">
+                                <Select value={formData.asset_account_id} onValueChange={(val) => {
+                                  setFormData(prev => ({ ...prev, asset_account_id: val }));
+                                  const acc = assetAccounts.find(a => a.id === val);
+                                  if (acc?.account_name) setFormData(prev => ({ ...prev, description: acc.account_name }));
+                                }}>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Choose fixed asset account" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {assetAccounts.map(acc => (
+                                      <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <Popover open={assetSearchOpen} onOpenChange={setAssetSearchOpen}>
+                                <PopoverTrigger asChild>
+                                  <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search fixed asset accounts">
+                                    <Search className="h-4 w-4" />
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent side="bottom" align="start" className="w-80 p-0 z-50 shadow-lg border bg-popover">
+                                  <Command>
+                                    <CommandInput placeholder="Search fixed asset accounts" />
+                                    <CommandEmpty>No asset accounts found</CommandEmpty>
+                                    <CommandList>
+                                      <CommandGroup>
+                                        {assetAccounts.map(acc => (
+                                          <CommandItem
+                                            key={acc.id}
+                                            value={`${acc.account_code} ${acc.account_name}`}
+                                            onSelect={() => {
+                                              setFormData(prev => ({ ...prev, asset_account_id: acc.id, description: acc.account_name }));
+                                              setAssetSearchOpen(false);
+                                            }}
+                                          >
+                                            {acc.account_code} - {acc.account_name}
+                                          </CommandItem>
+                                        ))}
+                                      </CommandGroup>
+                                    </CommandList>
+                                  </Command>
+                                </PopoverContent>
+                              </Popover>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <Label>Asset Account (Chart of Accounts)</Label>
+                        <Select value={formData.asset_account_id} onValueChange={(val) => setFormData({ ...formData, asset_account_id: val })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select fixed asset account" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {assetAccounts.map(acc => (
+                              <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div>
                         <Label>Cost (R)</Label>
@@ -231,6 +375,18 @@ export default function FixedAssetsPage() {
                           onChange={(e) => setFormData({ ...formData, purchase_date: e.target.value })}
                           required
                         />
+                      </div>
+                      <div>
+                        <Label>Depreciation Method</Label>
+                        <Select value={formData.depreciation_method} onValueChange={(val) => setFormData({ ...formData, depreciation_method: val })}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="straight_line">Straight Line</SelectItem>
+                            <SelectItem value="diminishing">Diminishing Balance</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div>
                         <Label>Useful Life (Years)</Label>

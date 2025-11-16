@@ -131,6 +131,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [chartOpen, setChartOpen] = useState(false);
   const [lockAccounts, setLockAccounts] = useState(false);
   const [lockType, setLockType] = useState<string | null>(null);
+  const [fixedAssets, setFixedAssets] = useState<Array<{ id: string; description: string }>>([]);
+  const [selectedAssetId, setSelectedAssetId] = useState<string>("");
   
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -144,6 +146,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     amount: "",
     vatRate: "0"
   });
+  const [depreciationMethod, setDepreciationMethod] = useState<string>("straight_line");
 
   useEffect(() => {
     if (open) {
@@ -299,6 +302,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         .eq("company_id", profile.company_id)
         .order("account_name");
       setBankAccounts(banks || []);
+
+      const { data: assetsData } = await supabase
+        .from("fixed_assets")
+        .select("id, description")
+        .eq("company_id", profile.company_id)
+        .order("purchase_date", { ascending: false });
+      setFixedAssets(assetsData || []);
 
       // Load chart of accounts
       const { data: accts, error } = await supabase
@@ -614,6 +624,19 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         return;
       }
 
+      // Validate asset purchase: require debit account to be a Fixed Asset ledger
+      if (form.element === 'asset') {
+        const debitAcc = accounts.find(a => a.id === form.debitAccount);
+        const isAssetType = (debitAcc?.account_type || '').toLowerCase() === 'asset';
+        const name = (debitAcc?.account_name || '').toLowerCase();
+        const code = String((debitAcc as any)?.account_code || '');
+        const looksFixedAsset = name.includes('fixed asset') || code.startsWith('15');
+        if (!isAssetType || !looksFixedAsset) {
+          toast({ title: "Select Fixed Asset Ledger", description: "For Asset Purchase, the debit account must be a Fixed Asset ledger (e.g., 1500).", variant: "destructive" });
+          return;
+        }
+      }
+
       const amount = parseFloat(form.amount);
       const vatRate = parseFloat(form.vatRate);
       const vatAmount = vatRate > 0 ? (amount * vatRate) / (100 + vatRate) : 0; // VAT from inclusive amount
@@ -624,6 +647,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       // Sanitize inputs
       const sanitizedDescription = form.description.trim();
+      const descriptionWithMethod = form.element === 'asset' ? `${sanitizedDescription} [method:${depreciationMethod}]` : sanitizedDescription;
       const sanitizedReference = form.reference ? form.reference.trim() : null;
 
       // Get VAT account if needed
@@ -651,7 +675,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           company_id: companyId,
           user_id: user.id,
           transaction_date: form.date,
-          description: sanitizedDescription,
+          description: descriptionWithMethod,
           reference_number: sanitizedReference,
           total_amount: amount,
           vat_rate: vatRate > 0 ? vatRate : null,
@@ -1046,6 +1070,38 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       } catch {}
 
       notify.success("Transaction posted", { description: `Dr ${debitAccountName || 'Debit'} / Cr ${creditAccountName || 'Credit'} • ${form.date}`, duration: 6000 });
+
+      // Auto-insert Fixed Asset when transaction represents asset acquisition
+      try {
+        const debitAcc = accounts.find(a => a.id === form.debitAccount);
+        const isAssetType = (debitAcc?.account_type || '').toLowerCase() === 'asset';
+        const name = (debitAcc?.account_name || '').toLowerCase();
+        const code = String((debitAcc as any)?.account_code || '');
+        const isFixedAssetDebit = isAssetType && (name.includes('fixed asset') || code.startsWith('15'));
+        const isAssetTx = form.element === 'asset' || isFixedAssetDebit;
+        if (isAssetTx) {
+          // Resolve company id
+          let effectiveCompanyId = companyId;
+          if (!effectiveCompanyId || effectiveCompanyId.trim() === '') {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (user) {
+              const { data: prof } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).single();
+              effectiveCompanyId = (prof as any)?.company_id || effectiveCompanyId;
+            }
+          }
+          if (effectiveCompanyId) {
+            await supabase.from('fixed_assets').insert({
+              company_id: effectiveCompanyId,
+              description: sanitizedDescription || 'Fixed Asset',
+              cost: amount,
+              purchase_date: form.date,
+              useful_life_years: 5,
+              accumulated_depreciation: 0,
+              status: 'active'
+            });
+          }
+        }
+      } catch {}
       onOpenChange(false);
       onSuccess();
     } catch (error: any) {
@@ -1176,18 +1232,57 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
             <div>
               <Label htmlFor="description">Description * (max 500 chars)</Label>
-              <Textarea
-                id="description"
-                placeholder="Enter transaction description (e.g., 'Fuel purchase', 'Client payment received')"
-                value={form.description}
-                onChange={(e) => setForm({ ...form, description: e.target.value })}
-                rows={2}
-                maxLength={500}
-                required
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                {form.description.length}/500 characters
-              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Textarea
+                    id="description"
+                    placeholder="Enter transaction description (e.g., 'Equipment purchase')"
+                    value={form.description}
+                    onChange={(e) => setForm({ ...form, description: e.target.value })}
+                    rows={2}
+                    maxLength={500}
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {form.description.length}/500 characters
+                  </p>
+                </div>
+                {form.element === 'asset' && (
+                  <div>
+                    <Label className="text-xs">Select Fixed Asset</Label>
+                    <Select value={selectedAssetId} onValueChange={(val) => {
+                      setSelectedAssetId(val);
+                      const asset = fixedAssets.find(a => a.id === val);
+                      if (asset?.description) setForm(prev => ({ ...prev, description: asset.description }));
+                    }}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose asset" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {fixedAssets.map(a => (
+                          <SelectItem key={a.id} value={a.id}>{a.description}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              {form.element === 'asset' && (
+                <div className="mt-3 grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Depreciation Method</Label>
+                    <Select value={depreciationMethod} onValueChange={setDepreciationMethod}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="straight_line">Straight Line</SelectItem>
+                        <SelectItem value="diminishing">Diminishing Balance</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
