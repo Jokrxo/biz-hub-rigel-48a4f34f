@@ -146,7 +146,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
-  const [loans, setLoans] = useState<Array<{ id: string; reference: string; outstanding_balance: number; status: string }>>([]);
+  const [loans, setLoans] = useState<Array<{ id: string; reference: string; outstanding_balance: number; status: string; loan_type: string; interest_rate: number }>>([]);
   const [debitAccounts, setDebitAccounts] = useState<Account[]>([]);
   const [creditAccounts, setCreditAccounts] = useState<Account[]>([]);
   const [autoClassification, setAutoClassification] = useState<{ type: string; category: string } | null>(null);
@@ -178,7 +178,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     vatRate: "0",
     loanId: "",
     interestRate: "",
-    loanTerm: ""
+    loanTerm: "",
+    loanTermType: "short"
   });
   const [depreciationMethod, setDepreciationMethod] = useState<string>("straight_line");
 
@@ -200,7 +201,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         vatRate: "0",
         loanId: "",
         interestRate: "",
-        loanTerm: ""
+        loanTerm: "",
+        loanTermType: "short"
       });
       setDebitSearch("");
       setCreditSearch("");
@@ -222,12 +224,26 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         debitAccount: editData.debit_account_id || prev.debitAccount,
         creditAccount: editData.credit_account_id || prev.creditAccount,
         amount: String(Math.abs(editData.total_amount || 0)),
-        vatRate: editData.vat_rate ? String(editData.vat_rate) : "0"
+        vatRate: editData.vat_rate ? String(editData.vat_rate) : "0",
+        loanTermType: prev.loanTermType
       }));
       setLockAccounts(Boolean(editData.lockType));
       setLockType(String(editData.lockType || ''));
     } catch {}
   }, [open, editData]);
+
+  useEffect(() => {
+    if (form.element !== 'loan_interest') return;
+    if (!form.loanId) return;
+    const loan = loans.find(l => l.id === form.loanId);
+    if (!loan) return;
+    const rate = Number(loan.interest_rate || 0);
+    const bal = Number(loan.outstanding_balance || 0);
+    const monthlyInterest = bal * (rate / 12);
+    if (monthlyInterest > 0) {
+      setForm(prev => ({ ...prev, amount: String(monthlyInterest.toFixed(2)) }));
+    }
+  }, [form.element, form.loanId, loans]);
 
   // Ensure locked flows always have required accounts set once accounts are loaded
   useEffect(() => {
@@ -350,7 +366,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       // Load active loans for loan transactions
       const { data: loansData } = await supabase
         .from("loans")
-        .select("id, reference, outstanding_balance, status")
+        .select("id, reference, outstanding_balance, status, loan_type, interest_rate")
         .eq("company_id", profile.company_id)
         .eq("status", "active")
         .order("reference");
@@ -456,13 +472,14 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     // Auto-select based on element type and payment method
     try {
       if (form.element === 'loan_received') {
-        // Loan received: Auto-select bank for debit, loan payable for credit
         const bankAccount = debits.find(acc => 
           acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank')
         );
-        const loanPayable = credits.find(acc => 
-          acc.account_type === 'liability' && (acc.account_code === '2300' || acc.account_code === '2400')
-        );
+        const preferredCode = form.loanTermType === 'long' ? '2400' : '2300';
+        let loanPayable = credits.find(acc => acc.account_type === 'liability' && acc.account_code === preferredCode);
+        if (!loanPayable) {
+          loanPayable = credits.find(acc => acc.account_type === 'liability' && (acc.account_code === '2300' || acc.account_code === '2400'));
+        }
         if (bankAccount) {
           setForm(prev => ({ ...prev, debitAccount: bankAccount.id }));
         }
@@ -1353,7 +1370,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           .insert({
             company_id: companyId,
             reference: form.reference || `LOAN-${Date.now()}`,
-            loan_type: termMonths <= 12 ? 'short' : 'long',
+            loan_type: form.loanTermType,
             principal: amount,
             interest_rate: interestRateDecimal,
             start_date: form.date,
@@ -1715,7 +1732,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     ) : (
                       loans.map(loan => (
                         <SelectItem key={loan.id} value={loan.id}>
-                          {loan.reference} - Outstanding: R {loan.outstanding_balance?.toFixed(2)}
+                          {loan.reference} - {loan.loan_type === 'long' ? 'Long-term' : 'Short-term'} - Outstanding: R {loan.outstanding_balance?.toFixed(2)}
                         </SelectItem>
                       ))
                     )}
@@ -1936,7 +1953,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="amount">Total Amount (incl. VAT) *</Label>
+                <Label htmlFor="amount">Total Amount {form.element?.startsWith('loan_') ? '' : '(incl. VAT)'} *</Label>
                 <Input
                   id="amount"
                   type="number"
@@ -1949,29 +1966,43 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               </div>
               {form.element?.startsWith('loan_') ? (
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="interestRate">Interest Rate (%)</Label>
-                    <Input
-                      id="interestRate"
-                      type="number"
-                      step="0.01"
-                      placeholder="e.g. 10"
-                      value={form.interestRate}
-                      onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
-                    />
-                  </div>
                   {form.element === 'loan_received' && (
-                    <div>
-                      <Label htmlFor="loanTerm">Term (months)</Label>
-                      <Input
-                        id="loanTerm"
-                        type="number"
-                        step="1"
-                        placeholder="e.g. 12"
-                        value={form.loanTerm}
-                        onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
-                      />
-                    </div>
+                    <>
+                      <div>
+                        <Label htmlFor="interestRate">Interest Rate (%)</Label>
+                        <Input
+                          id="interestRate"
+                          type="number"
+                          step="0.01"
+                          placeholder="e.g. 10"
+                          value={form.interestRate}
+                          onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="loanTerm">Term (months)</Label>
+                        <Input
+                          id="loanTerm"
+                          type="number"
+                          step="1"
+                          placeholder="e.g. 12"
+                          value={form.loanTerm}
+                          onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="loanTermType">Loan Term Type</Label>
+                        <Select value={form.loanTermType} onValueChange={(val) => setForm({ ...form, loanTermType: val })}>
+                          <SelectTrigger id="loanTermType">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="short">Short-term</SelectItem>
+                            <SelectItem value="long">Long-term</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </>
                   )}
                 </div>
               ) : (
@@ -1994,7 +2025,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             {form.amount && parseFloat(form.amount) > 0 && (
               <div className="p-4 bg-background rounded-lg border space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Total Amount (incl. VAT):</span>
+                  <span className="text-muted-foreground">Total Amount {form.element?.startsWith('loan_') ? '' : '(incl. VAT)'}:</span>
                   <span className="font-mono">R {parseFloat(form.amount).toFixed(2)}</span>
                 </div>
                 {!form.element?.startsWith('loan_') && (
