@@ -515,24 +515,21 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         if (!confirmed) return;
       }
 
-      // Create transaction header with bank and classification
-      // Status set to 'approved' to trigger automatic posting to ledger
-      const { data: transaction, error: txError } = await supabase
-        .from("transactions")
-        .insert({
-          company_id: profile.company_id,
-          user_id: user.id,
-          bank_account_id: bankAccountId,
-          transaction_date: form.date,
-          description: form.description.trim(),
-          reference_number: form.reference?.trim() || null,
-          total_amount: totalAmount,
-          transaction_type: form.transactionType,
-          category: autoClassification?.category || null,
-          status: "approved"
-        })
-        .select()
-        .single();
+      const header = {
+        company_id: profile.company_id,
+        user_id: user.id,
+        bank_account_id: bankAccountId,
+        transaction_date: form.date,
+        description: form.description.trim(),
+        reference_number: form.reference?.trim() || null,
+        total_amount: totalAmount,
+        transaction_type: form.transactionType,
+        category: autoClassification?.category || null,
+        vat_rate: parseFloat(form.vatRate) || null,
+        vat_amount: vatAmount || null,
+        base_amount: amount,
+        vat_inclusive: (parseFloat(form.vatRate) || 0) > 0
+      };
 
       if (txError) {
         console.error("Transaction insert error:", txError);
@@ -618,24 +615,9 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         }
       }
 
-      // Create double-entry transaction entries
       const entries = [
-        {
-          transaction_id: transaction.id,
-          account_id: form.debitAccount,
-          debit: totalAmount,
-          credit: 0,
-          description: form.description.trim(),
-          status: "pending"
-        },
-        {
-          transaction_id: transaction.id,
-          account_id: form.creditAccount,
-          debit: 0,
-          credit: totalAmount,
-          description: form.description.trim(),
-          status: "pending"
-        }
+        { account_id: form.debitAccount, debit: totalAmount, credit: 0, description: form.description.trim() },
+        { account_id: form.creditAccount, debit: 0, credit: totalAmount, description: form.description.trim() }
       ];
 
       
@@ -699,36 +681,13 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         credit: e.credit 
       })));
 
-      const { error: entriesError } = await supabase
-        .from("transaction_entries")
-        .insert(sanitizedEntries);
-
-      if (entriesError) {
-        console.error("Transaction entries insert error:", entriesError);
-        console.error("Error details:", JSON.stringify(entriesError, null, 2));
-        console.error("Sanitized entries that were inserted:", sanitizedEntries);
-        console.error("Original entries:", entries);
-        console.error("Form state at time of error:", { 
-          debitAccount: form.debitAccount, 
-          creditAccount: form.creditAccount 
-        });
-        
-        let errorMessage = entriesError.message || "Failed to create transaction entries.";
-        if (entriesError.message?.includes('account_id') && entriesError.message?.includes('null')) {
-          errorMessage = "Account ID is null. This should not happen. Please check the console for details.";
-        } else if (entriesError.message?.toLowerCase().includes('foreign key') || entriesError.message?.toLowerCase().includes('violates foreign key constraint')) {
-          errorMessage = "Invalid account selected. The account must exist in your Chart of Accounts.";
-        }
-        
-        toast({ 
-          title: "Error Creating Transaction Entries", 
-          description: errorMessage, 
-          variant: "destructive" 
-        });
-        // Try to delete the transaction if entries failed
-        if (transaction?.id) {
-          await supabase.from("transactions").delete().eq("id", transaction.id);
-        }
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('post_manual_transaction', {
+        _company_id: profile.company_id,
+        _transaction: header as any,
+        _entries: sanitizedEntries as any
+      });
+      if (rpcErr) {
+        toast({ title: "Posting failed", description: rpcErr.message, variant: "destructive" });
         return;
       }
 
@@ -832,9 +791,6 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         }
       }
 
-      // Refresh AFS cache after successful posting
-      await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
-      
       toast({ 
         title: "Success", 
         description: "Transaction posted successfully to ledger and AFS updated" 
