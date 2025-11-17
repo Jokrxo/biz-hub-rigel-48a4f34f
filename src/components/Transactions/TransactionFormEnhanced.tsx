@@ -552,7 +552,32 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           });
           return;
         }
+        
+        // Calculate VAT amounts for edit path (similar to create path)
         const amountNum = parseFloat(form.amount || "0");
+        const isLoan = !!(form.element && form.element.startsWith('loan_'));
+        const vatRate = isLoan ? 0 : parseFloat(form.vatRate);
+        const vatAmount = vatRate > 0 ? (amountNum * vatRate) / (100 + vatRate) : 0; // VAT from inclusive amount
+        const netAmount = amountNum - vatAmount;
+        
+        // Get VAT account if needed
+        let vatAccount = null;
+        if (vatAmount > 0 && vatRate > 0) {
+          vatAccount = accounts.find(acc => 
+            (acc.account_name || '').toLowerCase().includes('vat') || 
+            (acc.account_name || '').toLowerCase().includes('tax')
+          );
+          
+          if (!vatAccount) {
+            toast({ 
+              title: "VAT Account Missing", 
+              description: "Please create a VAT account in Chart of Accounts before adding VAT transactions.", 
+              variant: "destructive" 
+            });
+            return;
+          }
+        }
+        
         const { error: updateError } = await supabase
           .from("transactions")
           .update({ 
@@ -564,6 +589,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             total_amount: isNaN(amountNum) ? 0 : amountNum,
             debit_account_id: form.debitAccount,
             credit_account_id: form.creditAccount,
+            vat_rate: vatRate > 0 ? vatRate : null,
+            vat_amount: vatAmount > 0 ? vatAmount : null,
+            base_amount: netAmount,
+            vat_inclusive: vatRate > 0,
            })
           .eq("id", editData.id);
 
@@ -602,53 +631,238 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           });
           return;
         }
-        const simpleEntries = [
-          {
-            transaction_id: editData.id,
-            account_id: form.debitAccount,
-            debit: amountAbs,
-            credit: 0,
-            description: sanitizedDescription,
-            status: "approved"
-          },
-          {
-            transaction_id: editData.id,
-            account_id: form.creditAccount,
-            debit: 0,
-            credit: amountAbs,
-            description: sanitizedDescription,
-            status: "approved"
+        // Create VAT-aware entries for edit path (similar to create path)
+        let entries: any[] = [];
+        
+        if (vatAmount > 0 && vatAccount && vatAccount.id) {
+          // VAT-inclusive transaction
+          if (form.element === 'expense') {
+            // Expense with VAT: Debit Expense (net), Debit VAT Input (vat), Credit Bank (total)
+            entries.push(
+              {
+                transaction_id: editData.id,
+                account_id: form.debitAccount, // Expense account
+                debit: netAmount,
+                credit: 0,
+                description: sanitizedDescription,
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: vatAccount.id, // VAT Input account
+                debit: vatAmount,
+                credit: 0,
+                description: 'VAT Input',
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: form.creditAccount, // Bank account
+                debit: 0,
+                credit: amountAbs, // Total amount
+                description: sanitizedDescription,
+                status: "approved"
+              }
+            );
+          } else if (form.element === 'income') {
+            // Income with VAT: Debit Bank (total), Credit Income (net), Credit VAT Output (vat)
+            entries.push(
+              {
+                transaction_id: editData.id,
+                account_id: form.debitAccount, // Bank account
+                debit: amountAbs, // Total amount
+                credit: 0,
+                description: sanitizedDescription,
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: form.creditAccount, // Income account
+                debit: 0,
+                credit: netAmount,
+                description: sanitizedDescription,
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: vatAccount.id, // VAT Output account
+                debit: 0,
+                credit: vatAmount,
+                description: 'VAT Output',
+                status: "approved"
+              }
+            );
+          } else {
+            // Other transaction types - treat as no VAT for now
+            entries.push(
+              {
+                transaction_id: editData.id,
+                account_id: form.debitAccount,
+                debit: amountAbs,
+                credit: 0,
+                description: sanitizedDescription,
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: form.creditAccount,
+                debit: 0,
+                credit: amountAbs,
+                description: sanitizedDescription,
+                status: "approved"
+              }
+            );
           }
-        ];
+        } else {
+          // No VAT - simple double entry
+          entries.push(
+            {
+              transaction_id: editData.id,
+              account_id: form.debitAccount,
+              debit: amountAbs,
+              credit: 0,
+              description: sanitizedDescription,
+              status: "approved"
+            },
+            {
+              transaction_id: editData.id,
+              account_id: form.creditAccount,
+              debit: 0,
+              credit: amountAbs,
+              description: sanitizedDescription,
+              status: "approved"
+            }
+          );
+        }
 
         const { error: entriesErr } = await supabase
           .from("transaction_entries")
-          .insert(simpleEntries);
+          .insert(entries);
         if (entriesErr) throw entriesErr;
 
-        // Also insert into ledger_entries so AFS/Trial Balance sees the amounts
-        const ledgerRows = [
-          {
-            company_id: effectiveCompanyId,
-            transaction_id: editData.id,
-            account_id: form.debitAccount,
-            entry_date: form.date,
-            description: sanitizedDescription,
-            debit: amountAbs,
-            credit: 0,
-            is_reversed: false,
-          },
-          {
-            company_id: effectiveCompanyId,
-            transaction_id: editData.id,
-            account_id: form.creditAccount,
-            entry_date: form.date,
-            description: sanitizedDescription,
-            debit: 0,
-            credit: amountAbs,
-            is_reversed: false,
+        // Also insert into ledger_entries so AFS/Trial Balance sees the amounts (VAT-aware)
+        let ledgerRows: any[] = [];
+        
+        if (vatAmount > 0 && vatAccount && vatAccount.id) {
+          // VAT-inclusive ledger entries
+          if (form.element === 'expense') {
+            // Expense with VAT: Debit Expense (net), Debit VAT Input (vat), Credit Bank (total)
+            ledgerRows.push(
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.debitAccount, // Expense account
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: netAmount,
+                credit: 0,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: vatAccount.id, // VAT Input account
+                entry_date: form.date,
+                description: 'VAT Input',
+                debit: vatAmount,
+                credit: 0,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.creditAccount, // Bank account
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: 0,
+                credit: amountAbs, // Total amount
+                is_reversed: false,
+              }
+            );
+          } else if (form.element === 'income') {
+            // Income with VAT: Debit Bank (total), Credit Income (net), Credit VAT Output (vat)
+            ledgerRows.push(
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.debitAccount, // Bank account
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: amountAbs, // Total amount
+                credit: 0,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.creditAccount, // Income account
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: 0,
+                credit: netAmount,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: vatAccount.id, // VAT Output account
+                entry_date: form.date,
+                description: 'VAT Output',
+                debit: 0,
+                credit: vatAmount,
+                is_reversed: false,
+              }
+            );
+          } else {
+            // Other transaction types - treat as no VAT for now
+            ledgerRows.push(
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.debitAccount,
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: amountAbs,
+                credit: 0,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.creditAccount,
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: 0,
+                credit: amountAbs,
+                is_reversed: false,
+              }
+            );
           }
-        ];
+        } else {
+          // No VAT - simple double entry
+          ledgerRows.push(
+            {
+              company_id: effectiveCompanyId,
+              transaction_id: editData.id,
+              account_id: form.debitAccount,
+              entry_date: form.date,
+              description: sanitizedDescription,
+              debit: amountAbs,
+              credit: 0,
+              is_reversed: false,
+            },
+            {
+              company_id: effectiveCompanyId,
+              transaction_id: editData.id,
+              account_id: form.creditAccount,
+              entry_date: form.date,
+              description: sanitizedDescription,
+              debit: 0,
+              credit: amountAbs,
+              is_reversed: false,
+            }
+          );
+        }
 
         const { error: ledgerErr } = await supabase
           .from("ledger_entries")

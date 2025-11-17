@@ -515,26 +515,53 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         if (!confirmed) return;
       }
 
-      const { data: transaction, error: txError } = await supabase
-        .from("transactions")
-        .insert({
-          company_id: profile.company_id,
-          user_id: user.id,
-          bank_account_id: bankAccountId,
-          transaction_date: form.date,
-          description: form.description.trim(),
-          reference_number: form.reference?.trim() || null,
-          total_amount: totalAmount,
-          transaction_type: form.transactionType,
-          category: autoClassification?.category || null,
-          vat_rate: parseFloat(form.vatRate) || null,
-          vat_amount: vatAmount || null,
-          base_amount: amount,
-          vat_inclusive: (parseFloat(form.vatRate) || 0) > 0,
-          status: "pending"
-        })
-        .select()
-        .single();
+      let transaction;
+      let txError;
+      if (editData?.id) {
+        const existingTotal = Number(editData.total_amount || totalAmount || 0);
+        const ratePct = parseFloat(form.vatRate) || 0;
+        const baseFromInclusive = ratePct > 0 ? existingTotal / (1 + ratePct / 100) : existingTotal;
+        const vatFromInclusive = ratePct > 0 ? existingTotal - baseFromInclusive : 0;
+        const { data: updated, error: updErr } = await supabase
+          .from("transactions")
+          .update({
+            transaction_date: form.date,
+            description: form.description.trim(),
+            reference_number: form.reference?.trim() || null,
+            vat_rate: ratePct || null,
+            vat_amount: vatFromInclusive || null,
+            base_amount: baseFromInclusive,
+            vat_inclusive: ratePct > 0,
+          })
+          .eq("id", editData.id)
+          .select()
+          .single();
+        transaction = updated;
+        txError = updErr as any;
+      } else {
+        const ins = await supabase
+          .from("transactions")
+          .insert({
+            company_id: profile.company_id,
+            user_id: user.id,
+            bank_account_id: bankAccountId,
+            transaction_date: form.date,
+            description: form.description.trim(),
+            reference_number: form.reference?.trim() || null,
+            total_amount: totalAmount,
+            transaction_type: form.transactionType,
+            category: autoClassification?.category || null,
+            vat_rate: parseFloat(form.vatRate) || null,
+            vat_amount: vatAmount || null,
+            base_amount: amount,
+            vat_inclusive: (parseFloat(form.vatRate) || 0) > 0,
+            status: "pending"
+          })
+          .select()
+          .single();
+        transaction = ins.data;
+        txError = ins.error as any;
+      }
       if (txError) {
         toast({ title: "Transaction failed", description: txError.message, variant: "destructive" });
         return;
@@ -690,24 +717,26 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         credit: e.credit 
       })));
 
-      const { error: entriesError } = await supabase
-        .from("transaction_entries")
-        .insert(sanitizedEntries.map(e => ({
-          transaction_id: transaction.id,
-          account_id: e.account_id,
-          debit: e.debit,
-          credit: e.credit,
-          description: form.description.trim(),
-          status: "pending"
-        })) as any);
-      if (entriesError) {
-        toast({ title: "Entries failed", description: entriesError.message, variant: "destructive" });
-        return;
+      if (!editData?.id) {
+        const { error: entriesError } = await supabase
+          .from("transaction_entries")
+          .insert(sanitizedEntries.map(e => ({
+            transaction_id: transaction.id,
+            account_id: e.account_id,
+            debit: e.debit,
+            credit: e.credit,
+            description: form.description.trim(),
+            status: "pending"
+          })) as any);
+        if (entriesError) {
+          toast({ title: "Entries failed", description: entriesError.message, variant: "destructive" });
+          return;
+        }
       }
       // Keep manual transactions at approved status; do not auto-set to posted
 
       // Update bank account balance
-      if (bankAccountId) {
+      if (bankAccountId && !editData?.id) {
         const debitAccountData = accounts.find(a => a.id === form.debitAccount);
         const creditAccountData = accounts.find(a => a.id === form.creditAccount);
         
@@ -808,7 +837,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
 
       toast({ 
         title: "Success", 
-        description: "Transaction posted successfully to ledger and AFS updated" 
+        description: editData?.id ? "Transaction updated" : "Transaction posted successfully" 
       });
       onOpenChange(false);
       onSuccess();

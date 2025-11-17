@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, Suspense, lazy } from "react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
  
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,7 @@ export const TransactionManagement = () => {
   const [items, setItems] = useState<Transaction[]>([]);
   const [open, setOpen] = useState(false);
   const [editData, setEditData] = useState<any>(null);
+  const [sourceTab, setSourceTab] = useState<"all" | "invoice" | "csv" | "bank" | "manual" | "purchase">("all");
 
   const load = async () => {
     try {
@@ -91,10 +93,37 @@ export const TransactionManagement = () => {
       category: (t as any).category || "—",
       bank: (t as any).bank_account ? `${(t as any).bank_account.bank_name} (${(t as any).bank_account.account_number})` : "—",
       amount: Math.abs(t.total_amount),
-      vatAmount: Math.abs(t.total_amount) * 0.15,
+      vatAmount: (() => {
+        const va = (t as any).vat_amount;
+        const rate = Number((t as any).vat_rate) || 0;
+        const inclusive = Boolean((t as any).vat_inclusive);
+        const base = Number((t as any).base_amount) || 0;
+        const total = Number(t.total_amount) || 0;
+        if (typeof va === 'number' && !Number.isNaN(va)) return Math.abs(va);
+        if (rate > 0) {
+          if (inclusive) {
+            if (base > 0) return Math.abs(total - base);
+            return Math.abs(total * (rate / (1 + rate)));
+          } else {
+            if (base > 0) return Math.abs(base * rate);
+            return Math.abs(total * rate);
+          }
+        }
+        return 0;
+      })(),
       reference: t.reference_number || "—",
       statusKey: t.status, // raw DB status
-      statusLabel: t.status === 'approved' ? 'Approved' : t.status === 'pending' ? 'Pending' : t.status.charAt(0).toUpperCase() + t.status.slice(1)
+      statusLabel: t.status === 'approved' ? 'Approved' : t.status === 'pending' ? 'Pending' : t.status.charAt(0).toUpperCase() + t.status.slice(1),
+      source: (() => {
+        const ref = String(t.reference_number || "").toUpperCase();
+        const desc = String(t.description || "").toLowerCase();
+        const hasBank = Boolean(t.bank_account_id);
+          if (ref.startsWith("INV-") || desc.includes("invoice")) return "invoice" as const;
+          if ((t as any).transaction_type === 'purchase' || desc.includes('purchase') || ref.startsWith('PO') || desc.includes('po ')) return "purchase" as const;
+          if ((t as any).category === 'Bank Import' || desc.includes('csv') || ref.includes('CSV')) return "csv" as const;
+          if (hasBank || desc.includes("bank statement")) return "bank" as const;
+          return "manual" as const;
+      })()
     }));
 
     const filtered = tx.filter(transaction => {
@@ -102,13 +131,14 @@ export const TransactionManagement = () => {
         transaction.reference.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesType = filterType === "all" || transaction.type.toLowerCase() === filterType.toLowerCase();
       const matchesStatus = filterStatus === "all" || (transaction as any).statusKey.toLowerCase() === filterStatus.toLowerCase();
-      return matchesSearch && matchesType && matchesStatus;
+      const matchesSource = sourceTab === "all" || transaction.source === sourceTab;
+      return matchesSearch && matchesType && matchesStatus && matchesSource;
     });
 
     const totalIncome = filtered.filter(t => t.type === "Income").reduce((sum, t) => sum + t.amount, 0);
     const totalExpenses = filtered.filter(t => t.type === "Expense").reduce((sum, t) => sum + t.amount, 0);
     return { filtered, totalIncome, totalExpenses };
-  }, [items, searchTerm, filterType, filterStatus]);
+  }, [items, searchTerm, filterType, filterStatus, sourceTab]);
 
   const setTransactionStatus = async (id: string, status: 'approved' | 'pending' | 'rejected' | 'unposted') => {
     try {
@@ -152,7 +182,7 @@ export const TransactionManagement = () => {
 
           // Fallback 1: transaction_type_mappings
           if ((!debitAccountId || !creditAccountId) && companyId && (transaction as any).transaction_type) {
-            const { data: mapping } = await supabase
+            const { data: mapping } = await (supabase as any)
               .from("transaction_type_mappings")
               .select("debit_account_id, credit_account_id")
               .eq("company_id", companyId)
@@ -188,24 +218,112 @@ export const TransactionManagement = () => {
             throw new Error("Missing debit/credit accounts. Set mapping in Chart of Accounts or edit transaction to assign accounts.");
           }
 
-          const newEntries = [
-            {
-              transaction_id: id,
-              account_id: debitAccountId,
-              debit: amount,
-              credit: 0,
-              description: transaction.description,
-              status: 'approved'
-            },
-            {
-              transaction_id: id,
-              account_id: creditAccountId,
-              debit: 0,
-              credit: amount,
-              description: transaction.description,
-              status: 'approved'
+          // Check if transaction has VAT and get VAT account
+          let vatAccount = null;
+          let vatAmount = 0;
+          let netAmount = amount;
+          
+          if ((transaction as any).vat_rate > 0 && (transaction as any).vat_amount > 0) {
+            vatAmount = (transaction as any).vat_amount;
+            netAmount = amount - vatAmount;
+            
+            // Find VAT account
+            const { data: vatAccounts } = await supabase
+              .from("chart_of_accounts")
+              .select("id, account_name, account_code")
+              .eq("company_id", companyId)
+              .or('account_name.ilike.%vat%,account_name.ilike.%tax%')
+              .limit(1);
+            
+            if (vatAccounts && vatAccounts.length > 0) {
+              vatAccount = vatAccounts[0];
             }
-          ];
+          }
+
+          let newEntries = [];
+          
+          if (vatAccount && vatAmount > 0) {
+            // VAT-aware entries
+            const isIncome = Number(transaction.total_amount || 0) >= 0;
+            
+            if (isIncome) {
+              // Income with VAT: Debit Bank (total), Credit Income (net), Credit VAT Output (vat)
+              newEntries = [
+                {
+                  transaction_id: id,
+                  account_id: debitAccountId, // Bank account
+                  debit: amount,
+                  credit: 0,
+                  description: transaction.description,
+                  status: 'approved'
+                },
+                {
+                  transaction_id: id,
+                  account_id: creditAccountId, // Income account
+                  debit: 0,
+                  credit: netAmount,
+                  description: transaction.description,
+                  status: 'approved'
+                },
+                {
+                  transaction_id: id,
+                  account_id: vatAccount.id, // VAT Output account
+                  debit: 0,
+                  credit: vatAmount,
+                  description: 'VAT Output',
+                  status: 'approved'
+                }
+              ];
+            } else {
+              // Expense with VAT: Debit Expense (net), Debit VAT Input (vat), Credit Bank (total)
+              newEntries = [
+                {
+                  transaction_id: id,
+                  account_id: debitAccountId, // Expense account
+                  debit: netAmount,
+                  credit: 0,
+                  description: transaction.description,
+                  status: 'approved'
+                },
+                {
+                  transaction_id: id,
+                  account_id: vatAccount.id, // VAT Input account
+                  debit: vatAmount,
+                  credit: 0,
+                  description: 'VAT Input',
+                  status: 'approved'
+                },
+                {
+                  transaction_id: id,
+                  account_id: creditAccountId, // Bank account
+                  debit: 0,
+                  credit: amount,
+                  description: transaction.description,
+                  status: 'approved'
+                }
+              ];
+            }
+          } else {
+            // No VAT - simple double entry
+            newEntries = [
+              {
+                transaction_id: id,
+                account_id: debitAccountId,
+                debit: amount,
+                credit: 0,
+                description: transaction.description,
+                status: 'approved'
+              },
+              {
+                transaction_id: id,
+                account_id: creditAccountId,
+                debit: 0,
+                credit: amount,
+                description: transaction.description,
+                status: 'approved'
+              }
+            ];
+          }
           const { error: insertEntriesError } = await supabase
             .from("transaction_entries")
             .insert(newEntries);
@@ -245,13 +363,57 @@ export const TransactionManagement = () => {
           description: e.description || transaction.description,
           debit: e.debit,
           credit: e.credit,
-          reference_id: id
+          reference_id: id,
+          transaction_id: id
         }));
         if (ledgerEntries.length === 0) {
           throw new Error("No ledger entries generated; approval aborted.");
         }
-        const { error: ledgerError } = await supabase.from("ledger_entries").insert(ledgerEntries);
+        const { error: ledgerError } = await supabase.from("ledger_entries").insert(ledgerEntries as any);
         if (ledgerError) throw ledgerError;
+
+        if ((transaction as any).bank_account_id) {
+          const bankAccountId = (transaction as any).bank_account_id as string;
+          const accountIds = (entries || []).map((e: any) => e.account_id);
+          let { data: acctInfos } = await supabase
+            .from("chart_of_accounts")
+            .select("id, account_type, account_name")
+            .in("id", accountIds as any);
+          acctInfos = acctInfos || [];
+          const isDebitBank = (entries || []).some((e: any) => {
+            const a = acctInfos.find((x: any) => x.id === e.account_id);
+            return a && String(a.account_type || '').toLowerCase() === 'asset' && String(a.account_name || '').toLowerCase().includes('bank') && Number(e.debit || 0) > 0;
+          });
+          const isCreditBank = (entries || []).some((e: any) => {
+            const a = acctInfos.find((x: any) => x.id === e.account_id);
+            return a && String(a.account_type || '').toLowerCase() === 'asset' && String(a.account_name || '').toLowerCase().includes('bank') && Number(e.credit || 0) > 0;
+          });
+          const bankDebitAmount = (entries || []).reduce((sum: number, e: any) => {
+            const a = acctInfos.find((x: any) => x.id === e.account_id);
+            const isBank = a && String(a.account_type || '').toLowerCase() === 'asset' && String(a.account_name || '').toLowerCase().includes('bank');
+            return sum + (isBank ? Number(e.debit || 0) : 0);
+          }, 0);
+          const bankCreditAmount = (entries || []).reduce((sum: number, e: any) => {
+            const a = acctInfos.find((x: any) => x.id === e.account_id);
+            const isBank = a && String(a.account_type || '').toLowerCase() === 'asset' && String(a.account_name || '').toLowerCase().includes('bank');
+            return sum + (isBank ? Number(e.credit || 0) : 0);
+          }, 0);
+          if (isDebitBank && bankDebitAmount > 0) {
+            try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: bankDebitAmount, _operation: 'add' }); } catch {}
+            const { data: bankAcc } = await supabase.from('bank_accounts').select('current_balance').eq('id', bankAccountId).maybeSingle();
+            if (bankAcc && typeof bankAcc.current_balance === 'number') {
+              const newBal = Number(bankAcc.current_balance) + bankDebitAmount;
+              await supabase.from('bank_accounts').update({ current_balance: newBal }).eq('id', bankAccountId);
+            }
+          } else if (isCreditBank && bankCreditAmount > 0) {
+            try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: bankCreditAmount, _operation: 'subtract' }); } catch {}
+            const { data: bankAcc } = await supabase.from('bank_accounts').select('current_balance').eq('id', bankAccountId).maybeSingle();
+            if (bankAcc && typeof bankAcc.current_balance === 'number') {
+              const newBal = Number(bankAcc.current_balance) - bankCreditAmount;
+              await supabase.from('bank_accounts').update({ current_balance: newBal }).eq('id', bankAccountId);
+            }
+          }
+        }
 
         // Mark transaction and entries as approved only after successful ledger post
         const { error: updateTxError } = await supabase
@@ -343,6 +505,19 @@ export const TransactionManagement = () => {
             editData={editData}
           />
         </Suspense>
+      </div>
+
+      <div className="flex justify-between items-center">
+        <Tabs defaultValue="all" onValueChange={(v) => setSourceTab(v as any)}>
+          <TabsList>
+            <TabsTrigger value="all">All</TabsTrigger>
+            <TabsTrigger value="invoice">Invoices</TabsTrigger>
+            <TabsTrigger value="csv">CSV</TabsTrigger>
+            <TabsTrigger value="bank">Bank</TabsTrigger>
+            <TabsTrigger value="purchase">Purchase</TabsTrigger>
+            <TabsTrigger value="manual">Manual</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       {/* Summary cards removed for a cleaner, list-focused layout */}

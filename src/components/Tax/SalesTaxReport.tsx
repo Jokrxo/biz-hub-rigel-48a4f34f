@@ -78,7 +78,7 @@ export const SalesTaxReport = () => {
           const debit = Number(e.debit || 0);
           const txDate = e.transactions?.transaction_date || e.created_at?.slice(0, 10);
           const ym = (txDate || '').slice(0, 7);
-          const rate = Number(e.transactions?.vat_rate || 15);
+          const rate = Number(e.transactions?.vat_rate || 0);
           if (!byMonth[ym]) byMonth[ym] = { vatCollected: 0, salesExclVat: 0, rate };
           if (isVatOutput && credit > debit && rate > 0) {
             const vat = credit - debit;
@@ -89,7 +89,7 @@ export const SalesTaxReport = () => {
             const estimatedNet = netInclusive > 0 ? netInclusive : vat * (100 / rate);
             byMonth[ym].salesExclVat += Math.max(0, estimatedNet);
             detail.push({ date: txDate || '', description: e.transactions?.description || '', net: Math.max(0, estimatedNet), vat, total });
-          } else if (isIncomeTx && rate > 0) {
+          } else if (isIncomeTx && rate > 0 && Number(e.transactions?.vat_amount || 0) > 0) {
             const inclusive = Boolean(e.transactions?.vat_inclusive);
             const total = Number(e.transactions?.total_amount || 0);
             const net = inclusive ? total - (total / (1 + rate / 100)) : total;
