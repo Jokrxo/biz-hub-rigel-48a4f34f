@@ -822,6 +822,7 @@ export type Database = {
           name: string
           quantity_on_hand: number
           unit_price: number
+          cost_price: number
           updated_at: string | null
         }
         Insert: {
@@ -833,6 +834,7 @@ export type Database = {
           name: string
           quantity_on_hand?: number
           unit_price?: number
+          cost_price?: number
           updated_at?: string | null
         }
         Update: {
@@ -844,6 +846,7 @@ export type Database = {
           name?: string
           quantity_on_hand?: number
           unit_price?: number
+          cost_price?: number
           updated_at?: string | null
         }
         Relationships: [
@@ -2168,6 +2171,14 @@ export type Database = {
       post_pay_run_finalize: { Args: { _pay_run_id: string }; Returns: undefined }
       post_pay_run_pay: { Args: { _pay_run_id: string; _amount: number }; Returns: undefined }
       post_statutory_remit: { Args: { _company_id: string; _type: string; _amount: number; _reference: string }; Returns: undefined }
+      post_monthly_depreciation: {
+        Args: { _company_id: string; _posting_date: string }
+        Returns: { asset_id: string | null; amount: number; error_message: string | null }[]
+      }
+      post_monthly_loan_interest: {
+        Args: { _company_id: string; _posting_date: string }
+        Returns: { loan_id: string | null; interest_amount: number; journal_entry_id: string | null; success: boolean; message: string }[]
+      }
     }
     Enums: {
       app_role: "administrator" | "accountant" | "manager"

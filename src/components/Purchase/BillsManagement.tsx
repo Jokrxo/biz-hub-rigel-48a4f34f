@@ -246,22 +246,19 @@ export const BillsManagement = () => {
         });
 
         const toInsert: any[] = [];
-        const updatePromises: Promise<any>[] = [];
 
-        items.forEach((bi) => {
+        for (const bi of items) {
           const nameKey = String(bi.description || '').trim().toLowerCase();
           if (!nameKey) return;
           const found = existingMap.get(nameKey);
           if (found) {
-            updatePromises.push(
-              supabase
-                .from("items")
-                .update({
-                  cost_price: Number((bi as any).unit_price || 0),
-                  quantity_on_hand: found.qty + Number((bi as any).quantity || 0)
-                })
-                .eq("id", found.id)
-            );
+            await supabase
+              .from("items")
+              .update({
+                cost_price: Number((bi as any).unit_price || 0),
+                quantity_on_hand: found.qty + Number((bi as any).quantity || 0)
+              })
+              .eq("id", found.id);
           } else {
             toInsert.push({
               company_id: profile!.company_id,
@@ -273,15 +270,13 @@ export const BillsManagement = () => {
               quantity_on_hand: Number((bi as any).quantity || 0)
             });
           }
-        });
+        }
 
         if (toInsert.length > 0) {
           const { error: insertErr } = await supabase.from("items").insert(toInsert);
           if (insertErr) throw insertErr;
         }
-        if (updatePromises.length > 0) {
-          await Promise.all(updatePromises);
-        }
+        
         toast({ title: "Products Updated", description: "Purchased items synced to Sales products" });
       } catch (syncErr: any) {
         console.error("Products sync error:", syncErr);

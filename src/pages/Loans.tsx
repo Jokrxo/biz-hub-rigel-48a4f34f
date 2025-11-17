@@ -95,7 +95,7 @@ function LoansDashboard({ companyId }: { companyId: string }) {
   const calculateMonthlyInterest = async () => {
     setCalculatingInterest(true);
     try {
-      const { data, error } = await supabase.rpc<any>('post_monthly_loan_interest' as any, {
+      const { data, error } = await supabase.rpc('post_monthly_loan_interest', {
         _company_id: companyId,
         _posting_date: new Date().toISOString().split('T')[0]
       });

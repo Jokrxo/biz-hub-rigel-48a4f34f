@@ -31,6 +31,7 @@ interface FixedAsset {
 export default function FixedAssetsPage() {
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [assetAccounts, setAssetAccounts] = useState<Array<{ id: string; account_code: string; account_name: string }>>([]);
+  const [loanAccounts, setLoanAccounts] = useState<Array<{ id: string; account_code: string; account_name: string }>>([]);
   const [assetSearchOpen, setAssetSearchOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -47,6 +48,9 @@ export default function FixedAssetsPage() {
     useful_life_years: "5",
     depreciation_method: "straight_line",
     asset_account_id: "",
+    funding_source: "bank",
+    bank_account_id: "",
+    loan_account_id: "",
   });
 
   const [disposalData, setDisposalData] = useState({
@@ -114,6 +118,23 @@ export default function FixedAssetsPage() {
       if (!formData.asset_account_id && mapped.length > 0) {
         setFormData(prev => ({ ...prev, asset_account_id: mapped[0].id }));
       }
+      const { data: liabilities } = await supabase
+        .from("chart_of_accounts")
+        .select("id, account_code, account_name")
+        .eq("company_id", profile.company_id)
+        .eq("is_active", true)
+        .eq("account_type", "liability")
+        .order("account_code");
+      const loanAccs = (liabilities || []).filter((a: any) => ['2300','2400'].includes(String(a.account_code || '')) || String(a.account_name || '').toLowerCase().includes('loan'))
+        .map((a: any) => ({ id: String(a.id), account_code: String(a.account_code || ''), account_name: String(a.account_name || '') }));
+      setLoanAccounts(loanAccs);
+      if (!formData.loan_account_id && loanAccs.length > 0) {
+        setFormData(prev => ({ ...prev, loan_account_id: loanAccs[0].id }));
+      }
+      const bankCandidate = mapped.find(a => a.account_name.toLowerCase().includes('bank'));
+      if (!formData.bank_account_id && bankCandidate) {
+        setFormData(prev => ({ ...prev, bank_account_id: bankCandidate.id }));
+      }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
@@ -160,20 +181,15 @@ export default function FixedAssetsPage() {
           const assetAccount = (assetAccs || []).find(a => String(a.account_code || '').startsWith('15') || String(a.account_name || '').toLowerCase().includes('fixed asset'));
           assetAccountId = String(assetAccount?.id || "");
         }
-        const { data: equityAccs } = await supabase
-          .from("chart_of_accounts")
-          .select("id, account_code, account_name")
-          .eq("company_id", profile!.company_id)
-          .eq("is_active", true);
-        const equityAccount = (equityAccs || []).find(a => String(a.account_code || '') === '3900' || String(a.account_name || '').toLowerCase().includes('opening balance equity'));
-        if (assetAccountId && equityAccount?.id && costNum > 0) {
+        const creditAccountId = formData.funding_source === 'loan' ? formData.loan_account_id : formData.bank_account_id;
+        if (assetAccountId && creditAccountId && costNum > 0) {
           const { data: tx, error: txErr } = await supabase
             .from("transactions")
             .insert({
               company_id: profile!.company_id,
               user_id: user!.id,
               transaction_date: formData.purchase_date,
-              description: `Opening Fixed Asset - ${formData.description} [method:${formData.depreciation_method}]`,
+              description: `Asset Purchase - ${formData.description} [method:${formData.depreciation_method}]`,
               reference_number: null,
               total_amount: costNum,
               bank_account_id: null,
@@ -184,8 +200,8 @@ export default function FixedAssetsPage() {
             .single();
           if (!txErr && tx?.id) {
             const entries = [
-              { transaction_id: tx.id, account_id: assetAccountId as string, debit: costNum, credit: 0, description: `Opening Fixed Asset - ${formData.description}`, status: 'approved' },
-              { transaction_id: tx.id, account_id: equityAccount.id as string, debit: 0, credit: costNum, description: `Opening Fixed Asset - ${formData.description}`, status: 'approved' }
+              { transaction_id: tx.id, account_id: assetAccountId as string, debit: costNum, credit: 0, description: `Asset Purchase - ${formData.description}`, status: 'approved' },
+              { transaction_id: tx.id, account_id: creditAccountId as string, debit: 0, credit: costNum, description: `Asset Purchase - ${formData.description}`, status: 'approved' }
             ];
             const { error: entErr } = await supabase.from("transaction_entries").insert(entries as any);
             if (!entErr) {
@@ -208,7 +224,7 @@ export default function FixedAssetsPage() {
 
       toast({ title: "Success", description: "Fixed asset added successfully" });
       setDialogOpen(false);
-      setFormData({ description: "", cost: "", purchase_date: "", useful_life_years: "5", depreciation_method: "straight_line", asset_account_id: formData.asset_account_id });
+      setFormData({ description: "", cost: "", purchase_date: "", useful_life_years: "5", depreciation_method: "straight_line", asset_account_id: formData.asset_account_id, funding_source: "bank", bank_account_id: "", loan_account_id: "" });
       loadAssets();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -271,6 +287,48 @@ export default function FixedAssetsPage() {
                 Export
               </Button>
               {canEdit && (
+                <Button variant="outline" onClick={async () => {
+                  try {
+                    const { data: profile } = await supabase
+                      .from("profiles")
+                      .select("company_id")
+                      .eq("user_id", user?.id)
+                      .single();
+                    
+                    const { data, error } = await supabase.rpc('post_monthly_depreciation', { 
+                      _company_id: profile!.company_id, 
+                      _posting_date: new Date().toISOString().split('T')[0] 
+                    });
+                    
+                    if (error) {
+                      toast({ title: "Depreciation Failed", description: error.message, variant: "destructive" });
+                    } else if (data && Array.isArray(data)) {
+                      const successfulEntries = data.filter(item => !item.error_message);
+                      const errorEntries = data.filter(item => item.error_message);
+                      
+                      if (errorEntries.length > 0) {
+                        toast({ 
+                          title: "Depreciation Partially Completed", 
+                          description: `${successfulEntries.length} assets processed, ${errorEntries.length} errors`, 
+                          variant: "destructive" 
+                        });
+                      } else {
+                        toast({ 
+                          title: "Depreciation Posted Successfully", 
+                          description: `Processed ${successfulEntries.length} assets` 
+                        });
+                      }
+                      
+                      loadAssets();
+                    } else {
+                      toast({ title: "No Assets Processed", description: "No active assets found for depreciation" });
+                    }
+                  } catch (err) {
+                    toast({ title: "Error", description: "Failed to post depreciation", variant: "destructive" });
+                  }
+                }}>Post Monthly Depreciation</Button>
+              )}
+              {canEdit && (
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
                   <DialogTrigger asChild>
                     <Button className="bg-gradient-primary">
@@ -278,15 +336,15 @@ export default function FixedAssetsPage() {
                       Add Asset
                     </Button>
                   </DialogTrigger>
-                  <DialogContent>
+                  <DialogContent className="sm:max-w-[560px] p-4">
                     <DialogHeader>
                       <DialogTitle>Add Fixed Asset</DialogTitle>
                     </DialogHeader>
-                    <form onSubmit={handleSubmit} className="space-y-4">
+                    <form onSubmit={handleSubmit} className="space-y-3">
                       <div>
                         <Label>Description</Label>
                         <div className="grid grid-cols-2 gap-2 items-start">
-                          <Input
+                          <Input className="h-9"
                             value={formData.description}
                             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                             placeholder="e.g., Office Equipment"
@@ -301,7 +359,7 @@ export default function FixedAssetsPage() {
                                   const acc = assetAccounts.find(a => a.id === val);
                                   if (acc?.account_name) setFormData(prev => ({ ...prev, description: acc.account_name }));
                                 }}>
-                                  <SelectTrigger>
+                                  <SelectTrigger className="h-9">
                                     <SelectValue placeholder="Choose fixed asset account" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -344,22 +402,10 @@ export default function FixedAssetsPage() {
                           </div>
                         </div>
                       </div>
-                      <div>
-                        <Label>Asset Account (Chart of Accounts)</Label>
-                        <Select value={formData.asset_account_id} onValueChange={(val) => setFormData({ ...formData, asset_account_id: val })}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select fixed asset account" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {assetAccounts.map(acc => (
-                              <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      
                       <div>
                         <Label>Cost (R)</Label>
-                        <Input
+                        <Input className="h-9"
                           type="number"
                           step="0.01"
                           value={formData.cost}
@@ -369,7 +415,7 @@ export default function FixedAssetsPage() {
                       </div>
                       <div>
                         <Label>Purchase Date</Label>
-                        <Input
+                        <Input className="h-9"
                           type="date"
                           value={formData.purchase_date}
                           onChange={(e) => setFormData({ ...formData, purchase_date: e.target.value })}
@@ -379,7 +425,7 @@ export default function FixedAssetsPage() {
                       <div>
                         <Label>Depreciation Method</Label>
                         <Select value={formData.depreciation_method} onValueChange={(val) => setFormData({ ...formData, depreciation_method: val })}>
-                          <SelectTrigger>
+                          <SelectTrigger className="h-9">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -391,7 +437,7 @@ export default function FixedAssetsPage() {
                       <div>
                         <Label>Useful Life (Years)</Label>
                         <Select value={formData.useful_life_years} onValueChange={(val) => setFormData({ ...formData, useful_life_years: val })}>
-                          <SelectTrigger>
+                          <SelectTrigger className="h-9">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -401,6 +447,48 @@ export default function FixedAssetsPage() {
                           </SelectContent>
                         </Select>
                       </div>
+                      <div>
+                        <Label>Funding Source</Label>
+                        <Select value={formData.funding_source} onValueChange={(val) => setFormData({ ...formData, funding_source: val })}>
+                          <SelectTrigger className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="bank">Bank</SelectItem>
+                            <SelectItem value="loan">Loan</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {formData.funding_source === 'bank' && (
+                        <div>
+                          <Label>Bank Account</Label>
+                          <Select value={formData.bank_account_id} onValueChange={(val) => setFormData({ ...formData, bank_account_id: val })}>
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {assetAccounts.filter(a => a.account_name.toLowerCase().includes('bank')).map(acc => (
+                                <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                      {formData.funding_source === 'loan' && (
+                        <div>
+                          <Label>Loan Account</Label>
+                          <Select value={formData.loan_account_id} onValueChange={(val) => setFormData({ ...formData, loan_account_id: val })}>
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {loanAccounts.map(acc => (
+                                <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
                       <Button type="submit" className="w-full bg-gradient-primary">Add Asset</Button>
                     </form>
                   </DialogContent>

@@ -46,7 +46,7 @@ export const DashboardOverview = () => {
   const [incomeBreakdown, setIncomeBreakdown] = useState<any[]>([]);
   const [apTop10, setApTop10] = useState<any[]>([]);
   const [apDonut, setApDonut] = useState<any[]>([]);
-  const [apRows, setApRows] = useState<Array<{ id: string; supplier_name: string; total_amount: number; status: string; bill_date: string; due_date: string | null }>>([]);
+  const [apRows, setApRows] = useState<Array<{ id: string; supplier_name: string; total_amount: number; status: string; bill_date?: string; due_date?: string | null; source?: string }>>([]);
   const [arKpis, setArKpis] = useState<{ unpaidTotal: number; overdueTotal: number; overdueUnder30Total: number; overdue30Total: number; overdue90Total: number }>({ unpaidTotal: 0, overdueTotal: 0, overdueUnder30Total: 0, overdue30Total: 0, overdue90Total: 0 });
   const [apKpis, setApKpis] = useState<{ unpaidTotal: number; overdueTotal: number; overdueUnder30Total: number; overdue30Total: number; overdue90Total: number }>({ unpaidTotal: 0, overdueTotal: 0, overdueUnder30Total: 0, overdue30Total: 0, overdue90Total: 0 });
   const [arAging, setArAging] = useState<any[]>([]);

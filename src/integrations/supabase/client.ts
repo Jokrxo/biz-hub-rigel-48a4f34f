@@ -14,12 +14,15 @@ const FALLBACK_URL = 'https://example.supabase.co';
 const FALLBACK_KEY = 'public-anon-key';
 const effectiveUrl = SUPABASE_URL || lsUrl || FALLBACK_URL;
 const effectiveKey = SUPABASE_PUBLISHABLE_KEY || lsKey || FALLBACK_KEY;
-const useFallback = effectiveUrl === FALLBACK_URL || effectiveKey === FALLBACK_KEY;
+const containsService = typeof effectiveKey === 'string' && effectiveKey.toLowerCase().includes('service');
+const finalUrl = containsService ? FALLBACK_URL : effectiveUrl;
+const finalKey = containsService ? FALLBACK_KEY : effectiveKey;
+const useFallback = finalUrl === FALLBACK_URL || finalKey === FALLBACK_KEY;
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(effectiveUrl, effectiveKey, {
+export const supabase = createClient<Database>(finalUrl, finalKey, {
   auth: {
     storage: localStorage,
     persistSession: true,

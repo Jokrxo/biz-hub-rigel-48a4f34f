@@ -235,20 +235,17 @@ export const PurchaseOrdersManagement = () => {
 
         const existingSet = new Set<string>((existingItems || []).map((it: any) => String(it.name || '').trim().toLowerCase()));
         const toInsert: any[] = [];
-        const updatePromises: Promise<any>[] = [];
 
-        items.forEach((poi) => {
+        for (const poi of items) {
           const nameKey = String((poi as any).description || '').trim().toLowerCase();
           if (!nameKey) return;
           if (existingSet.has(nameKey)) {
-            updatePromises.push(
-              supabase
-                .from("items")
-                .update({ cost_price: Number((poi as any).unit_price || 0) })
-                .eq("company_id", profile.company_id)
-                .eq("item_type", "product")
-                .eq("name", String((poi as any).description || '').trim())
-            );
+            await supabase
+              .from("items")
+              .update({ cost_price: Number((poi as any).unit_price || 0) })
+              .eq("company_id", profile.company_id)
+              .eq("item_type", "product")
+              .eq("name", String((poi as any).description || '').trim());
           } else {
             toInsert.push({
               company_id: profile.company_id,
@@ -260,13 +257,13 @@ export const PurchaseOrdersManagement = () => {
               quantity_on_hand: 0
             });
           }
-        });
+        }
 
         if (toInsert.length > 0) {
           const { error: insErr } = await supabase.from("items").insert(toInsert);
           if (insErr) throw insErr;
         }
-        if (updatePromises.length > 0) { await Promise.all(updatePromises); }
+        
       } catch (syncErr: any) {
         console.error("PO products sync error:", syncErr);
         toast({ title: "Product Sync Failed", description: String(syncErr?.message || syncErr), variant: "destructive" });

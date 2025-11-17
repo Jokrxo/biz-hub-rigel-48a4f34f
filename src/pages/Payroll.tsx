@@ -40,7 +40,7 @@ export default function Payroll() {
         .select("company_id")
         .eq("user_id", user?.id)
         .maybeSingle();
-      if (profile?.company_id) setCompanyId(profile.company_id);
+      if ((profile as any)?.company_id) setCompanyId((profile as any).company_id);
     };
     loadCompany();
   }, [user?.id]);

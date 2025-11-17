@@ -109,6 +109,7 @@ export const SalesProducts = () => {
       name: "",
       description: "",
       unit_price: "",
+      cost_price: "",
       quantity_on_hand: "",
     });
   };

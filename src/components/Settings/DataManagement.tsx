@@ -105,6 +105,29 @@ export const DataManagement = () => {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <div className="rounded-lg border bg-muted/10 p-6">
+          <h3 className="font-semibold text-lg">Repair Orphan Transactions</h3>
+          <p className="text-sm text-muted-foreground mt-1">Find transactions without entries and auto-generate balanced entries using Bank/Income/Expense heuristics.</p>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              try {
+                const { data: profile } = await supabase
+                  .from("profiles")
+                  .select("company_id")
+                  .eq("user_id", user?.id)
+                  .single();
+                if (!profile?.company_id) throw new Error("Company not found");
+                const { data, error } = await supabase.rpc('repair_orphan_transactions', { _company_id: profile.company_id });
+                if (error) throw error;
+                const repaired = typeof data === 'number' ? data : 0;
+                toast({ title: "Repair Complete", description: `${repaired} transaction(s) fixed` });
+              } catch (e: any) {
+                toast({ title: "Repair Failed", description: e.message, variant: "destructive" });
+              }
+            }}
+          >Run Repair</Button>
+        </div>
         <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6">
           <div className="flex items-start gap-4">
             <Trash2 className="h-6 w-6 text-destructive mt-1" />
