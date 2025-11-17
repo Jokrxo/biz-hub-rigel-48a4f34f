@@ -757,7 +757,6 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
       }
 
-      // Create transaction header
       const { data: transaction, error: txError } = await supabase
         .from("transactions")
         .insert({
@@ -774,7 +773,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           bank_account_id: bankAccountId,
           transaction_type: form.element,
           category: autoClassification?.category || null,
-          status: "pending"
+          status: "approved"
         })
         .select()
         .single();
@@ -1034,7 +1033,6 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         };
       });
 
-      // Log entries before inserting for debugging
       console.log("Inserting transaction entries:", sanitizedEntries.map(e => ({ 
         account_id: e.account_id, 
         debit: e.debit, 
@@ -1043,7 +1041,14 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       const { error: entriesError } = await supabase
         .from("transaction_entries")
-        .insert(sanitizedEntries);
+        .insert(sanitizedEntries.map(e => ({
+          transaction_id: transaction.id,
+          account_id: e.account_id,
+          debit: e.debit,
+          credit: e.credit,
+          description: sanitizedDescription,
+          status: "approved"
+        })) as any);
 
       if (entriesError) {
         console.error("Transaction entries insert error:", entriesError);
@@ -1058,9 +1063,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         
         let errorMessage = entriesError.message || "Failed to create transaction entries.";
         if (entriesError.message?.includes('account_id') && entriesError.message?.includes('null')) {
-          errorMessage = "Account ID is null. This should not happen. Please check the console for details.";
+          errorMessage = "Account ID is null.";
         } else if (entriesError.message?.toLowerCase().includes('foreign key') || entriesError.message?.toLowerCase().includes('violates foreign key constraint')) {
-          errorMessage = "Invalid account selected. The account must exist in your Chart of Accounts.";
+          errorMessage = "Invalid account selected.";
         }
         
         toast({ 
@@ -1068,25 +1073,16 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           description: errorMessage, 
           variant: "destructive" 
         });
-        // Try to delete the transaction if entries failed
         if (transaction?.id) {
           await supabase.from("transactions").delete().eq("id", transaction.id);
         }
         return;
       }
-
-      // Entries created successfully: mark transaction as approved
-      await supabase.from('transactions').update({ status: 'approved' }).eq('id', transaction.id);
-
-      // Mirror entries into ledger_entries for AFS/TB materialized view
       try {
-        // Clean any prior ledger rows for safety (should be none for new transaction)
         await supabase.from('ledger_entries').delete().eq('transaction_id', transaction.id);
-        // Guard: ensure transaction id exists
         if (!transaction?.id) {
           throw new Error('Missing transaction ID for ledger posting');
         }
-        // Resolve company id for ledger insert
         let effectiveCompanyId = companyId;
         if (!effectiveCompanyId || effectiveCompanyId.trim() === '') {
           try {
@@ -1106,7 +1102,6 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if (!effectiveCompanyId || effectiveCompanyId.trim() === '') {
           throw new Error('Company ID missing for ledger posting');
         }
-
         const ledgerRowsNew = sanitizedEntries.map(e => ({
           company_id: effectiveCompanyId,
           transaction_id: transaction.id,
@@ -1117,7 +1112,6 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           credit: e.credit || 0,
           is_reversed: false,
         }));
-
         const { error: ledgerInsErr } = await supabase
           .from('ledger_entries')
           .insert(ledgerRowsNew as any);
@@ -1126,9 +1120,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           throw ledgerInsErr;
         }
       } catch (ledErr: any) {
-        // If ledger insert fails, surface a toast but continue, as transaction_entries exist
         notify.error("Ledger sync warning", { description: `Entries saved, but AFS sync failed: ${ledErr.message}`, duration: 6000 });
       }
+
+      await supabase.from('transactions').update({ status: 'posted' }).eq('id', transaction.id);
+      
 
       // Handle loan-specific operations
       if (form.element === 'loan_received') {

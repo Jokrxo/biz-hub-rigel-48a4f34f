@@ -515,21 +515,30 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         if (!confirmed) return;
       }
 
-      const header = {
-        company_id: profile.company_id,
-        user_id: user.id,
-        bank_account_id: bankAccountId,
-        transaction_date: form.date,
-        description: form.description.trim(),
-        reference_number: form.reference?.trim() || null,
-        total_amount: totalAmount,
-        transaction_type: form.transactionType,
-        category: autoClassification?.category || null,
-        vat_rate: parseFloat(form.vatRate) || null,
-        vat_amount: vatAmount || null,
-        base_amount: amount,
-        vat_inclusive: (parseFloat(form.vatRate) || 0) > 0
-      };
+      const { data: transaction, error: txError } = await supabase
+        .from("transactions")
+        .insert({
+          company_id: profile.company_id,
+          user_id: user.id,
+          bank_account_id: bankAccountId,
+          transaction_date: form.date,
+          description: form.description.trim(),
+          reference_number: form.reference?.trim() || null,
+          total_amount: totalAmount,
+          transaction_type: form.transactionType,
+          category: autoClassification?.category || null,
+          vat_rate: parseFloat(form.vatRate) || null,
+          vat_amount: vatAmount || null,
+          base_amount: amount,
+          vat_inclusive: (parseFloat(form.vatRate) || 0) > 0,
+          status: "approved"
+        })
+        .select()
+        .single();
+      if (txError) {
+        toast({ title: "Transaction failed", description: txError.message, variant: "destructive" });
+        return;
+      }
 
       if (txError) {
         console.error("Transaction insert error:", txError);
@@ -681,15 +690,21 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         credit: e.credit 
       })));
 
-      const { data: rpcRes, error: rpcErr } = await supabase.rpc('post_manual_transaction', {
-        _company_id: profile.company_id,
-        _transaction: header as any,
-        _entries: sanitizedEntries as any
-      });
-      if (rpcErr) {
-        toast({ title: "Posting failed", description: rpcErr.message, variant: "destructive" });
+      const { error: entriesError } = await supabase
+        .from("transaction_entries")
+        .insert(sanitizedEntries.map(e => ({
+          transaction_id: transaction.id,
+          account_id: e.account_id,
+          debit: e.debit,
+          credit: e.credit,
+          description: form.description.trim(),
+          status: "approved"
+        })) as any);
+      if (entriesError) {
+        toast({ title: "Entries failed", description: entriesError.message, variant: "destructive" });
         return;
       }
+      await supabase.from('transactions').update({ status: 'posted' }).eq('id', transaction.id);
 
       // Update bank account balance
       if (bankAccountId) {
