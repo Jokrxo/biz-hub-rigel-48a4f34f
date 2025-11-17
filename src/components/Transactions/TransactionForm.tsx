@@ -531,7 +531,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           vat_amount: vatAmount || null,
           base_amount: amount,
           vat_inclusive: (parseFloat(form.vatRate) || 0) > 0,
-          status: "approved"
+          status: "pending"
         })
         .select()
         .single();
@@ -698,13 +698,13 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           debit: e.debit,
           credit: e.credit,
           description: form.description.trim(),
-          status: "approved"
+          status: "pending"
         })) as any);
       if (entriesError) {
         toast({ title: "Entries failed", description: entriesError.message, variant: "destructive" });
         return;
       }
-      await supabase.from('transactions').update({ status: 'posted' }).eq('id', transaction.id);
+      // Keep manual transactions at approved status; do not auto-set to posted
 
       // Update bank account balance
       if (bankAccountId) {

@@ -773,7 +773,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           bank_account_id: bankAccountId,
           transaction_type: form.element,
           category: autoClassification?.category || null,
-          status: "approved"
+          status: "pending"
         })
         .select()
         .single();
@@ -1047,7 +1047,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           debit: e.debit,
           credit: e.credit,
           description: sanitizedDescription,
-          status: "approved"
+          status: "pending"
         })) as any);
 
       if (entriesError) {
@@ -1123,7 +1123,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         notify.error("Ledger sync warning", { description: `Entries saved, but AFS sync failed: ${ledErr.message}`, duration: 6000 });
       }
 
-      await supabase.from('transactions').update({ status: 'posted' }).eq('id', transaction.id);
+      // Keep manual transactions at approved status; do not auto-set to posted
       
 
       // Handle loan-specific operations
