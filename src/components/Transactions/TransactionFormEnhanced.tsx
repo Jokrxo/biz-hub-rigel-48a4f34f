@@ -25,6 +25,15 @@ const calculateMonthlyRepayment = (principal: number, monthlyRate: number, termM
   return (principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
 };
 
+// Calculate loan payment amount based on installment
+const calculateLoanPaymentAmount = (loan: any, installmentNumber: number): number => {
+  if (!loan || !loan.monthly_repayment) return 0;
+  
+  // For now, return the monthly repayment amount
+  // In a more sophisticated system, this could calculate principal/interest split
+  return loan.monthly_repayment;
+};
+
 const ChartOfAccountsLazy = lazy(() => import("./ChartOfAccountsManagement").then(m => ({ default: m.ChartOfAccountsManagement })));
 
 
@@ -179,7 +188,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     loanId: "",
     interestRate: "",
     loanTerm: "",
-    loanTermType: "short"
+    loanTermType: "short",
+    installmentNumber: ""
   });
   const [depreciationMethod, setDepreciationMethod] = useState<string>("straight_line");
 
@@ -202,7 +212,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         loanId: "",
         interestRate: "",
         loanTerm: "",
-        loanTermType: "short"
+        loanTermType: "short",
+        installmentNumber: ""
       });
       setDebitSearch("");
       setCreditSearch("");
@@ -1509,6 +1520,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [accountSearchTarget, setAccountSearchTarget] = useState<"debit"|"credit">("debit");
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalIncludeAll, setGlobalIncludeAll] = useState(false);
+  // Lock debit account for loans (user can only choose credit account - bank/accrual)
+  const disableDebitSelection = form.element?.startsWith('loan_') || (lockAccounts && Boolean(form.debitAccount));
+  const disableCreditSelection = form.element?.startsWith('loan_') ? false : (lockAccounts && Boolean(form.creditAccount));
   const disableAccountSelection = lockAccounts && Boolean(form.debitAccount) && Boolean(form.creditAccount);
 
   useEffect(() => {
@@ -1521,6 +1535,17 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Auto-calculate loan payment amount when loan is selected
+  useEffect(() => {
+    if (form.element === 'loan_repayment' && form.loanId) {
+      const selectedLoan = loans.find(loan => loan.id === form.loanId);
+      if (selectedLoan && selectedLoan.monthly_repayment) {
+        const paymentAmount = calculateLoanPaymentAmount(selectedLoan, parseInt(form.installmentNumber) || 1);
+        setForm(prev => ({ ...prev, amount: paymentAmount.toFixed(2) }));
+      }
+    }
+  }, [form.element, form.loanId, form.installmentNumber, loans]);
 
   if (!open) return null;
 
@@ -1718,26 +1743,42 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             </div>
 
             {(form.element === 'loan_repayment' || form.element === 'loan_interest') && (
-              <div className="mt-3">
-                <Label>Select Loan *</Label>
-                <Select value={form.loanId} onValueChange={(val) => setForm({ ...form, loanId: val })}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a loan" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {loans.length === 0 ? (
-                      <div className="p-4 text-center text-sm text-gray-500">
-                        No active loans found. Please create loans first.
-                      </div>
-                    ) : (
-                      loans.map(loan => (
-                        <SelectItem key={loan.id} value={loan.id}>
-                          {loan.reference} - {loan.loan_type === 'long' ? 'Long-term' : 'Short-term'} - Outstanding: R {loan.outstanding_balance?.toFixed(2)}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
+              <div className="mt-3 grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Select Loan *</Label>
+                  <Select value={form.loanId} onValueChange={(val) => setForm({ ...form, loanId: val })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a loan" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {loans.length === 0 ? (
+                        <div className="p-4 text-center text-sm text-gray-500">
+                          No active loans found. Please create loans first.
+                        </div>
+                      ) : (
+                        loans.map(loan => (
+                          <SelectItem key={loan.id} value={loan.id}>
+                            {loan.reference} - {loan.loan_type === 'long' ? 'Long-term' : 'Short-term'} - Outstanding: R {loan.outstanding_balance?.toFixed(2)}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {form.element === 'loan_repayment' && (
+                  <div>
+                    <Label htmlFor="installmentNumber">Installment Number</Label>
+                    <Input
+                      id="installmentNumber"
+                      type="number"
+                      step="1"
+                      min="1"
+                      placeholder="e.g. 1"
+                      value={form.installmentNumber}
+                      onChange={(e) => setForm({ ...form, installmentNumber: e.target.value })}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -1776,7 +1817,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           debitAccount: val,
                           creditAccount: prev.creditAccount === val ? "" : prev.creditAccount,
                         }));
-                      }} disabled={disableAccountSelection || debitSource.length === 0}>
+                      }} disabled={disableDebitSelection || debitSource.length === 0}>
                         <SelectTrigger id="debitAccount">
                           <SelectValue placeholder="Select debit account" />
                         </SelectTrigger>
@@ -1860,7 +1901,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           creditAccount: val,
                           debitAccount: prev.debitAccount === val ? "" : prev.debitAccount,
                         }));
-                      }} disabled={disableAccountSelection || creditSource.length === 0}>
+                      }} disabled={disableCreditSelection || creditSource.length === 0}>
                         <SelectTrigger id="creditAccount">
                           <SelectValue placeholder="Select credit account" />
                         </SelectTrigger>

@@ -2,7 +2,7 @@ import * as React from "react";
 import { Suspense, lazy } from "react";
 import { Toaster } from "./components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { TooltipProvider } from "./components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Index from "./pages/Index";
@@ -15,7 +15,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { ProtectedRoute } from "./components/Auth/ProtectedRoute";
 import { SupabaseSetup } from "./components/Setup/SupabaseSetup";
 import { PageLoader } from "./components/ui/loading-spinner";
-import "./debug-supabase";
+import { InstallPrompt } from "./components/PWA/InstallPrompt";
 
 // Lazy load pages
 const Transactions = lazy(() => import("./pages/Transactions"));
@@ -31,8 +31,9 @@ const Customers = lazy(() => import("./pages/Customers"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Bank = lazy(() => import("./pages/Bank"));
 const Budget = lazy(() => import("./pages/Budget"));
-const Payroll = lazy(() => import("./pages/Payroll.tsx"));
-const Loans = lazy(() => import("./pages/Loans.tsx"));
+const Payroll = lazy(() => import("./pages/Payroll"));
+const Loans = lazy(() => import("./pages/Loans"));
+const PaymentPortal = lazy(() => import("./pages/PaymentPortal"));
 
 const queryClient = new QueryClient();
 
@@ -74,11 +75,13 @@ const App = () => {
             <Route path="/budget" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Budget /></Suspense></ProtectedRoute>} />
             <Route path="/loans" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Loans /></Suspense></ProtectedRoute>} />
             <Route path="/payroll" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Payroll /></Suspense></ProtectedRoute>} />
+            <Route path="/billing" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Settings /></Suspense></ProtectedRoute>} />
 
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          <InstallPrompt />
         </BrowserRouter>
       </AuthProvider>
     </TooltipProvider>

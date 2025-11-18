@@ -15,7 +15,8 @@ import {
   CreditCard,
   Building2,
   Building,
-  Wallet
+  Wallet,
+  Crown
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -41,6 +42,7 @@ const navItems = [
   { icon: CreditCard, label: "Loans", href: "/loans" },
   { icon: DollarSign, label: "Payroll", href: "/payroll" },
   { icon: Users, label: "Customers", href: "/customers" },
+  { icon: Crown, label: "Billing", href: "/billing" },
   { icon: Settings, label: "Settings", href: "/settings" },
 ];
 
