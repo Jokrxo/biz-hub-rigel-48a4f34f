@@ -8,9 +8,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useEffect, useMemo, useState } from "react";
-import { Users, FileText, Calculator, Plus, Check, BarChart, Info } from "lucide-react";
+import { Users, FileText, Calculator, Plus, Check, BarChart, Info, ArrowRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
@@ -18,7 +20,7 @@ import { useRoles } from "@/hooks/use-roles";
 import { buildPayslipPDF, type PayslipForPDF } from "@/lib/payslip-export";
 import { addLogoToPDF, fetchLogoDataUrl } from "@/lib/invoice-export";
 
-type Employee = { id: string; first_name: string; last_name: string; email: string | null; id_number: string | null; start_date: string | null; active: boolean };
+type Employee = { id: string; first_name: string; last_name: string; email: string | null; id_number: string | null; start_date: string | null; salary_type: string | null; position: string | null; role: string | null; bank_name: string | null; bank_branch_code: string | null; bank_account_number: string | null; bank_account_type: string | null; active: boolean };
 type PayItem = { id: string; code: string; name: string; type: "earning" | "deduction" | "employer"; taxable: boolean };
 type PayRun = { id: string; company_id: string; period_start: string; period_end: string; status: string };
 type PayRunLine = { id: string; pay_run_id: string; employee_id: string; gross: number; net: number; paye: number; uif_emp: number; uif_er: number; sdl_er: number };
@@ -30,7 +32,8 @@ export default function Payroll() {
   const { isAdmin, isAccountant } = useRoles();
   const canEdit = isAdmin || isAccountant;
   const [tutorialOpen, setTutorialOpen] = useState(false);
-
+  const [wizardOpen, setWizardOpen] = useState(false);
+  
   const [companyId, setCompanyId] = useState<string>("");
 
   useEffect(() => {
@@ -73,18 +76,19 @@ export default function Payroll() {
           </div>
 
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList>
-              <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-              <TabsTrigger value="runs">Pay Runs</TabsTrigger>
-              <TabsTrigger value="employees">Employees</TabsTrigger>
-              <TabsTrigger value="items">Pay Items</TabsTrigger>
-              <TabsTrigger value="setup">Setup</TabsTrigger>
-              <TabsTrigger value="periods">Periods</TabsTrigger>
-              <TabsTrigger value="process">Process</TabsTrigger>
-              <TabsTrigger value="payslip">Payslip</TabsTrigger>
-              <TabsTrigger value="reports">Reports</TabsTrigger>
-              <TabsTrigger value="help">Help</TabsTrigger>
-            </TabsList>
+          <TabsList>
+            <TabsTrigger value="simple">Simple</TabsTrigger>
+            <TabsTrigger value="employees">Employees</TabsTrigger>
+            <TabsTrigger value="items">Pay Items</TabsTrigger>
+            <TabsTrigger value="periods">Periods</TabsTrigger>
+            <TabsTrigger value="process">Process</TabsTrigger>
+            <TabsTrigger value="payslip">Payslip</TabsTrigger>
+            <TabsTrigger value="reports">Reports</TabsTrigger>
+          </TabsList>
+
+            <TabsContent value="simple">
+              <SimplePayroll setTab={setTab} canEdit={canEdit} />
+            </TabsContent>
 
             <TabsContent value="dashboard">
               <PayrollDashboard companyId={companyId} />
@@ -140,23 +144,106 @@ export default function Payroll() {
             </TabsContent>
           </Tabs>
 
-          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+          <Dialog open={wizardOpen} onOpenChange={setWizardOpen}>
             <DialogContent className="sm:max-w-[640px] p-4">
               <DialogHeader>
-                <DialogTitle>Payroll Tutorial</DialogTitle>
+                <DialogTitle>Quick Payroll Wizard</DialogTitle>
               </DialogHeader>
               <div className="space-y-3 text-sm">
-                <p>Use this module to process payroll: manage employees, setup pay items, run pay periods, and generate payslips.</p>
-                <p>Review reports for monthly totals and statutory summaries.</p>
+                <p>We’ll guide you through 4 simple steps:</p>
+                <ol className="list-decimal list-inside space-y-1">
+                  <li>Add or confirm employees</li>
+                  <li>Create or select the current pay run</li>
+                  <li>Capture time, earnings and deductions</li>
+                  <li>Preview and download payslips</li>
+                </ol>
               </div>
               <DialogFooter>
-                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+                <Button variant="outline" onClick={() => setWizardOpen(false)}>Close</Button>
+                <Button onClick={() => { setWizardOpen(false); setTab("employees"); }}>Start</Button>
               </DialogFooter>
             </DialogContent>
+          </Dialog>
+
+          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+          <DialogContent className="sm:max-w-[640px] p-4">
+            <DialogHeader>
+              <DialogTitle>Payroll Tutorial</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <p>Simple 5-step workflow aligned with South African payroll:</p>
+              <ol className="list-decimal list-inside space-y-1">
+                <li>Add Employees (Monthly/Hourly/Weekly, salary amount, bank details)</li>
+                <li>Pay Items auto-setup: Basic Salary, Allowance, Overtime, PAYE, UIF (Emp/Er), SDL (Er)</li>
+                <li>Select Payroll Period (create if not present)</li>
+                <li>Run Payroll: enter allowances, overtime, bonuses, extra deductions; calculations apply automatically</li>
+                <li>Generate Payslip and Post to Ledger (expenses and statutory payables)</li>
+              </ol>
+              <p>No manual PAYE/UIF/SDL calculations are needed — the system applies SARS brackets and statutory rates.</p>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+            </DialogFooter>
+          </DialogContent>
           </Dialog>
         </div>
       </DashboardLayout>
     </>
+  );
+}
+
+function SimplePayroll({ setTab, canEdit }: { setTab: (t: string) => void; canEdit: boolean }) {
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <CardHeader><CardTitle>Quick Actions</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <Button className="justify-start" variant="outline" onClick={() => setTab("employees")}>
+              <Users className="h-4 w-4 mr-2" /> Add Employee
+            </Button>
+            <Button className="justify-start" variant="outline" onClick={() => setTab("runs")}>
+              <Calculator className="h-4 w-4 mr-2" /> Create Pay Run
+            </Button>
+            <Button className="justify-start" variant="outline" onClick={() => setTab("process")}>
+              <FileText className="h-4 w-4 mr-2" /> Process Payroll
+            </Button>
+            <Button className="justify-start" variant="outline" onClick={() => setTab("payslip")}>
+              <ArrowRight className="h-4 w-4 mr-2" /> Generate Payslips
+            </Button>
+            <Button className="justify-start" variant="outline" onClick={() => setTab("reports")}>
+              <BarChart className="h-4 w-4 mr-2" /> View Reports
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Guided Workflow</CardTitle></CardHeader>
+        <CardContent>
+          <div className="space-y-4 text-sm">
+            <p>Follow a simple, linear workflow similar to popular accounting apps.</p>
+            <div className="flex gap-3">
+              <Button onClick={() => setTab("employees")} className="bg-gradient-primary">
+                <Users className="h-4 w-4 mr-2" /> Step 1: Employees
+              </Button>
+              <Button variant="outline" onClick={() => setTab("items")}>
+                <Calculator className="h-4 w-4 mr-2" /> Step 2: Pay Items
+              </Button>
+              <Button variant="outline" onClick={() => setTab("periods")}>
+                <FileText className="h-4 w-4 mr-2" /> Step 3: Select Period
+              </Button>
+              <Button variant="outline" onClick={() => setTab("process")}>
+                <ArrowRight className="h-4 w-4 mr-2" /> Step 4: Run Payroll
+              </Button>
+              <Button variant="outline" onClick={() => setTab("payslip")}>
+                <ArrowRight className="h-4 w-4 mr-2" /> Step 5: Payslip & Post
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -215,7 +302,10 @@ function PayrollSetup({ companyId, canEdit }: { companyId: string; canEdit: bool
   useEffect(() => {
     const load = async () => {
       const { data } = await supabase.from("payroll_settings" as any).select("*").eq("company_id", companyId).maybeSingle();
-      if (data) setSettings(data);
+      if (data) { setSettings(data); setLoading(false); return; }
+      const defaults = { company_id: companyId, tax_brackets: null, pension_rules: null, uif_percent: 1, sdl_percent: 1, overtime_rules: null, allowances: null } as any;
+      await supabase.from("payroll_settings" as any).insert(defaults);
+      setSettings(defaults);
       setLoading(false);
     };
     if (companyId) load();
@@ -345,7 +435,8 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
   const [period, setPeriod] = useState<string>("");
   const [periods, setPeriods] = useState<any[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [form, setForm] = useState({ employee_id: "", hours: "", overtime_hours: "", bonuses: "", commission: "" });
+  const [form, setForm] = useState({ employee_id: "", allowances: "", overtime: "", bonuses: "", travel_fixed: "", travel_reimb: "", medical_contrib: "", pension_contrib: "", extra_deductions: "" });
+  const [defaults, setDefaults] = useState<any>({ basic: 0 });
   const [run, setRun] = useState<any>(null);
   useEffect(() => {
     const load = async () => {
@@ -356,6 +447,28 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
     };
     if (companyId) load();
   }, [companyId]);
+  useEffect(() => {
+    const loadDefaults = async () => {
+      if (!form.employee_id) { setDefaults({ basic: 0 }); return; }
+      const { data: basicItem } = await supabase
+        .from("pay_items" as any)
+        .select("id")
+        .eq("company_id", companyId)
+        .eq("name", "Basic Salary")
+        .maybeSingle();
+      const basicId = (basicItem as any)?.id;
+      if (!basicId) { setDefaults({ basic: 0 }); return; }
+      const { data: ep } = await supabase
+        .from("employee_pay_items" as any)
+        .select("amount")
+        .eq("employee_id", form.employee_id)
+        .eq("pay_item_id", basicId)
+        .maybeSingle();
+      const basic = ep ? Number((ep as any).amount || 0) : 0;
+      setDefaults({ basic });
+    };
+    loadDefaults();
+  }, [form.employee_id, companyId]);
   const ensureRun = async (): Promise<any> => {
     const p = periods.find((x: any) => x.id === period);
     if (!p) { toast({ title: "Error", description: "Select a period", variant: "destructive" }); return null; }
@@ -365,24 +478,77 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return null; }
     setRun(data); return data;
   };
+  const computePAYE = (monthlyGross: number): number => {
+    const annual = monthlyGross * 12;
+    const brackets = [
+      { upTo: 237100, base: 0, rate: 0.18, over: 0 },
+      { upTo: 370500, base: 42678, rate: 0.26, over: 237100 },
+      { upTo: 512800, base: 77362, rate: 0.31, over: 370500 },
+      { upTo: 673000, base: 121475, rate: 0.36, over: 512800 },
+      { upTo: 857900, base: 179147, rate: 0.39, over: 673000 },
+      { upTo: 1817000, base: 251258, rate: 0.41, over: 857900 },
+      { upTo: Infinity, base: 644489, rate: 0.45, over: 1817000 },
+    ];
+    let taxAnnual = 0;
+    for (const b of brackets) {
+      if (annual <= b.upTo) { taxAnnual = b.base + (annual - b.over) * b.rate; break; }
+    }
+    const rebateAnnual = 17235;
+    const taxAfterRebate = Math.max(0, taxAnnual - rebateAnnual);
+    return +(taxAfterRebate / 12).toFixed(2);
+  };
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const r = await ensureRun();
     if (!r) return;
-    const hours = parseFloat(form.hours || "0");
-    const overtimeHours = parseFloat(form.overtime_hours || "0");
+    const allowances = parseFloat(form.allowances || "0");
+    const overtime = parseFloat(form.overtime || "0");
     const bonuses = parseFloat(form.bonuses || "0");
-    const commission = parseFloat(form.commission || "0");
-    const baseRate = 0;
-    const gross = bonuses + commission;
-    const details = { hours, overtime_hours: overtimeHours, overtime_amount: 0, bonuses, commission };
-    const calc = { paye: +(gross * 0.18).toFixed(2), uif_emp: +(gross * 0.01).toFixed(2), uif_er: +(gross * 0.01).toFixed(2), sdl_er: +(gross * 0.01).toFixed(2) };
-    const net = +(gross - calc.paye - calc.uif_emp).toFixed(2);
-    const payload = { pay_run_id: (r as any).id, employee_id: form.employee_id, gross, net, paye: calc.paye, uif_emp: calc.uif_emp, uif_er: calc.uif_er, sdl_er: calc.sdl_er, details };
+    const travelFixed = parseFloat(form.travel_fixed || "0");
+    const travelReimb = parseFloat(form.travel_reimb || "0");
+    const extra = parseFloat(form.extra_deductions || "0");
+    const medical = parseFloat(form.medical_contrib || "0");
+    const pension = parseFloat(form.pension_contrib || "0");
+    const basic = Number(defaults.basic || 0);
+    const gross = +(basic + allowances + overtime + bonuses + travelFixed + travelReimb).toFixed(2);
+    const taxableGross = +(gross - travelReimb).toFixed(2);
+    const cap = 177.12;
+    const uifEmpRaw = +(taxableGross * 0.01).toFixed(2);
+    const uif_emp = Math.min(uifEmpRaw, cap);
+    const uif_er = +(taxableGross * 0.01).toFixed(2);
+    const sdl_er = +(taxableGross * 0.01).toFixed(2);
+    const paye = computePAYE(taxableGross);
+    const pensionCapPct = taxableGross * 0.275;
+    const pensionCapMonthly = 350000 / 12;
+    const pensionCapped = Math.min(pension, pensionCapPct, pensionCapMonthly);
+    const medicalCapped = Math.max(0, medical);
+    const net = +(gross - (paye + uif_emp + extra + pensionCapped + medicalCapped)).toFixed(2);
+    const details = {
+      earnings: [
+        { name: "Basic Salary", amount: basic },
+        { name: "Allowance", amount: allowances },
+        { name: "Overtime", amount: overtime },
+        { name: "Bonuses", amount: bonuses },
+        { name: "Travel Allowance (Fixed)", amount: travelFixed },
+        { name: "Travel Allowance (Reimbursive)", amount: travelReimb },
+      ],
+      deductions: [
+        { name: "PAYE", amount: paye },
+        { name: "UIF Employee", amount: uif_emp },
+        { name: "Extra Deductions", amount: extra },
+        { name: "Pension Employee", amount: pensionCapped },
+        { name: "Medical Aid Employee", amount: medicalCapped },
+      ],
+      employer: [
+        { name: "UIF Employer", amount: uif_er },
+        { name: "SDL Employer", amount: sdl_er },
+      ],
+    };
+    const payload = { pay_run_id: (r as any).id, employee_id: form.employee_id, gross, net, paye, uif_emp, uif_er, sdl_er, details } as any;
     const { error } = await supabase.from("pay_run_lines" as any).insert(payload as any);
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Success", description: "Captured payroll for employee" });
-    setForm({ employee_id: "", hours: "", overtime_hours: "", bonuses: "", commission: "" });
+    setForm({ employee_id: "", allowances: "", overtime: "", bonuses: "", travel_fixed: "", travel_reimb: "", medical_contrib: "", pension_contrib: "", extra_deductions: "" });
   };
   return (
     <Card>
@@ -409,12 +575,12 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
               </Select>
             </div>
             <div>
-              <Label>Time & Attendance (hrs)</Label>
-              <Input type="number" step="0.01" value={form.hours} onChange={e => setForm({ ...form, hours: e.target.value })} />
+              <Label>Allowances</Label>
+              <Input type="number" step="0.01" value={form.allowances} onChange={e => setForm({ ...form, allowances: e.target.value })} />
             </div>
             <div>
-              <Label>Overtime (hrs)</Label>
-              <Input type="number" step="0.01" value={form.overtime_hours} onChange={e => setForm({ ...form, overtime_hours: e.target.value })} />
+              <Label>Overtime</Label>
+              <Input type="number" step="0.01" value={form.overtime} onChange={e => setForm({ ...form, overtime: e.target.value })} />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -423,8 +589,28 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
               <Input type="number" step="0.01" value={form.bonuses} onChange={e => setForm({ ...form, bonuses: e.target.value })} />
             </div>
             <div>
-              <Label>Commission</Label>
-              <Input type="number" step="0.01" value={form.commission} onChange={e => setForm({ ...form, commission: e.target.value })} />
+              <Label>Travel Allowance (Fixed)</Label>
+              <Input type="number" step="0.01" value={form.travel_fixed} onChange={e => setForm({ ...form, travel_fixed: e.target.value })} />
+            </div>
+            <div>
+              <Label>Travel Allowance (Reimbursive)</Label>
+              <Input type="number" step="0.01" value={form.travel_reimb} onChange={e => setForm({ ...form, travel_reimb: e.target.value })} />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <Label>Medical Aid (Employee)</Label>
+              <Input type="number" step="0.01" value={form.medical_contrib} onChange={e => setForm({ ...form, medical_contrib: e.target.value })} />
+            </div>
+            <div>
+              <Label>Pension Fund (Employee)</Label>
+              <Input type="number" step="0.01" value={form.pension_contrib} onChange={e => setForm({ ...form, pension_contrib: e.target.value })} />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <Label>Extra Deductions</Label>
+              <Input type="number" step="0.01" value={form.extra_deductions} onChange={e => setForm({ ...form, extra_deductions: e.target.value })} />
             </div>
           </div>
           {canEdit && <Button type="submit" className="bg-gradient-primary">Capture</Button>}
@@ -435,6 +621,7 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
 }
 
 function PayslipPreview({ companyId }: { companyId: string }) {
+  const { toast } = useToast();
   const [run, setRun] = useState<any>(null);
   const [line, setLine] = useState<any>(null);
   const [runs, setRuns] = useState<any[]>([]);
@@ -486,6 +673,51 @@ function PayslipPreview({ companyId }: { companyId: string }) {
     const periodName = `${new Date(run.period_start).toLocaleDateString('en-ZA')} - ${new Date(run.period_end).toLocaleDateString('en-ZA')}`;
     doc.save(`payslip_${employee_name.replace(/\s+/g,'_')}_${periodName.replace(/\s+/g,'_')}.pdf`);
   };
+  const postToLedger = async () => {
+    if (!run || !line) return;
+    const paye = Number(line.paye || 0);
+    const uifEmp = Number(line.uif_emp || 0);
+    const uifEr = Number(line.uif_er || 0);
+    const sdlEr = Number(line.sdl_er || 0);
+    const gross = Number(line.gross || 0);
+    const net = Number(line.net || 0);
+    const postDate = new Date().toISOString().slice(0, 10);
+    const ensureAccount = async (nm: string, tp: 'expense' | 'liability', code: string) => {
+      const { data: found }: any = await supabase.from('chart_of_accounts' as any).select('id').eq('company_id', companyId).eq('account_name', nm).maybeSingle();
+      if ((found as any)?.id) return (found as any).id as string;
+      const { data }: any = await supabase.from('chart_of_accounts' as any).insert({ company_id: companyId, account_code: code, account_name: nm, account_type: tp, is_active: true } as any).select('id').single();
+      return (data as any).id as string;
+    };
+    const salaryExp = await ensureAccount('Salary Expense', 'expense', '6000-SAL');
+    const uifExp = await ensureAccount('Employer UIF Expense', 'expense', '6000-UIF-EXP');
+    const sdlExp = await ensureAccount('Employer SDL Expense', 'expense', '6000-SDL-EXP');
+    const netPayable = await ensureAccount('Net Salaries Payable', 'liability', '2100-NET');
+    const payePayable = await ensureAccount('PAYE Payable', 'liability', '2100-PAYE');
+    const uifPayable = await ensureAccount('UIF Payable', 'liability', '2100-UIF');
+    const sdlPayable = await ensureAccount('SDL Payable', 'liability', '2100-SDL');
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: tx, error: txErr } = await supabase
+      .from('transactions' as any)
+      .insert({ company_id: companyId, user_id: user?.id || '', transaction_date: postDate, description: `Payroll posting ${new Date(run.period_start).toLocaleDateString()} - ${new Date(run.period_end).toLocaleDateString()}`, reference_number: null, total_amount: gross, transaction_type: 'payroll', status: 'pending' } as any)
+      .select('id')
+      .single();
+    if (txErr) { return; }
+    const rows = [
+      { transaction_id: (tx as any).id, account_id: salaryExp, debit: gross, credit: 0, description: 'Salary Expense', status: 'approved' },
+      { transaction_id: (tx as any).id, account_id: uifExp, debit: uifEr, credit: 0, description: 'Employer UIF Expense', status: 'approved' },
+      { transaction_id: (tx as any).id, account_id: sdlExp, debit: sdlEr, credit: 0, description: 'Employer SDL Expense', status: 'approved' },
+      { transaction_id: (tx as any).id, account_id: netPayable, debit: 0, credit: net, description: 'Net Salaries Payable', status: 'approved' },
+      { transaction_id: (tx as any).id, account_id: payePayable, debit: 0, credit: paye, description: 'PAYE Payable', status: 'approved' },
+      { transaction_id: (tx as any).id, account_id: uifPayable, debit: 0, credit: uifEmp + uifEr, description: 'UIF Payable', status: 'approved' },
+      { transaction_id: (tx as any).id, account_id: sdlPayable, debit: 0, credit: sdlEr, description: 'SDL Payable', status: 'approved' },
+    ];
+    const { error: teErr } = await supabase.from('transaction_entries' as any).insert(rows as any);
+    if (teErr) { return; }
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
+    await supabase.from('ledger_entries' as any).insert(ledgerRows as any);
+    await supabase.from('transactions' as any).update({ status: 'posted' } as any).eq('id', (tx as any).id);
+    toast({ title: 'Success', description: 'Payroll posted to ledger' });
+  };
   return (
     <Card>
       <CardHeader><CardTitle>Payslip Preview</CardTitle></CardHeader>
@@ -519,6 +751,7 @@ function PayslipPreview({ companyId }: { companyId: string }) {
             <div>Earnings vs Deductions</div>
             <div className="pt-2">
               <Button variant="outline" onClick={download}>Download Payslip</Button>
+              <Button className="ml-2 bg-gradient-primary" onClick={postToLedger}>Post to Ledger</Button>
             </div>
           </div>
         )}
@@ -578,7 +811,7 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", id_number: "", start_date: "" });
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", id_number: "", start_date: "", salary_type: "monthly", position: "", role: "employee", salary_amount: "", bank_name: "", bank_branch_code: "", bank_account_number: "", bank_account_type: "checking" });
 
   const load = async () => {
     setLoading(true);
@@ -602,19 +835,132 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-    const { error } = await supabase.from("employees" as any).insert({
-      company_id: companyId,
-      first_name: form.first_name,
-      last_name: form.last_name,
-      email: form.email || null,
-      id_number: form.id_number || null,
-      start_date: form.start_date || null,
-      active: true,
-    } as any);
-      if (error) throw error;
+      let insertedEmp: any = null;
+      try {
+        const res = await supabase.from("employees" as any).insert({
+          company_id: companyId,
+          first_name: form.first_name,
+          last_name: form.last_name,
+          email: form.email || null,
+          id_number: form.id_number || null,
+          start_date: form.start_date || null,
+          salary_type: form.salary_type || null,
+          position: form.position || null,
+          role: form.role || null,
+          bank_name: form.bank_name || null,
+          bank_branch_code: form.bank_branch_code || null,
+          bank_account_number: form.bank_account_number || null,
+          bank_account_type: form.bank_account_type || null,
+          active: true,
+        } as any).select("id").single();
+        if (res.error) throw res.error;
+        insertedEmp = res.data;
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        const retry = msg.includes("column") && msg.includes("does not exist");
+        if (!retry) throw err;
+        const res2 = await supabase.from("employees" as any).insert({
+          company_id: companyId,
+          first_name: form.first_name,
+          last_name: form.last_name,
+          email: form.email || null,
+          id_number: form.id_number || null,
+          start_date: form.start_date || null,
+          salary_type: form.salary_type || null,
+          active: true,
+        } as any).select("id").single();
+        if (res2.error) throw res2.error;
+        insertedEmp = res2.data;
+      }
+      const empId = (insertedEmp as any)?.id;
+      if (empId) {
+        const ensureAccount = async (nm: string, tp: 'expense' | 'liability', code: string) => {
+          const { data: found }: any = await supabase
+            .from('chart_of_accounts' as any)
+            .select('id')
+            .eq('company_id', companyId)
+            .eq('account_name', nm)
+            .maybeSingle();
+          if ((found as any)?.id) return (found as any).id as string;
+          const { data }: any = await supabase
+            .from('chart_of_accounts' as any)
+            .insert({ company_id: companyId, account_code: code, account_name: nm, account_type: tp, is_active: true } as any)
+            .select('id')
+            .single();
+          return (data as any).id as string;
+        };
+        await ensureAccount('Salary Expense', 'expense', '6000-SAL');
+        await ensureAccount('Employer UIF Expense', 'expense', '6000-UIF-EXP');
+        await ensureAccount('Employer SDL Expense', 'expense', '6000-SDL-EXP');
+        await ensureAccount('Net Salaries Payable', 'liability', '2100-NET');
+        await ensureAccount('PAYE Payable', 'liability', '2100-PAYE');
+        await ensureAccount('UIF Payable', 'liability', '2100-UIF');
+        await ensureAccount('SDL Payable', 'liability', '2100-SDL');
+        const saItems = [
+          { name: "Basic Salary", type: "earning" },
+          { name: "Allowance", type: "earning" },
+          { name: "Overtime", type: "earning" },
+          { name: "Bonus", type: "earning" },
+          { name: "Commission", type: "earning" },
+          { name: "Travel Allowance (Fixed)", type: "earning" },
+          { name: "Travel Allowance (Reimbursive)", type: "earning" },
+          { name: "PAYE", type: "deduction" },
+          { name: "UIF Employee", type: "deduction" },
+          { name: "UIF Employer", type: "employer" },
+          { name: "SDL Employer", type: "employer" },
+          { name: "Medical Aid Employee", type: "deduction" },
+          { name: "Medical Aid Employer", type: "employer" },
+          { name: "Pension Employee", type: "deduction" },
+          { name: "Pension Employer", type: "employer" },
+        ];
+        const { data: existing } = await supabase
+          .from("pay_items" as any)
+          .select("id,name,type")
+          .eq("company_id", companyId);
+        const map = new Map<string, any>();
+        (existing || []).forEach((i: any) => map.set(String(i.name).toLowerCase(), i));
+        const toInsert: any[] = [];
+        for (const it of saItems) {
+          const key = it.name.toLowerCase();
+          const taxable = it.type === "earning" && !it.name.toLowerCase().includes("reimbursive");
+          if (!map.has(key)) toInsert.push({ company_id: companyId, code: it.name.replace(/\s+/g, "_").toUpperCase(), name: it.name, type: it.type, taxable });
+        }
+        if (toInsert.length) await supabase.from("pay_items" as any).insert(toInsert as any);
+        const { data: allItems } = await supabase
+          .from("pay_items" as any)
+          .select("id,name,type")
+          .eq("company_id", companyId);
+        const byName = new Map<string, any>();
+        (allItems || []).forEach((i: any) => byName.set(String(i.name).toLowerCase(), i));
+        const basic = byName.get("basic salary");
+        const allowance = byName.get("allowance");
+        const overtime = byName.get("overtime");
+        const bonusItem = byName.get("bonus");
+        const commissionItem = byName.get("commission");
+        const travelFixed = byName.get("travel allowance (fixed)");
+        const travelReimb = byName.get("travel allowance (reimbursive)");
+        const paye = byName.get("paye");
+        const uifEmp = byName.get("uif employee");
+        const uifEr = byName.get("uif employer");
+        const sdlEr = byName.get("sdl employer");
+        const rows: any[] = [];
+        const basicAmt = parseFloat(form.salary_amount || "0");
+        if (basic) rows.push({ employee_id: empId, pay_item_id: basic.id, amount: basicAmt, rate: null, unit: null });
+        if (allowance) rows.push({ employee_id: empId, pay_item_id: allowance.id, amount: 0, rate: null, unit: null });
+        if (overtime) rows.push({ employee_id: empId, pay_item_id: overtime.id, amount: 0, rate: null, unit: "hour" });
+        if (bonusItem) rows.push({ employee_id: empId, pay_item_id: bonusItem.id, amount: 0, rate: null, unit: null });
+        if (commissionItem) rows.push({ employee_id: empId, pay_item_id: commissionItem.id, amount: 0, rate: null, unit: null });
+        if (travelFixed) rows.push({ employee_id: empId, pay_item_id: travelFixed.id, amount: 0, rate: null, unit: null });
+        if (travelReimb) rows.push({ employee_id: empId, pay_item_id: travelReimb.id, amount: 0, rate: null, unit: null });
+        if (paye) rows.push({ employee_id: empId, pay_item_id: paye.id, amount: 0, rate: null, unit: null });
+        if (uifEmp) rows.push({ employee_id: empId, pay_item_id: uifEmp.id, amount: 0, rate: null, unit: null });
+        if (uifEr) rows.push({ employee_id: empId, pay_item_id: uifEr.id, amount: 0, rate: null, unit: null });
+        if (sdlEr) rows.push({ employee_id: empId, pay_item_id: sdlEr.id, amount: 0, rate: null, unit: null });
+        if (rows.length) await supabase.from("employee_pay_items" as any).insert(rows as any);
+      }
       toast({ title: "Success", description: "Employee created" });
       setDialogOpen(false);
-      setForm({ first_name: "", last_name: "", email: "", id_number: "", start_date: "" });
+      setForm({ first_name: "", last_name: "", email: "", id_number: "", start_date: "", salary_type: "monthly", position: "", role: "employee", salary_amount: "", bank_name: "", bank_branch_code: "", bank_account_number: "", bank_account_type: "checking" });
       load();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -639,6 +985,7 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>ID Number</TableHead>
+                <TableHead>Salary Type</TableHead>
                 <TableHead>Start Date</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
@@ -648,8 +995,9 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
                 <TableRow key={e.id}>
                   <TableCell>{e.first_name} {e.last_name}</TableCell>
                   <TableCell>{e.email || "-"}</TableCell>
-                  <TableCell>{e.id_number || "-"}</TableCell>
-                  <TableCell>{e.start_date ? new Date(e.start_date).toLocaleDateString() : "-"}</TableCell>
+                <TableCell>{e.id_number || "-"}</TableCell>
+                <TableCell>{e.salary_type || "-"}</TableCell>
+                <TableCell>{e.start_date ? new Date(e.start_date).toLocaleDateString() : "-"}</TableCell>
                   <TableCell>{e.active ? "Active" : "Inactive"}</TableCell>
                 </TableRow>
               ))}
@@ -682,9 +1030,83 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
                 <Input value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Start Date</Label>
+                <Input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} />
+              </div>
+              <div>
+                <Label>Salary Type</Label>
+                <Select value={form.salary_type} onValueChange={(v: any) => setForm({ ...form, salary_type: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                    <SelectItem value="hourly">Hourly</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             <div>
-              <Label>Start Date</Label>
-              <Input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} />
+              <Label>Position</Label>
+              <Input value={form.position} onChange={e => setForm({ ...form, position: e.target.value })} />
+            </div>
+            <div>
+              <Label>Role</Label>
+              <Select value={form.role} onValueChange={(v: any) => setForm({ ...form, role: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="employee">Employee</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                  <SelectItem value="contractor">Contractor</SelectItem>
+                  <SelectItem value="director">Director</SelectItem>
+                  <SelectItem value="intern">Intern</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Salary Amount</Label>
+                <Input type="number" step="0.01" value={form.salary_amount} onChange={e => setForm({ ...form, salary_amount: e.target.value })} />
+              </div>
+              <div>
+                <Label>Bank Name</Label>
+                <Select value={form.bank_name} onValueChange={(v: any) => setForm({ ...form, bank_name: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ABSA">ABSA Bank</SelectItem>
+                    <SelectItem value="FNB">FNB (First National Bank)</SelectItem>
+                    <SelectItem value="Standard Bank">Standard Bank</SelectItem>
+                    <SelectItem value="Nedbank">Nedbank</SelectItem>
+                    <SelectItem value="Capitec">Capitec Bank</SelectItem>
+                    <SelectItem value="Investec">Investec Bank</SelectItem>
+                    <SelectItem value="TymeBank">TymeBank</SelectItem>
+                    <SelectItem value="Bidvest">Bidvest Bank</SelectItem>
+                    <SelectItem value="Discovery">Discovery Bank</SelectItem>
+                    <SelectItem value="African Bank">African Bank</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Branch Code</Label>
+                <Input value={form.bank_branch_code} onChange={e => setForm({ ...form, bank_branch_code: e.target.value })} />
+              </div>
+              <div>
+                <Label>Account Number</Label>
+                <Input value={form.bank_account_number} onChange={e => setForm({ ...form, bank_account_number: e.target.value })} />
+              </div>
+            </div>
+            <div>
+              <Label>Account Type</Label>
+              <Select value={form.bank_account_type} onValueChange={(v: any) => setForm({ ...form, bank_account_type: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="checking">Checking</SelectItem>
+                  <SelectItem value="savings">Savings</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>

@@ -13,6 +13,8 @@ export interface PWAInstallState {
   installPrompt: BeforeInstallPromptEvent | null;
 }
 
+import { registerSW } from 'virtual:pwa-register';
+
 class PWAManager {
   private installPrompt: BeforeInstallPromptEvent | null = null;
   private deferredPrompt: BeforeInstallPromptEvent | null = null;
@@ -24,26 +26,26 @@ class PWAManager {
 
   private initializeServiceWorker(): void {
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', async () => {
-        try {
-          const registration = await navigator.serviceWorker.register('/sw.js');
-          console.log('SW registered: ', registration);
-          
-          // Check for updates
-          registration.addEventListener('updatefound', () => {
-            const newWorker = registration.installing;
-            if (newWorker) {
-              newWorker.addEventListener('statechange', () => {
-                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                  console.log('New content available, please refresh.');
-                }
-              });
-            }
-          });
-        } catch (error) {
-          console.log('SW registration failed: ', error);
+      const updateSW = registerSW({
+        onRegistered(reg) {
+          if (reg) {
+            console.log('SW registered:', reg);
+            reg.addEventListener('updatefound', () => {
+              const newWorker = reg.installing;
+              if (newWorker) {
+                newWorker.addEventListener('statechange', () => {
+                  if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                    console.log('New content available, please refresh.');
+                  }
+                });
+              }
+            });
+          }
         }
       });
+      if (!updateSW) {
+        console.log('PWA dev mode: virtual registerSW not available');
+      }
     }
   }
 
