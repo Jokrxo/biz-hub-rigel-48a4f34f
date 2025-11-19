@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Users, Mail, Phone } from "lucide-react";
+import { Plus, Users, Mail, Phone, Info } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
@@ -26,6 +26,7 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
@@ -40,6 +41,16 @@ export default function CustomersPage() {
   useEffect(() => {
     loadCustomers();
   }, []);
+
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_customers_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user]);
 
   const loadCustomers = async () => {
     try {
@@ -111,54 +122,60 @@ export default function CustomersPage() {
               <h1 className="text-3xl font-bold">Customers</h1>
               <p className="text-muted-foreground mt-1">Manage your customer database</p>
             </div>
-            {canEdit && (
-              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                <DialogTrigger asChild>
-                  <Button className="bg-gradient-primary">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Customer
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add New Customer</DialogTitle>
-                  </DialogHeader>
-                  <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                      <Label>Customer Name</Label>
-                      <Input
-                        value={formData.name}
-                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <div>
-                      <Label>Email</Label>
-                      <Input
-                        type="email"
-                        value={formData.email}
-                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <Label>Phone</Label>
-                      <Input
-                        value={formData.phone}
-                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <Label>Address</Label>
-                      <Input
-                        value={formData.address}
-                        onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                      />
-                    </div>
-                    <Button type="submit" className="w-full bg-gradient-primary">Add Customer</Button>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            )}
+            <div className="flex items-center gap-3">
+              <Button variant="outline" onClick={() => setTutorialOpen(true)}>
+                <Info className="h-4 w-4 mr-2" />
+                Help & Tutorial
+              </Button>
+              {canEdit && (
+                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button className="bg-gradient-primary">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Customer
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add New Customer</DialogTitle>
+                    </DialogHeader>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                      <div>
+                        <Label>Customer Name</Label>
+                        <Input
+                          value={formData.name}
+                          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <Label>Email</Label>
+                        <Input
+                          type="email"
+                          value={formData.email}
+                          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label>Phone</Label>
+                        <Input
+                          value={formData.phone}
+                          onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <Label>Address</Label>
+                        <Input
+                          value={formData.address}
+                          onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                        />
+                      </div>
+                      <Button type="submit" className="w-full bg-gradient-primary">Add Customer</Button>
+                    </form>
+                  </DialogContent>
+                </Dialog>
+              )}
+            </div>
           </div>
 
           <Card>
@@ -217,6 +234,21 @@ export default function CustomersPage() {
               )}
             </CardContent>
           </Card>
+
+          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+            <DialogContent className="sm:max-w-[640px] p-4">
+              <DialogHeader>
+                <DialogTitle>Customers Tutorial</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p>To issue an invoice, first add the customer here.</p>
+                <p>Capture the customer’s basic information so invoices and statements reflect correct details.</p>
+              </div>
+              <div className="pt-4">
+                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </DashboardLayout>
     </>

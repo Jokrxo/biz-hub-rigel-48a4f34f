@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Download, Trash2, Package, Search } from "lucide-react";
+import { Plus, Download, Trash2, Package, Search, Info } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { supabase } from "@/integrations/supabase/client";
@@ -59,10 +59,21 @@ export default function FixedAssetsPage() {
     asset_account_id: "",
     bank_account_id: "",
   });
+  const [tutorialOpen, setTutorialOpen] = useState(false);
 
   useEffect(() => {
     loadAssets();
   }, []);
+
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_fixed_assets_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user]);
 
   const loadAssets = async () => {
     try {
@@ -272,15 +283,14 @@ export default function FixedAssetsPage() {
         const assetAccountId = disposalData.asset_account_id || findBy('asset', ['fixed asset','equipment','vehicle','machinery','property'], ['1500']);
         const accDepAccountId = findBy('asset', ['accumulated','depreciation']);
         const bankId = disposalData.bank_account_id || "";
-        const gainAccountId = findBy('income', ['gain','other income']);
-        const lossAccountId = findBy('expense', ['loss','other expense']);
+        const disposalIncomeId = findBy('income', ['disposal','asset disposal','other income']);
+        const disposalExpenseId = findBy('expense', ['disposal','asset disposal','other expense']);
 
         const cost = Number(selectedAsset.cost || 0);
         const accum = Number(selectedAsset.accumulated_depreciation || 0);
         const proceeds = isNaN(disposalAmount) ? 0 : disposalAmount;
         const bookValue = Math.max(0, cost - accum);
-        const gain = proceeds > bookValue ? (proceeds - bookValue) : 0;
-        const loss = bookValue > proceeds ? (bookValue - proceeds) : 0;
+        const nbv = bookValue;
 
         const description = `Asset Disposal - ${selectedAsset.description}`;
 
@@ -303,19 +313,19 @@ export default function FixedAssetsPage() {
         if (!txErr && tx?.id) {
           const entries: any[] = [];
           if (proceeds > 0 && bankId) {
-            entries.push({ transaction_id: tx.id, account_id: bankId, debit: proceeds, credit: 0, description, status: 'approved' });
+            entries.push({ transaction_id: tx.id, account_id: bankId, debit: proceeds, credit: 0, description: 'Proceeds from Disposal', status: 'approved' });
+          }
+          if (disposalIncomeId && proceeds > 0) {
+            entries.push({ transaction_id: tx.id, account_id: disposalIncomeId, debit: 0, credit: proceeds, description: 'Disposal Income (Proceeds)', status: 'approved' });
           }
           if (accDepAccountId && accum > 0) {
             entries.push({ transaction_id: tx.id, account_id: accDepAccountId, debit: accum, credit: 0, description: 'Derecognize Accumulated Depreciation', status: 'approved' });
           }
+          if (disposalExpenseId && nbv > 0) {
+            entries.push({ transaction_id: tx.id, account_id: disposalExpenseId, debit: nbv, credit: 0, description: 'Disposal Expense (NBV)', status: 'approved' });
+          }
           if (assetAccountId && cost > 0) {
             entries.push({ transaction_id: tx.id, account_id: assetAccountId, debit: 0, credit: cost, description: 'Derecognize Asset Cost', status: 'approved' });
-          }
-          if (loss > 0 && lossAccountId) {
-            entries.push({ transaction_id: tx.id, account_id: lossAccountId, debit: loss, credit: 0, description: 'Loss on Disposal', status: 'approved' });
-          }
-          if (gain > 0 && gainAccountId) {
-            entries.push({ transaction_id: tx.id, account_id: gainAccountId, debit: 0, credit: gain, description: 'Gain on Disposal', status: 'approved' });
           }
 
           const { error: entErr } = await supabase.from("transaction_entries").insert(entries as any);
@@ -338,7 +348,12 @@ export default function FixedAssetsPage() {
       toast({ title: "Success", description: "Asset disposed and postings recorded" });
       setDisposalDialogOpen(false);
       setSelectedAsset(null);
-      setDisposalData({ disposal_date: new Date().toISOString().split("T")[0], disposal_amount: "" });
+      setDisposalData({ 
+        disposal_date: new Date().toISOString().split("T")[0], 
+        disposal_amount: "", 
+        asset_account_id: disposalData.asset_account_id || "", 
+        bank_account_id: disposalData.bank_account_id || "" 
+      });
       loadAssets();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -361,6 +376,10 @@ export default function FixedAssetsPage() {
               <Button variant="outline" disabled={assets.length === 0}>
                 <Download className="h-4 w-4 mr-2" />
                 Export
+              </Button>
+              <Button variant="outline" onClick={() => setTutorialOpen(true)}>
+                <Info className="h-4 w-4 mr-2" />
+                Help & Tutorial
               </Button>
               {canEdit && (
                 <Button variant="outline" onClick={async () => {
@@ -632,6 +651,24 @@ export default function FixedAssetsPage() {
               )}
             </CardContent>
           </Card>
+
+          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+            <DialogContent className="sm:max-w-[560px] p-4">
+              <DialogHeader>
+                <DialogTitle>Fixed Assets Tutorial</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p>This module is for viewing the assets register and tracking book values.</p>
+                <p>To add or purchase new assets, use the Transaction form under Transactions.</p>
+                <p>To add existing opening assets, use the Add Asset button in this module.</p>
+                <p>To post monthly depreciation, use the Post Monthly Depreciation button. Depreciation reduces book value and appears in reports.</p>
+                <p>To dispose assets, use the dispose action; proceeds post to Bank, and the system records gain or loss automatically.</p>
+              </div>
+              <DialogFooter>
+                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           
           {/* Disposal Dialog */}
           <Dialog open={disposalDialogOpen} onOpenChange={setDisposalDialogOpen}>

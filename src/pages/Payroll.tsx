@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useEffect, useMemo, useState } from "react";
-import { Users, FileText, Calculator, Plus, Check, BarChart } from "lucide-react";
+import { Users, FileText, Calculator, Plus, Check, BarChart, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
@@ -29,6 +29,7 @@ export default function Payroll() {
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
   const canEdit = isAdmin || isAccountant;
+  const [tutorialOpen, setTutorialOpen] = useState(false);
 
   const [companyId, setCompanyId] = useState<string>("");
 
@@ -45,6 +46,16 @@ export default function Payroll() {
     loadCompany();
   }, [user?.id]);
 
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_payroll_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user]);
+
   return (
     <>
       <SEO title="Payroll | ApexAccounts" description="Manage payroll runs and employees" />
@@ -55,6 +66,10 @@ export default function Payroll() {
               <h1 className="text-3xl font-bold">Payroll</h1>
               <p className="text-muted-foreground mt-1">Employees, pay items, pay runs, and postings</p>
             </div>
+            <Button variant="outline" onClick={() => setTutorialOpen(true)}>
+              <Info className="h-4 w-4 mr-2" />
+              Help & Tutorial
+            </Button>
           </div>
 
           <Tabs value={tab} onValueChange={setTab}>
@@ -124,6 +139,21 @@ export default function Payroll() {
               </Card>
             </TabsContent>
           </Tabs>
+
+          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+            <DialogContent className="sm:max-w-[640px] p-4">
+              <DialogHeader>
+                <DialogTitle>Payroll Tutorial</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p>Use this module to process payroll: manage employees, setup pay items, run pay periods, and generate payslips.</p>
+                <p>Review reports for monthly totals and statutory summaries.</p>
+              </div>
+              <DialogFooter>
+                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </DashboardLayout>
     </>

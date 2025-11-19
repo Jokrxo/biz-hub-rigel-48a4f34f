@@ -112,7 +112,17 @@ export const GAAPFinancialStatements = () => {
 
       // Fetch period-scoped trial balance using transaction entry dates
       const tbData = await fetchTrialBalanceForPeriod(companyProfile.company_id, periodStart, periodEnd);
-      setTrialBalance(tbData || []);
+      const normalized = (tbData || []).map((r: any) => ({
+        account_id: String(r.account_id || ''),
+        account_code: String(r.account_code || ''),
+        account_name: String(r.account_name || ''),
+        account_type: String(r.account_type || ''),
+        normal_balance: String(r.normal_balance || 'debit'),
+        total_debits: Number(r.total_debits || 0),
+        total_credits: Number(r.total_credits || 0),
+        balance: Number(r.balance || 0),
+      }));
+      setTrialBalance(normalized);
 
       const { data: fa } = await supabase
         .from('fixed_assets')

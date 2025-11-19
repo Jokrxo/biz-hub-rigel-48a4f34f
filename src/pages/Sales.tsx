@@ -3,10 +3,14 @@ import { useLocation } from "react-router-dom";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Info } from "lucide-react";
 import { ARDashboard } from "@/components/Sales/ARDashboard";
 import { SalesInvoices } from "@/components/Sales/SalesInvoices";
 import { SalesQuotes } from "@/components/Sales/SalesQuotes";
 import { SalesProducts } from "@/components/Sales/SalesProducts";
+import { useAuth } from "@/context/AuthContext";
 
 export default function SalesPage() {
   const location = useLocation();
@@ -14,6 +18,8 @@ export default function SalesPage() {
     const tabParam = new URLSearchParams(window.location.search).get('tab');
     return tabParam || "ar-dashboard";
   });
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const { user } = useAuth();
 
   useEffect(() => {
     const tabParam = new URLSearchParams(location.search).get('tab');
@@ -22,14 +28,30 @@ export default function SalesPage() {
     }
   }, [location.search]);
 
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_sales_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user]);
+
   return (
     <>
       <SEO title="Sales | ApexAccounts" description="Manage sales, invoices, quotes, and products" />
       <DashboardLayout>
         <div className="space-y-6">
-          <div>
-            <h1 className="text-3xl font-bold">Sales</h1>
-            <p className="text-muted-foreground mt-1">Manage invoices, quotes, and products</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold">Sales</h1>
+              <p className="text-muted-foreground mt-1">Manage invoices, quotes, and products</p>
+            </div>
+            <Button variant="outline" onClick={() => setTutorialOpen(true)}>
+              <Info className="h-4 w-4 mr-2" />
+              Help & Tutorial
+            </Button>
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -57,6 +79,21 @@ export default function SalesPage() {
               <SalesProducts />
             </TabsContent>
           </Tabs>
+
+          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+            <DialogContent className="sm:max-w-[640px] p-4">
+              <DialogHeader>
+                <DialogTitle>Sales Tutorial</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p>Use this module to issue customer invoices, manage quotes, and maintain product selling prices.</p>
+                <p>To issue an invoice, ensure product selling prices are set under Products. Updating product prices here will be used when creating invoices.</p>
+              </div>
+              <div className="pt-4">
+                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </DashboardLayout>
     </>

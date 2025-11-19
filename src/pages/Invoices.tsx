@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Download, FileText, Mail, Trash2 } from "lucide-react";
+import { Download, FileText, Mail, Trash2, Info } from "lucide-react";
 import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
 import { exportInvoicesToExcel } from '@/lib/export-utils';
 import { supabase } from "@/integrations/supabase/client";
@@ -31,21 +31,14 @@ interface Invoice {
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [yearFilter, setYearFilter] = useState<string>("all");
   const [monthFilter, setMonthFilter] = useState<string>("all");
+  const [tutorialOpen, setTutorialOpen] = useState(false);
 
-  const [formData, setFormData] = useState({
-    customer_name: "",
-    customer_email: "",
-    invoice_date: new Date().toISOString().split("T")[0],
-    due_date: "",
-    total_amount: "",
-  });
 
   const filteredInvoices = invoices.filter((inv) => {
     const total = Number(inv.total_amount || 0);
@@ -79,6 +72,16 @@ export default function InvoicesPage() {
     loadInvoices();
   }, []);
 
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_invoices_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user]);
+
   const loadInvoices = async () => {
     try {
       const { data: profile } = await supabase
@@ -104,51 +107,6 @@ export default function InvoicesPage() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAdmin && !isAccountant) {
-      toast({ title: "Permission denied", variant: "destructive" });
-      return;
-    }
-
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user?.id)
-        .single();
-
-      const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
-
-      const { error } = await supabase.from("invoices").insert({
-        company_id: profile!.company_id,
-        invoice_number: invoiceNumber,
-        customer_name: formData.customer_name,
-        customer_email: formData.customer_email || null,
-        invoice_date: formData.invoice_date,
-        due_date: formData.due_date || null,
-        total_amount: parseFloat(formData.total_amount),
-        subtotal: parseFloat(formData.total_amount) / 1.15,
-        tax_amount: parseFloat(formData.total_amount) * 0.15 / 1.15,
-        status: "draft",
-      });
-
-      if (error) throw error;
-
-      toast({ title: "Success", description: "Invoice created successfully" });
-      setDialogOpen(false);
-      setFormData({
-        customer_name: "",
-        customer_email: "",
-        invoice_date: new Date().toISOString().split("T")[0],
-        due_date: "",
-        total_amount: "",
-      });
-      loadInvoices();
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    }
-  };
 
   const handleDelete = async (id: string) => {
     if (!isAdmin && !isAccountant) {
@@ -277,7 +235,7 @@ export default function InvoicesPage() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold">Invoices</h1>
-              <p className="text-muted-foreground mt-1">Create and manage customer invoices</p>
+              <p className="text-muted-foreground mt-1">View and download customer invoices</p>
             </div>
             <div className="flex gap-3 items-center">
               <Select value={yearFilter} onValueChange={setYearFilter}>
@@ -319,70 +277,10 @@ export default function InvoicesPage() {
                 <Download className="h-4 w-4 mr-2" />
                 Export
               </Button>
-              {canEdit && (
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button className="bg-gradient-primary">
-                      <Plus className="h-4 w-4 mr-2" />
-                      New Invoice
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Create Invoice</DialogTitle>
-                    </DialogHeader>
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                      <div>
-                        <Label>Customer Name</Label>
-                        <Input
-                          value={formData.customer_name}
-                          onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Customer Email</Label>
-                        <Input
-                          type="email"
-                          value={formData.customer_email}
-                          onChange={(e) => setFormData({ ...formData, customer_email: e.target.value })}
-                          placeholder="optional"
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label>Invoice Date</Label>
-                          <Input
-                            type="date"
-                            value={formData.invoice_date}
-                            onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
-                            required
-                          />
-                        </div>
-                        <div>
-                          <Label>Due Date</Label>
-                          <Input
-                            type="date"
-                            value={formData.due_date}
-                            onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <Label>Total Amount (R) incl. VAT</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={formData.total_amount}
-                          onChange={(e) => setFormData({ ...formData, total_amount: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <Button type="submit" className="w-full bg-gradient-primary">Create Invoice</Button>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-              )}
+              <Button variant="outline" onClick={() => setTutorialOpen(true)}>
+                <Info className="h-4 w-4 mr-2" />
+                Help & Tutorial
+              </Button>
             </div>
           </div>
 
@@ -450,8 +348,24 @@ export default function InvoicesPage() {
                   </TableBody>
                 </Table>
               )}
-            </CardContent>
-          </Card>
+          </CardContent>
+        </Card>
+
+        <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+          <DialogContent className="sm:max-w-[560px] p-4">
+            <DialogHeader>
+              <DialogTitle>Invoices Tutorial</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <p>This module is for viewing and downloading invoices.</p>
+              <p>To add and issue a new invoice, go to <strong>Sales → Invoices</strong>.</p>
+              <p>Use the filters to find invoices by year, month and status, and export the list.</p>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         </div>
       </DashboardLayout>
     </>

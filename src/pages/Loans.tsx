@@ -6,6 +6,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEffect, useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Info } from "lucide-react";
 import { CreditCard, BarChart3 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
@@ -18,6 +21,7 @@ export default function Loans() {
   const [tab, setTab] = useState("dashboard");
   const { user } = useAuth();
   const [companyId, setCompanyId] = useState<string>("");
+  const [tutorialOpen, setTutorialOpen] = useState(false);
 
   useEffect(() => {
     const loadCompany = async () => {
@@ -26,6 +30,16 @@ export default function Loans() {
     };
     loadCompany();
   }, [user?.id]);
+
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_loans_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user]);
 
   return (
     <>
@@ -37,6 +51,10 @@ export default function Loans() {
               <h1 className="text-3xl font-bold">Loans</h1>
               <p className="text-muted-foreground mt-1">Dashboard, List, Payments, Reports</p>
             </div>
+            <Button variant="outline" onClick={() => setTutorialOpen(true)}>
+              <Info className="h-4 w-4 mr-2" />
+              Help & Tutorial
+            </Button>
           </div>
 
           <Tabs value={tab} onValueChange={setTab}>
@@ -60,6 +78,21 @@ export default function Loans() {
               <LoanReports companyId={companyId} />
             </TabsContent>
           </Tabs>
+
+          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+            <DialogContent className="sm:max-w-[640px] p-4">
+              <DialogHeader>
+                <DialogTitle>Loans Tutorial</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p>This module is for viewing loan information, payments, and reports.</p>
+                <p>Use the tabs to review loan lists, payment history, and analytics.</p>
+              </div>
+              <div className="pt-4">
+                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
       </DashboardLayout>
     </>
