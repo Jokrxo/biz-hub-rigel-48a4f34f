@@ -16,17 +16,27 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
 
   return (
     <div className="min-h-screen bg-gradient-subtle">
-      <Sidebar open={sidebarOpen} onOpenChange={setSidebarOpen} />
+      <div className={cn("md:block", sidebarOpen ? "block" : "hidden")}> 
+        <Sidebar open={sidebarOpen} onOpenChange={setSidebarOpen} />
+      </div>
+      <div
+        className={cn(
+          "fixed inset-0 bg-black/40 z-30 md:hidden",
+          sidebarOpen ? "" : "hidden"
+        )}
+        onClick={() => setSidebarOpen(false)}
+      />
       
       <div
         className={cn(
           "transition-all duration-300 ease-in-out",
-          sidebarOpen ? "ml-64" : "ml-16"
+          "ml-0 md:ml-16",
+          sidebarOpen && "md:ml-64"
         )}
       >
         <DashboardHeader onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
         
-        <main className="p-6">
+        <main className="p-4 sm:p-6">
           <div className="mx-auto max-w-7xl">
             {children}
           </div>

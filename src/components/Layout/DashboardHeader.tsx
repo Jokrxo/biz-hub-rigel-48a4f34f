@@ -190,7 +190,7 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-6">
+    <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 sm:px-6">
       <div className="flex items-center gap-4">
         <Button
           variant="ghost"
@@ -201,7 +201,7 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
           <Menu className="h-5 w-5" />
         </Button>
         
-        <div className="relative w-96">
+        <div className="relative w-full max-w-xs sm:max-w-md md:w-96">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search transactions, invoices, customers..."
