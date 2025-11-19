@@ -15,7 +15,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
 import { Download, Mail, Plus, Trash2, FileText } from "lucide-react";
-import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
+import { exportInvoiceToPDF, buildInvoicePDFByTemplate, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
 import { exportInvoicesToExcel } from '@/lib/export-utils';
 
 interface Invoice {
@@ -755,7 +755,8 @@ export const SalesInvoices = () => {
         fetchInvoiceItemsForPDF(inv.id),
       ]);
       const dto = mapInvoiceForPDF(inv);
-      const doc = buildInvoicePDF(dto, items, company);
+      const template = JSON.parse(localStorage.getItem('appSettings') || '{}')?.invoiceTemplate || 'template1';
+      const doc = buildInvoicePDFByTemplate(template, dto, items, company);
       const logoDataUrl = await fetchLogoDataUrl(company.logo_url);
       if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
       doc.save(`invoice_${dto.invoice_number}.pdf`);
@@ -789,7 +790,8 @@ export const SalesInvoices = () => {
         fetchInvoiceItemsForPDF(selectedInvoice.id),
       ]);
       const dto = mapInvoiceForPDF(selectedInvoice);
-      const doc = buildInvoicePDF(dto, items, company);
+      const template = JSON.parse(localStorage.getItem('appSettings') || '{}')?.invoiceTemplate || 'template1';
+      const doc = buildInvoicePDFByTemplate(template, dto, items, company);
       const logoDataUrl = await fetchLogoDataUrl(company.logo_url);
       if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
       const blob = doc.output('blob');

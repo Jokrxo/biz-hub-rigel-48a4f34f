@@ -18,6 +18,7 @@ export const GeneralSettings = () => {
     enableNotifications: true,
     enableAutoBackup: false,
     language: "en",
+    invoiceTemplate: "template1",
   });
   const { toast } = useToast();
   const { user } = useAuth();
@@ -78,16 +79,17 @@ export const GeneralSettings = () => {
             .select('*')
             .eq('company_id', profile.company_id)
             .maybeSingle();
-          if (data) {
-            next = {
-              theme: (data as any).theme || 'light',
-              dateFormat: (data as any).date_format || 'DD/MM/YYYY',
-              fiscalYearStart: String((data as any).fiscal_year_start || 1),
-              enableNotifications: !!(data as any).enable_notifications,
-              enableAutoBackup: !!(data as any).enable_auto_backup,
-              language: (data as any).language || 'en',
-            };
-          }
+        if (data) {
+          next = {
+            theme: (data as any).theme || 'light',
+            dateFormat: (data as any).date_format || 'DD/MM/YYYY',
+            fiscalYearStart: String((data as any).fiscal_year_start || 1),
+            enableNotifications: !!(data as any).enable_notifications,
+            enableAutoBackup: !!(data as any).enable_auto_backup,
+            language: (data as any).language || 'en',
+            invoiceTemplate: (JSON.parse(localStorage.getItem('appSettings') || '{}')?.invoiceTemplate) || 'template1',
+          };
+        }
         } else if (savedLocal) {
           next = JSON.parse(savedLocal);
         }
@@ -146,6 +148,20 @@ export const GeneralSettings = () => {
                 <SelectItem value="DD/MM/YYYY">DD/MM/YYYY</SelectItem>
                 <SelectItem value="MM/DD/YYYY">MM/DD/YYYY</SelectItem>
                 <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label>Invoice Template</Label>
+            <Select value={settings.invoiceTemplate} onValueChange={(val) => setSettings({ ...settings, invoiceTemplate: val })}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="template1">Template 1 (Classic)</SelectItem>
+                <SelectItem value="template2">Template 2 (Modern)</SelectItem>
+                <SelectItem value="template3" disabled>Template 3 (Advanced • Locked)</SelectItem>
               </SelectContent>
             </Select>
           </div>

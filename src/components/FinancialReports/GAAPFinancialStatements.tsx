@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { exportFinancialReportToExcel, exportFinancialReportToPDF } from "@/lib/export-utils";
 
 interface TrialBalanceRow {
   account_id: string;
@@ -201,6 +202,160 @@ export const GAAPFinancialStatements = () => {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    } catch (e: any) {
+      toast({ title: 'Export error', description: e.message || 'Could not export', variant: 'destructive' });
+    }
+  };
+
+  const handleStatementExport = (report: 'bs' | 'pl' | 'cf', type: 'pdf' | 'excel') => {
+    try {
+      if (report === 'bs') {
+        const currentAssets = trialBalance.filter(r =>
+          r.account_type.toLowerCase() === 'asset' &&
+          (r.account_name.toLowerCase().includes('cash') ||
+           r.account_name.toLowerCase().includes('bank') ||
+           r.account_name.toLowerCase().includes('receivable') ||
+           r.account_name.toLowerCase().includes('inventory') ||
+           parseInt(r.account_code) < 1500)
+        );
+        const nonCurrentAssetsAll = trialBalance.filter(r => r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r));
+        const accDepRows = nonCurrentAssetsAll.filter(r => r.account_name.toLowerCase().includes('accumulated'));
+        const nonCurrentAssets = nonCurrentAssetsAll.filter(r => !r.account_name.toLowerCase().includes('accumulated'));
+        const normalizeName = (name: string) => name.toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+        const nbvFor = (assetRow: any) => {
+          const base = normalizeName(assetRow.account_name);
+          const related = accDepRows.filter((ad: any) => {
+            const adBase = normalizeName(ad.account_name);
+            return adBase.includes(base) || base.includes(adBase);
+          });
+          const accTotal = related.reduce((sum: number, r: any) => sum + r.balance, 0);
+          return assetRow.balance - accTotal;
+        };
+        const currentLiabilities = trialBalance.filter(r =>
+          r.account_type.toLowerCase() === 'liability' &&
+          (r.account_name.toLowerCase().includes('payable') ||
+           r.account_name.toLowerCase().includes('sars') ||
+           r.account_name.toLowerCase().includes('vat') ||
+           parseInt(r.account_code) < 2300)
+        );
+        const nonCurrentLiabilities = trialBalance.filter(r => r.account_type.toLowerCase() === 'liability' && !currentLiabilities.includes(r));
+        const equity = trialBalance.filter(r => r.account_type.toLowerCase() === 'equity');
+        const revenueRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+        const expenseRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'expense');
+        const totalRevenue = revenueRows.reduce((sum, r) => sum + r.balance, 0);
+        const totalExpenses = expenseRows.reduce((sum, r) => sum + r.balance, 0);
+        const netProfitForPeriod = totalRevenue - totalExpenses;
+        const retainedIndex = equity.findIndex(r => r.account_name.toLowerCase().includes('retained earning'));
+        let equityDisplay: any[] = [...equity];
+        if (retainedIndex >= 0) {
+          const retained = equity[retainedIndex];
+          const adjusted = { ...retained, balance: retained.balance + netProfitForPeriod } as any;
+          equityDisplay.splice(retainedIndex, 1, adjusted);
+        } else {
+          equityDisplay.push({ account_id: 'retained-synthetic', account_code: '—', account_name: 'Retained Earnings (adjusted)', account_type: 'equity', balance: netProfitForPeriod } as any);
+        }
+        const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0);
+        const totalNonCurrentAssets = ppeBookValue;
+        const totalAssets = totalCurrentAssets + ppeBookValue;
+        const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0);
+        const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
+        const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
+        const totalEquity = equityDisplay.reduce((sum, r) => sum + r.balance, 0);
+        const data = [
+          { account: 'ASSETS', amount: 0, type: 'header' },
+          { account: 'Current Assets', amount: 0, type: 'subheader' },
+          ...currentAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'asset' })),
+          { account: 'Total Current Assets', amount: totalCurrentAssets, type: 'subtotal' },
+          { account: 'Non-current Assets', amount: 0, type: 'subheader' },
+          ...nonCurrentAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: nbvFor(r), type: 'asset' })),
+          { account: 'Property, Plant & Equipment (Book Value)', amount: ppeBookValue, type: 'asset' },
+          { account: 'Total Non-current Assets', amount: totalNonCurrentAssets, type: 'subtotal' },
+          { account: 'TOTAL ASSETS', amount: totalAssets, type: 'total' },
+          { account: 'LIABILITIES', amount: 0, type: 'header' },
+          { account: 'Current Liabilities', amount: 0, type: 'subheader' },
+          ...currentLiabilities.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'liability' })),
+          { account: 'Total Current Liabilities', amount: totalCurrentLiabilities, type: 'subtotal' },
+          { account: 'Non-current Liabilities', amount: 0, type: 'subheader' },
+          ...nonCurrentLiabilities.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'liability' })),
+          { account: 'Total Non-current Liabilities', amount: totalNonCurrentLiabilities, type: 'subtotal' },
+          { account: 'Total Liabilities', amount: totalLiabilities, type: 'subtotal' },
+          { account: 'EQUITY', amount: 0, type: 'header' },
+          ...equityDisplay.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'equity' })),
+          { account: 'Total Equity', amount: totalEquity, type: 'subtotal' },
+          { account: 'TOTAL LIABILITIES & EQUITY', amount: totalLiabilities + totalEquity, type: 'final' }
+        ];
+        const reportName = 'Statement of Financial Position';
+        const periodLabel = `As at ${periodEnd}`;
+        const filename = `Balance_Sheet_${periodEnd}`;
+        if (type === 'pdf') {
+          exportFinancialReportToPDF(data, reportName, periodLabel, filename);
+        } else {
+          exportFinancialReportToExcel(data, reportName, filename);
+        }
+        return;
+      }
+      if (report === 'pl') {
+        const revenue = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+        const expenses = trialBalance.filter(r => r.account_type === 'expense');
+        const costOfSales = expenses.filter(r => r.account_name.toLowerCase().includes('cost of') || r.account_code.startsWith('50'));
+        const operatingExpenses = expenses.filter(r => !costOfSales.includes(r));
+        const totalRevenue = revenue.reduce((sum, r) => sum + r.balance, 0);
+        const totalCostOfSales = costOfSales.reduce((sum, r) => sum + r.balance, 0);
+        const grossProfit = totalRevenue - totalCostOfSales;
+        const totalOperatingExpenses = operatingExpenses.reduce((sum, r) => sum + r.balance, 0);
+        const netProfit = grossProfit - totalOperatingExpenses;
+        const data = [
+          { account: 'REVENUE', amount: 0, type: 'header' },
+          ...revenue.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'income' })),
+          { account: 'Total Revenue', amount: totalRevenue, type: 'subtotal' },
+          { account: 'COST OF SALES', amount: 0, type: 'header' },
+          ...costOfSales.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'expense' })),
+          { account: 'Total Cost of Sales', amount: totalCostOfSales, type: 'subtotal' },
+          { account: 'GROSS PROFIT', amount: grossProfit, type: 'subtotal' },
+          { account: 'OPERATING EXPENSES', amount: 0, type: 'header' },
+          ...operatingExpenses.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'expense' })),
+          { account: 'Total Operating Expenses', amount: totalOperatingExpenses, type: 'subtotal' },
+          { account: 'NET PROFIT/(LOSS)', amount: netProfit, type: 'final' }
+        ];
+        const reportName = 'Income Statement';
+        const periodLabel = `For the period ${periodStart} to ${periodEnd}`;
+        const filename = `Income_Statement_${periodStart}_to_${periodEnd}`;
+        if (type === 'pdf') {
+          exportFinancialReportToPDF(data, reportName, periodLabel, filename);
+        } else {
+          exportFinancialReportToExcel(data, reportName, filename);
+        }
+        return;
+      }
+      if (report === 'cf') {
+        if (!cashFlow) return;
+        const data = [
+          { account: 'Operating Activities', amount: 0, type: 'header' },
+          { account: 'Cash Inflows', amount: cashFlow.operating_inflows, type: 'income' },
+          { account: 'Cash Outflows', amount: -Math.abs(cashFlow.operating_outflows), type: 'expense' },
+          { account: 'Net Cash from Operations', amount: cashFlow.net_cash_from_operations, type: 'subtotal' },
+          { account: 'Investing Activities', amount: 0, type: 'header' },
+          { account: 'Cash Inflows', amount: cashFlow.investing_inflows, type: 'income' },
+          { account: 'Cash Outflows', amount: -Math.abs(cashFlow.investing_outflows), type: 'expense' },
+          { account: 'Net Cash from Investing', amount: cashFlow.net_cash_from_investing, type: 'subtotal' },
+          { account: 'Financing Activities', amount: 0, type: 'header' },
+          { account: 'Cash Inflows', amount: cashFlow.financing_inflows, type: 'income' },
+          { account: 'Cash Outflows', amount: -Math.abs(cashFlow.financing_outflows), type: 'expense' },
+          { account: 'Net Cash from Financing', amount: cashFlow.net_cash_from_financing, type: 'subtotal' },
+          { account: 'NET CHANGE IN CASH', amount: cashFlow.net_change_in_cash, type: 'total' },
+          { account: 'Opening Cash Balance', amount: cashFlow.opening_cash_balance, type: 'asset' },
+          { account: 'Closing Cash Balance', amount: cashFlow.closing_cash_balance, type: 'final' }
+        ];
+        const reportName = 'Cash Flow Statement';
+        const periodLabel = `For the period ${periodStart} to ${periodEnd}`;
+        const filename = `Cash_Flow_${periodStart}_to_${periodEnd}`;
+        if (type === 'pdf') {
+          exportFinancialReportToPDF(data, reportName, periodLabel, filename);
+        } else {
+          exportFinancialReportToExcel(data, reportName, filename);
+        }
+        return;
+      }
     } catch (e: any) {
       toast({ title: 'Export error', description: e.message || 'Could not export', variant: 'destructive' });
     }
@@ -403,9 +558,21 @@ export const GAAPFinancialStatements = () => {
 
     return (
       <div className="space-y-6">
-        <div className="text-center mb-6">
-          <h2 className="text-2xl font-bold">Statement of Financial Position</h2>
-          <p className="text-muted-foreground">As at {periodEnd}</p>
+        <div className="flex items-center justify-between mb-6">
+          <div className="text-center w-full">
+            <h2 className="text-2xl font-bold">Statement of Financial Position</h2>
+            <p className="text-muted-foreground">As at {periodEnd}</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => handleStatementExport('bs','pdf')}>
+              <FileDown className="h-4 w-4 mr-2" />
+              PDF
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handleStatementExport('bs','excel')}>
+              <Download className="h-4 w-4 mr-2" />
+              Excel
+            </Button>
+          </div>
         </div>
 
         {/* ASSETS */}
@@ -536,9 +703,21 @@ export const GAAPFinancialStatements = () => {
 
     return (
       <div className="space-y-6">
-        <div className="text-center mb-6">
-          <h2 className="text-2xl font-bold">Income Statement</h2>
-          <p className="text-muted-foreground">For the period {periodStart} to {periodEnd}</p>
+        <div className="flex items-center justify-between mb-6">
+          <div className="text-center w-full">
+            <h2 className="text-2xl font-bold">Income Statement</h2>
+            <p className="text-muted-foreground">For the period {periodStart} to {periodEnd}</p>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => handleStatementExport('pl','pdf')}>
+              <FileDown className="h-4 w-4 mr-2" />
+              PDF
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handleStatementExport('pl','excel')}>
+              <Download className="h-4 w-4 mr-2" />
+              Excel
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-4">
@@ -613,7 +792,16 @@ export const GAAPFinancialStatements = () => {
             <h2 className="text-2xl font-bold">Cash Flow Statement</h2>
             <p className="text-muted-foreground">For the period {periodStart} to {periodEnd}</p>
           </div>
-          <div className="w-0" />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => handleStatementExport('cf','pdf')}>
+              <FileDown className="h-4 w-4 mr-2" />
+              PDF
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handleStatementExport('cf','excel')}>
+              <Download className="h-4 w-4 mr-2" />
+              Excel
+            </Button>
+          </div>
         </div>
 
         {!cashFlow && (
