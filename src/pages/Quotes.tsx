@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Download, FileText, ArrowRight, Mail } from "lucide-react";
+import { Plus, Download, FileText, ArrowRight, Mail, Info } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { buildQuotePDF, type QuoteForPDF, type QuoteItemForPDF, type CompanyForPDF } from '@/lib/quote-export';
 import { addLogoToPDF, fetchLogoDataUrl } from '@/lib/invoice-export';
 import { formatDate } from '@/lib/utils';
@@ -36,6 +37,8 @@ export default function QuotesPage() {
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
   const [dateFormat, setDateFormat] = useState<string>('DD/MM/YYYY');
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -172,6 +175,16 @@ export default function QuotesPage() {
     }
   }, []);
 
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_quotes_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user]);
+
   const loadQuotes = async () => {
     try {
       const { data: profile } = await supabase
@@ -300,83 +313,27 @@ export default function QuotesPage() {
 
   return (
     <>
-      <SEO title="Sales Quotes | ApexAccounts" description="Manage sales quotes and convert to invoices" />
+      <SEO title="Sales Quotes | ApexAccounts" description="View and download quotes; create quotes in Sales module" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold">Sales Quotes</h1>
-              <p className="text-muted-foreground mt-1">Create quotes and convert them to invoices</p>
+              <p className="text-muted-foreground mt-1">View and download quotes. To create quotes, use Sales → Quotes.</p>
             </div>
             <div className="flex gap-3">
               <Button variant="outline" disabled={quotes.length === 0} onClick={() => toast({ title: 'Use per-quote Download below' })}>
                 <Download className="h-4 w-4 mr-2" />
                 Export
               </Button>
-              {canEdit && (
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button className="bg-gradient-primary">
-                      <Plus className="h-4 w-4 mr-2" />
-                      New Quote
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Create Quote</DialogTitle>
-                    </DialogHeader>
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                      <div>
-                        <Label>Customer Name</Label>
-                        <Input
-                          value={formData.customer_name}
-                          onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Customer Email</Label>
-                        <Input
-                          type="email"
-                          value={formData.customer_email}
-                          onChange={(e) => setFormData({ ...formData, customer_email: e.target.value })}
-                          placeholder="optional"
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <Label>Quote Date</Label>
-                          <Input
-                            type="date"
-                            value={formData.quote_date}
-                            onChange={(e) => setFormData({ ...formData, quote_date: e.target.value })}
-                            required
-                          />
-                        </div>
-                        <div>
-                          <Label>Expiry Date</Label>
-                          <Input
-                            type="date"
-                            value={formData.expiry_date}
-                            onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                      <div>
-                        <Label>Total Amount (R) incl. VAT</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          value={formData.total_amount}
-                          onChange={(e) => setFormData({ ...formData, total_amount: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <Button type="submit" className="w-full bg-gradient-primary">Create Quote</Button>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-              )}
+              <Button variant="outline" onClick={() => navigate('/sales?tab=quotes')}>
+                <ArrowRight className="h-4 w-4 mr-2" />
+                Go to Sales Quotes
+              </Button>
+              <Button onClick={() => setTutorialOpen(true)} variant="outline">
+                <Info className="h-4 w-4 mr-2" />
+                Help & Tutorial
+              </Button>
             </div>
           </div>
 
@@ -391,7 +348,7 @@ export default function QuotesPage() {
               {loading ? (
                 <div className="text-center py-8 text-muted-foreground">Loading...</div>
               ) : quotes.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">No quotes yet</div>
+                <div className="text-center py-8 text-muted-foreground">No quotes yet. To create quotes, use Sales → Quotes.</div>
               ) : (
                 <>
                   <div className="flex items-end gap-3 mb-4">
@@ -478,6 +435,21 @@ export default function QuotesPage() {
           <div className="flex justify-end gap-2 mt-4">
             <Button variant="outline" onClick={() => setSendDialogOpen(false)}>Cancel</Button>
             <Button onClick={handleSendEmail} disabled={sending}>{sending ? 'Sending…' : 'Send'}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+        <DialogContent className="sm:max-w-[640px] p-4">
+          <DialogHeader>
+            <DialogTitle>Sales Quotes Tutorial</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p>This module is for viewing and downloading quotes.</p>
+            <p>To add or edit quotes, go to the Sales module and use the Quotes tab.</p>
+          </div>
+          <div className="pt-4">
+            <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+            <Button variant="outline" className="ml-2" onClick={() => navigate('/sales?tab=quotes')}>Go to Sales Quotes</Button>
           </div>
         </DialogContent>
       </Dialog>

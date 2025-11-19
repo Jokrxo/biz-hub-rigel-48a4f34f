@@ -90,8 +90,7 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    host: true,
-    https: false // Set to true for HTTPS in production
+    host: true
   },
   preview: {
     port: 5173,

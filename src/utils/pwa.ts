@@ -121,10 +121,13 @@ class PWAManager {
 
   // Background sync for offline functionality
   public async syncWhenOnline(): Promise<void> {
-    if ('sync' in self.registration) {
+    if ('serviceWorker' in navigator) {
       try {
-        await (self.registration as any).sync.register('sync-transactions');
-        console.log('Background sync registered');
+        const reg = await navigator.serviceWorker.ready;
+        if ((reg as any).sync && typeof (reg as any).sync.register === 'function') {
+          await (reg as any).sync.register('sync-transactions');
+          console.log('Background sync registered');
+        }
       } catch (error) {
         console.error('Background sync failed:', error);
       }

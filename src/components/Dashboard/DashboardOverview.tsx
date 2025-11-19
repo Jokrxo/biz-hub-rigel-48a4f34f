@@ -18,6 +18,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { calculateDepreciation } from "@/components/FixedAssets/DepreciationCalculator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -379,26 +380,21 @@ export const DashboardOverview = () => {
       ];
       setExpenseWheelInner(expenseWheelInner as any);
 
-      // Asset trend
-      const assetData = monthsSeq.map((m, idx) => {
-        const current = Math.max(0, assetsMap.get(m.key) || 0);
-        const prevKey = monthsSeq[idx - 1]?.key;
-        const prev = prevKey ? Math.max(0, assetsMap.get(prevKey) || 0) : current;
-        const delta = current - prev;
-        return { month: m.label, assets: current, delta };
-      });
-      setAssetTrend(assetData);
-
-      // Fallback when asset data missing: synthesize from current metrics
-      const assetsTotal = assetData.reduce((s, v) => s + (v.assets || 0), 0);
-      if (assetsTotal === 0 && metrics.totalAssets > 0) {
-        const synth = monthsSeq.map((m, i) => {
-          const val = Math.max(0, metrics.totalAssets * (0.7 + i * 0.05));
-          const prev = i > 0 ? Math.max(0, metrics.totalAssets * (0.7 + (i-1) * 0.05)) : val;
-          return { month: m.label, assets: val, delta: val - prev };
+      const { data: fixedAssets } = await supabase
+        .from("fixed_assets")
+        .select("cost,purchase_date,useful_life_years,accumulated_depreciation,company_id")
+        .eq("company_id", (profile as any).company_id);
+      const faData = monthsSeq.map((m) => {
+        const [yy, mm] = m.key.split("-");
+        const monthEnd = new Date(Number(yy), Number(mm), 0);
+        let nbv = 0;
+        (fixedAssets || []).forEach((a: any) => {
+          const res = calculateDepreciation(Number(a.cost || 0), String(a.purchase_date), Number(a.useful_life_years || 1), monthEnd);
+          nbv += Math.max(0, res.netBookValue);
         });
-        setAssetTrend(synth);
-      }
+        return { month: m.label, nbv };
+      });
+      setAssetTrend(faData);
 
       // Load AR unpaid invoices (sent/overdue/draft – exclude paid/cancelled)
       const { data: arData, error: arErr } = await supabase
@@ -968,17 +964,17 @@ export const DashboardOverview = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Building2 className="h-5 w-5 text-primary" />
-                Asset Growth Trend
+                Fixed Assets Trend
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={assetTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                <LineChart data={assetTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
                   <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} />
                   <Tooltip 
-                    formatter={(value: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, 'Assets']}
+                    formatter={(value: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, 'Net Book Value']}
                     contentStyle={{ 
                       backgroundColor: 'hsl(var(--card))', 
                       border: '1px solid hsl(var(--border))',
@@ -986,16 +982,9 @@ export const DashboardOverview = () => {
                     }} 
                   />
                   <Legend />
-                  <Bar dataKey="assets" barSize={10} name="Total Assets">
-                    {assetTrend.map((entry, index) => (
-                      <Cell key={`asset-cell-${index}`} fill={entry.delta >= 0 ? POS_COLORS[index % POS_COLORS.length] : NEG_COLORS[index % NEG_COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
+                  <Line type="monotone" dataKey="nbv" name="Net Book Value" stroke="#22c55e" strokeWidth={2} dot={false} />
+                </LineChart>
               </ResponsiveContainer>
-              {assetTrend.length === 0 && (
-                <div className="text-sm text-muted-foreground mt-2">No asset data for the selected period</div>
-              )}
             </CardContent>
           </Card>
         )}

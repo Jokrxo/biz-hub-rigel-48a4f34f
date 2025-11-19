@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DollarSign, Calendar, FileText, AlertCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { ResponsiveContainer, LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, Legend } from "recharts";
 
 export const TaxOverview = () => {
   const [vatDue, setVatDue] = useState<number>(0);
   const [nextFiling, setNextFiling] = useState<string>("—");
+  const [series, setSeries] = useState<Array<{ month: string; vatOutput: number; vatInput: number }>>([]);
 
   useEffect(() => {
     const load = async () => {
@@ -21,21 +23,30 @@ export const TaxOverview = () => {
       // Pull VAT related entries for company to compute net VAT due = VAT Output - VAT Input
       const { data, error } = await supabase
         .from("transaction_entries")
-        .select(`debit, credit, transactions(company_id), chart_of_accounts(account_name, account_type)`)
+        .select(`debit, credit, transactions(company_id, transaction_date), chart_of_accounts(account_name, account_type)`) 
         .order("created_at", { ascending: false });
       if (error) return;
 
-      let output = 0; // credits on VAT Output
-      let input = 0;  // debits on VAT Input
+      let output = 0;
+      let input = 0;
+      const monthMap = new Map<string, { vatOutput: number; vatInput: number }>();
       for (const e of (data || []) as any[]) {
         if (e.transactions?.company_id !== profile.company_id) continue;
-        const name = (e.chart_of_accounts?.account_name || '').toLowerCase();
+        const name = String(e.chart_of_accounts?.account_name || '').toLowerCase();
         if (!name.includes('vat') && !name.includes('tax')) continue;
         const debit = Number(e.debit || 0);
         const credit = Number(e.credit || 0);
-        // Heuristic: treat credits as Output VAT, debits as Input VAT
-        output += Math.max(0, credit - debit);
-        input += Math.max(0, debit - credit);
+        const dt = e.transactions?.transaction_date ? new Date(e.transactions.transaction_date) : null;
+        const key = dt ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}` : '';
+        const label = dt ? dt.toLocaleString('en-ZA', { month: 'short' }) : '';
+        const out = Math.max(0, credit - debit);
+        const inn = Math.max(0, debit - credit);
+        output += out;
+        input += inn;
+        if (key) {
+          const prev = monthMap.get(key) || { vatOutput: 0, vatInput: 0 };
+          monthMap.set(key, { vatOutput: prev.vatOutput + out, vatInput: prev.vatInput + inn });
+        }
       }
       setVatDue(Math.max(0, output - input));
 
@@ -43,6 +54,10 @@ export const TaxOverview = () => {
       const now = new Date();
       const next = new Date(now.getFullYear(), now.getMonth() + 1, 25);
       setNextFiling(next.toLocaleDateString('en-ZA'));
+
+      const sorted = Array.from(monthMap.entries()).sort(([a],[b]) => a.localeCompare(b));
+      const formatted = sorted.map(([key, vals]) => ({ month: key, vatOutput: vals.vatOutput, vatInput: vals.vatInput }));
+      setSeries(formatted);
     };
     load();
   }, []);
@@ -70,6 +85,30 @@ export const TaxOverview = () => {
           </Card>
         ))}
       </div>
+      <Card className="card-professional">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">VAT Output vs VAT Input</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {series.length === 0 ? (
+            <div className="py-6 text-muted-foreground">No VAT activity yet</div>
+          ) : (
+            <div className="h-64 w-full">
+              <ResponsiveContainer>
+                <LineChart data={series} margin={{ top: 10, right: 24, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`]} />
+                  <Legend />
+                  <Line type="monotone" dataKey="vatOutput" name="VAT Output" stroke="#22c55e" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="vatInput" name="VAT Input" stroke="#ef4444" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 };
