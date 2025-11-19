@@ -56,6 +56,8 @@ export default function FixedAssetsPage() {
   const [disposalData, setDisposalData] = useState({
     disposal_date: new Date().toISOString().split("T")[0],
     disposal_amount: "",
+    asset_account_id: "",
+    bank_account_id: "",
   });
 
   useEffect(() => {
@@ -77,33 +79,8 @@ export default function FixedAssetsPage() {
         .select("*")
         .eq("company_id", profile.company_id)
         .order("purchase_date", { ascending: false });
-
       if (error) throw error;
-      
-      // Auto-calculate depreciation for each asset
-      const assetsWithDepreciation = (data || []).map(asset => {
-        const depreciation = calculateDepreciation(
-          asset.cost,
-          asset.purchase_date,
-          asset.useful_life_years
-        );
-        return {
-          ...asset,
-          accumulated_depreciation: depreciation.accumulatedDepreciation,
-        };
-      });
-      
-      setAssets(assetsWithDepreciation);
-
-      // Update depreciation in database
-      for (const asset of assetsWithDepreciation) {
-        if (asset.accumulated_depreciation !== data?.find(a => a.id === asset.id)?.accumulated_depreciation) {
-          await supabase
-            .from("fixed_assets")
-            .update({ accumulated_depreciation: asset.accumulated_depreciation })
-            .eq("id", asset.id);
-        }
-      }
+      setAssets(data || []);
 
       // Load fixed asset accounts for posting selection
       const { data: faAccounts } = await supabase
@@ -259,7 +236,106 @@ export default function FixedAssetsPage() {
 
       if (error) throw error;
 
-      toast({ title: "Success", description: "Asset disposed successfully" });
+      try {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("company_id")
+          .eq("user_id", user?.id)
+          .single();
+
+        const companyId = profile!.company_id;
+
+        const { data: accounts } = await supabase
+          .from("chart_of_accounts")
+          .select("id, account_code, account_name, account_type")
+          .eq("company_id", companyId)
+          .eq("is_active", true)
+          .order("account_code");
+
+        const findBy = (type: string, names: string[], codes?: string[]) => {
+          const lower = (accounts || []).map(a => ({
+            id: String(a.id),
+            account_code: String((a as any).account_code || ''),
+            account_name: String((a as any).account_name || '').toLowerCase(),
+            account_type: String((a as any).account_type || '').toLowerCase(),
+          }));
+          if (codes && codes.length) {
+            const byCode = lower.find(a => a.account_type === type && codes.includes(a.account_code));
+            if (byCode) return byCode.id;
+          }
+          const byName = lower.find(a => a.account_type === type && names.some(n => a.account_name.includes(n)));
+          if (byName) return byName.id;
+          const byType = lower.find(a => a.account_type === type);
+          return byType?.id || "";
+        };
+
+        const assetAccountId = disposalData.asset_account_id || findBy('asset', ['fixed asset','equipment','vehicle','machinery','property'], ['1500']);
+        const accDepAccountId = findBy('asset', ['accumulated','depreciation']);
+        const bankId = disposalData.bank_account_id || "";
+        const gainAccountId = findBy('income', ['gain','other income']);
+        const lossAccountId = findBy('expense', ['loss','other expense']);
+
+        const cost = Number(selectedAsset.cost || 0);
+        const accum = Number(selectedAsset.accumulated_depreciation || 0);
+        const proceeds = isNaN(disposalAmount) ? 0 : disposalAmount;
+        const bookValue = Math.max(0, cost - accum);
+        const gain = proceeds > bookValue ? (proceeds - bookValue) : 0;
+        const loss = bookValue > proceeds ? (bookValue - proceeds) : 0;
+
+        const description = `Asset Disposal - ${selectedAsset.description}`;
+
+        const { data: tx, error: txErr } = await supabase
+          .from("transactions")
+          .insert({
+            company_id: companyId,
+            user_id: user!.id,
+            transaction_date: disposalData.disposal_date,
+            description,
+            reference_number: null,
+            total_amount: proceeds,
+            bank_account_id: bankId || null,
+            transaction_type: "asset_disposal",
+            status: "approved"
+          })
+          .select("id")
+          .single();
+
+        if (!txErr && tx?.id) {
+          const entries: any[] = [];
+          if (proceeds > 0 && bankId) {
+            entries.push({ transaction_id: tx.id, account_id: bankId, debit: proceeds, credit: 0, description, status: 'approved' });
+          }
+          if (accDepAccountId && accum > 0) {
+            entries.push({ transaction_id: tx.id, account_id: accDepAccountId, debit: accum, credit: 0, description: 'Derecognize Accumulated Depreciation', status: 'approved' });
+          }
+          if (assetAccountId && cost > 0) {
+            entries.push({ transaction_id: tx.id, account_id: assetAccountId, debit: 0, credit: cost, description: 'Derecognize Asset Cost', status: 'approved' });
+          }
+          if (loss > 0 && lossAccountId) {
+            entries.push({ transaction_id: tx.id, account_id: lossAccountId, debit: loss, credit: 0, description: 'Loss on Disposal', status: 'approved' });
+          }
+          if (gain > 0 && gainAccountId) {
+            entries.push({ transaction_id: tx.id, account_id: gainAccountId, debit: 0, credit: gain, description: 'Gain on Disposal', status: 'approved' });
+          }
+
+          const { error: entErr } = await supabase.from("transaction_entries").insert(entries as any);
+          if (!entErr) {
+            const ledgerRows = entries.map(e => ({
+              company_id: companyId,
+              transaction_id: tx.id,
+              account_id: e.account_id,
+              entry_date: disposalData.disposal_date,
+              description: e.description,
+              debit: e.debit,
+              credit: e.credit,
+              is_reversed: false,
+            }));
+            await supabase.from('ledger_entries').insert(ledgerRows as any);
+          }
+        }
+      } catch {}
+
+      toast({ title: "Success", description: "Asset disposed and postings recorded" });
       setDisposalDialogOpen(false);
       setSelectedAsset(null);
       setDisposalData({ disposal_date: new Date().toISOString().split("T")[0], disposal_amount: "" });

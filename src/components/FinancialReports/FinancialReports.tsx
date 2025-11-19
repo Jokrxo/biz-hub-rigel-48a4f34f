@@ -167,16 +167,34 @@ export const FinancialReports = () => {
 
     // Calculate total assets - use balance from trial balance directly
     let totalAssets = 0;
+    const normalizeName = (name: string) => name.toLowerCase()
+      .replace(/accumulated/g, '')
+      .replace(/depreciation/g, '')
+      .replace(/[-_]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const accumulatedRows = assets.filter(a => (a.account_name || '').toLowerCase().includes('accumulated'));
+    const nbvFor = (assetRow: any) => {
+      const base = normalizeName(assetRow.account_name || '');
+      const related = accumulatedRows.filter((ad: any) => {
+        const adBase = normalizeName(ad.account_name || '');
+        return adBase.includes(base) || base.includes(adBase);
+      });
+      const accTotal = related.reduce((sum: number, r: any) => sum + (r.balance || 0), 0);
+      return (assetRow.balance || 0) - accTotal;
+    };
+
     assets.forEach(account => {
-      // For asset accounts, balance is already calculated correctly
-      const accountTotal = account.balance || 0;
-      if (Math.abs(accountTotal) > 0.01) {
+      const isAccumulated = (account.account_name || '').toLowerCase().includes('accumulated');
+      const displayAmount = isAccumulated ? 0 : nbvFor(account);
+      if (Math.abs(displayAmount) > 0.01) {
         bsData.push({
           account: account.account_name,
-          amount: accountTotal,
+          amount: displayAmount,
           type: 'asset'
         });
-        totalAssets += accountTotal;
+        totalAssets += displayAmount;
       }
     });
 

@@ -66,6 +66,7 @@ export const GAAPFinancialStatements = () => {
     closing_cash_balance: number;
     net_change_in_cash: number;
   } | null>(null);
+  const [ppeBookValue, setPpeBookValue] = useState<number>(0);
 
   useEffect(() => {
     loadFinancialData();
@@ -112,6 +113,15 @@ export const GAAPFinancialStatements = () => {
       // Fetch period-scoped trial balance using transaction entry dates
       const tbData = await fetchTrialBalanceForPeriod(companyProfile.company_id, periodStart, periodEnd);
       setTrialBalance(tbData || []);
+
+      const { data: fa } = await supabase
+        .from('fixed_assets')
+        .select('cost, accumulated_depreciation, status')
+        .eq('company_id', companyProfile.company_id);
+      const ppeSum = (fa || [])
+        .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
+        .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
+      setPpeBookValue(ppeSum);
 
       // Validate accounting equation
       const { data: equation, error: eqError } = await supabase
@@ -305,9 +315,29 @@ export const GAAPFinancialStatements = () => {
        parseInt(r.account_code) < 1500)
     );
     
-    const nonCurrentAssets = trialBalance.filter(r =>
+    const nonCurrentAssetsAll = trialBalance.filter(r =>
       r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r)
     );
+    const accDepRows = nonCurrentAssetsAll.filter(r => r.account_name.toLowerCase().includes('accumulated'));
+    const nonCurrentAssets = nonCurrentAssetsAll.filter(r => !r.account_name.toLowerCase().includes('accumulated'));
+
+    const normalizeName = (name: string) =>
+      name.toLowerCase()
+        .replace(/accumulated/g, '')
+        .replace(/depreciation/g, '')
+        .replace(/[-_]/g, ' ')
+        .replace(/\s+/g, ' ') // collapse spaces
+        .trim();
+
+    const nbvFor = (assetRow: TrialBalanceRow) => {
+      const base = normalizeName(assetRow.account_name);
+      const related = accDepRows.filter(ad => {
+        const adBase = normalizeName(ad.account_name);
+        return adBase.includes(base) || base.includes(adBase);
+      });
+      const accTotal = related.reduce((sum, r) => sum + r.balance, 0);
+      return assetRow.balance - accTotal;
+    };
     
     const currentLiabilities = trialBalance.filter(r =>
       r.account_type.toLowerCase() === 'liability' &&
@@ -352,8 +382,8 @@ export const GAAPFinancialStatements = () => {
     }
 
     const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0);
-    const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + r.balance, 0);
-    const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
+    const totalNonCurrentAssets = ppeBookValue;
+    const totalAssets = totalCurrentAssets + ppeBookValue;
     
     const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0);
     const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
@@ -389,13 +419,10 @@ export const GAAPFinancialStatements = () => {
 
           <div className="pl-4">
             <h4 className="font-semibold text-lg mb-2">Non-current Assets</h4>
-            {nonCurrentAssets.map(row => (
-              <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
-                   onClick={() => handleDrilldown(row.account_id, row.account_name)}>
-                <span>{row.account_code} - {row.account_name}</span>
-                <span className="font-mono">R {row.balance.toLocaleString()}</span>
-              </div>
-            ))}
+            <div className="flex justify-between py-1 px-2">
+              <span>Property, Plant & Equipment (Book Value)</span>
+              <span className="font-mono">R {ppeBookValue.toLocaleString()}</span>
+            </div>
             <div className="flex justify-between py-2 font-semibold border-t mt-2">
               <span>Total Non-current Assets</span>
               <span className="font-mono">R {totalNonCurrentAssets.toLocaleString()}</span>
