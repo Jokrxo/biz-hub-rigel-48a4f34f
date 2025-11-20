@@ -431,6 +431,17 @@ export const ChartOfAccountsManagement = () => {
     if (!confirm("Are you sure you want to delete this account?")) return;
 
     try {
+      const acc = accounts.find(a => a.id === id);
+      if (acc) {
+        const code = String(acc.account_code || '').trim();
+        const name = String(acc.account_name || '').toLowerCase();
+        const isAsset = String(acc.account_type || '').toLowerCase() === 'asset';
+        const isFixedAssetFamily = code.startsWith('15') || name.includes('accumulated depreciation') || name.includes('accumulated amortization') || name.includes('land') || name.includes('building') || name.includes('plant') || name.includes('machinery') || name.includes('vehicle') || name.includes('furniture') || name.includes('equipment') || name.includes('computer') || name.includes('software') || name.includes('goodwill');
+        if (isAsset && isFixedAssetFamily) {
+          toast({ title: "Protected Account", description: "Fixed asset accounts cannot be deleted.", variant: "destructive" });
+          return;
+        }
+      }
       const { error } = await supabase
         .from("chart_of_accounts")
         .delete()

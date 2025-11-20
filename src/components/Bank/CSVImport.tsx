@@ -75,20 +75,45 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
     }
   };
 
-  const parseCSV = (text: string): any[] => {
+  const parseCSV = (text: string): Record<string, unknown>[] => {
     const result = Papa.parse(text, { header: true, skipEmptyLines: true });
     return result.data;
   };
 
   // Heuristic-based account mapping
-  const mapRowToAccounts = (row: any, accounts: ChartOfAccount[]) => {
+  const mapRowToAccounts = (row: Record<string, unknown>, accounts: ChartOfAccount[]) => {
     if (!accounts || accounts.length === 0) {
       console.warn("No chart of accounts available for mapping");
       return { debitAccountId: null, creditAccountId: null, confidence: 'low' };
     }
 
-    const description = (row.Description || row.description || "").toLowerCase();
-    const amount = parseFloat(row.Amount || row.amount || "0");
+    const getField = (r: Record<string, unknown>, keys: string[]) => {
+      const keyMap: Record<string, string> = {};
+      Object.keys(r).forEach(k => { keyMap[k.toLowerCase().replace(/[^a-z0-9]/g, '')] = k; });
+      for (const candidate of keys) {
+        const norm = candidate.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (keyMap[norm] !== undefined) return r[keyMap[norm]] as unknown;
+      }
+      return null;
+    };
+
+    const parseMoneyValue = (v: unknown): number => {
+      if (v === null || v === undefined) return 0;
+      let s = String(v).trim();
+      if (s === '') return 0;
+      s = s.replace(/\s/g, '').replace(/R/ig, '').replace(/,/g, '');
+      if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1, -1);
+      s = s.replace(/^\+/, '');
+      if (/^-?\d+\.?\d*-$/.test(s)) s = s.replace(/-$/, '');
+      const n = Number(s);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const description = String(getField(row, ['Description', 'Details', 'Narrative', 'Transaction Description', 'Particulars', 'Beneficiary']) || '').toLowerCase();
+    const debit = parseMoneyValue(getField(row, ['Debit', 'Dr', 'Withdrawal', 'Payments', 'Out']));
+    const credit = parseMoneyValue(getField(row, ['Credit', 'Cr', 'Deposit', 'Receipts', 'In']));
+    const standalone = parseMoneyValue(getField(row, ['Amount', 'Transaction Amount', 'Amt', 'Value', 'Amount ZAR']));
+    const amount = credit - debit || standalone;
 
     let debitAccountId: string | null = null;
     let creditAccountId: string | null = null;
@@ -155,42 +180,48 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
         return;
       }
 
-      // Map CSV rows to transactions
-      const transactions = rows.flatMap(row => {
-        const amount = parseFloat(row.Amount || row.amount || "0");
-        const { debitAccountId, creditAccountId } = mapRowToAccounts(row, chartOfAccounts);
-        
-        if (amount === 0) return [];
+      const getField = (r: Record<string, unknown>, keys: string[]) => {
+        const keyMap: Record<string, string> = {};
+        Object.keys(r).forEach(k => { keyMap[k.toLowerCase().replace(/[^a-z0-9]/g, '')] = k; });
+        for (const candidate of keys) {
+          const norm = candidate.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (keyMap[norm] !== undefined) return r[keyMap[norm]] as unknown;
+        }
+        return null;
+      };
 
-        const baseTransaction = {
-          company_id: profile.company_id,
-          user_id: user!.id,
-          bank_account_id: selectedBank,
-          transaction_date: row.Date || row.date || new Date().toISOString().split("T")[0],
-          description: row.Description || row.description || "Bank transaction",
-          reference_number: row.Reference || row.reference || null,
-          total_amount: Math.abs(amount),
-          status: 'pending',
-          transaction_type: amount >= 0 ? "income" : "expense",
-          category: "Bank Import",
-        };
+      const parseMoneyValue = (v: unknown): number => {
+        if (v === null || v === undefined) return 0;
+        let s = String(v).trim();
+        if (s === '') return 0;
+        s = s.replace(/\s/g, '').replace(/R/ig, '').replace(/,/g, '');
+        if (/^\(.*\)$/.test(s)) s = '-' + s.slice(1, -1);
+        s = s.replace(/^\+/, '');
+        if (/^-?\d+\.?\d*-$/.test(s)) s = s.replace(/-$/, '');
+        const n = Number(s);
+        return Number.isFinite(n) ? n : 0;
+      };
 
-        const debitEntry = {
-          ...baseTransaction,
-          account_id: debitAccountId,
-          debit: Math.abs(amount),
-          credit: 0,
-        };
-
-        const creditEntry = {
-          ...baseTransaction,
-          account_id: creditAccountId,
-          debit: 0,
-          credit: Math.abs(amount),
-        };
-        
-        return [debitEntry, creditEntry];
-      });
+      const normalizeDate = (s: string): string => {
+        const str = String(s || '').trim();
+        if (!str) return new Date().toISOString().split('T')[0];
+        let d: Date | null = null;
+        const m = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+        if (m) d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        const m2 = str.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/);
+        if (!d && m2) {
+          const day = Number(m2[1]);
+          const month = Number(m2[2]) - 1;
+          const year = Number(m2[3].length === 2 ? '20' + m2[3] : m2[3]);
+          d = new Date(year, month, day);
+        }
+        if (!d) {
+          const parsed = new Date(str);
+          if (!Number.isNaN(parsed.getTime())) d = parsed;
+        }
+        if (!d) d = new Date();
+        return d.toISOString().split('T')[0];
+      };
       const { data: companyProfile } = await supabase
         .from("profiles")
         .select("company_id")
@@ -213,26 +244,41 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
         return;
       }
 
-      // Map CSV rows to transactions
-      const importedTransactions = rows.map(row => {
-        const amount = parseFloat(row.Amount || row.amount || "0");
-        const { debitAccountId, creditAccountId, confidence } = mapRowToAccounts(row, chartOfAccounts);
-        
-        console.log("Mapping row:", row, "Accounts found:", { debitAccountId, creditAccountId, confidence });
-        
+      // Map CSV rows to transactions (header + accounts)
+      const importedTransactions = rows.map((row: Record<string, unknown>) => {
+        const debit = parseMoneyValue(getField(row, ['Debit', 'Dr', 'Withdrawal', 'Payments', 'Out']));
+        const credit = parseMoneyValue(getField(row, ['Credit', 'Cr', 'Deposit', 'Receipts', 'In']));
+        const standalone = parseMoneyValue(getField(row, ['Amount', 'Transaction Amount', 'Amt', 'Value', 'Amount ZAR']));
+        const amount = credit - debit || standalone;
+        const { debitAccountId, creditAccountId } = mapRowToAccounts(row, chartOfAccounts);
+        const dateRaw = getField(row, ['Date', 'Transaction Date', 'Txn Date', 'Posting Date', 'Value Date']);
+        const dateStr = normalizeDate(dateRaw || new Date().toISOString().split('T')[0]);
+        const desc = String(getField(row, ['Description', 'Details', 'Narrative', 'Transaction Description', 'Particulars', 'Beneficiary']) || 'Bank transaction');
+        const ref = getField(row, ['Reference', 'Ref', 'Transaction ID', 'Channel', 'Doc No', 'Cheque Number', 'Payment Reference']) || null;
+        const isInflow = amount >= 0;
+
+        // Fallbacks if mapping didn't find accounts
+        const bankAsset = chartOfAccounts.find(a => a.account_type === 'asset' && a.account_name.toLowerCase().includes('bank'))
+          || chartOfAccounts.find(a => a.account_type === 'asset' && a.account_name.toLowerCase().includes('cash'));
+        const incomeAcc = chartOfAccounts.find(a => a.account_type === 'income');
+        const expenseAcc = chartOfAccounts.find(a => a.account_type === 'expense');
+
+        const debitId = debitAccountId || (isInflow ? bankAsset?.id || null : expenseAcc?.id || null);
+        const creditId = creditAccountId || (isInflow ? incomeAcc?.id || null : bankAsset?.id || null);
+
         return {
           company_id: companyProfile.company_id,
           user_id: user!.id,
           bank_account_id: selectedBank,
-          transaction_date: row.Date || row.date || new Date().toISOString().split("T")[0],
-          description: row.Description || row.description || "Bank transaction",
-          reference_number: row.Reference || row.reference || null,
+          transaction_date: dateStr,
+          description: desc,
+          reference_number: ref,
           total_amount: Math.abs(amount),
           status: 'pending',
-          transaction_type: amount >= 0 ? "income" : "expense",
+          transaction_type: isInflow ? "income" : "expense",
           category: "Bank Import",
-          debit_account_id: debitAccountId,
-          credit_account_id: creditAccountId,
+          debit_account_id: debitId,
+          credit_account_id: creditId,
         };
       }).filter(tx => tx.total_amount !== 0);
 
@@ -262,8 +308,12 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
           continue;
         }
 
-        const { error } = await supabase.from("transactions").insert(tx);
-        if (error) {
+        const { data: inserted, error } = await supabase
+          .from("transactions")
+          .insert(tx)
+          .select('id, transaction_type')
+          .single();
+        if (error || !inserted) {
           console.error("Import error:", error);
           errors++;
         } else {
@@ -273,15 +323,16 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
 
       toast({ 
         title: "Import Complete", 
-        description: `âœ“ ${imported} imported | âš  ${duplicates} duplicates skipped${errors > 0 ? ` | âœ— ${errors} errors` : ""}` 
+        description: `${imported} imported | ${duplicates} duplicates skipped${errors > 0 ? ` | ${errors} errors` : ""}` 
       });
       
       setOpen(false);
       setFile(null);
       setSelectedBank("");
       onImportComplete();
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast({ title: "Error", description: message, variant: "destructive" });
     } finally {
       setImporting(false);
     }

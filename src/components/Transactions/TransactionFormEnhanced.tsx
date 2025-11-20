@@ -345,6 +345,19 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     let debits = accounts.filter(acc => (acc.account_type || '').toLowerCase() === config.debitType);
     let credits = accounts.filter(acc => config.creditTypes.includes((acc.account_type || '').toLowerCase()));
 
+    // Asset purchase: narrow debit side to fixed assets only (codes 15xx or known names), exclude accumulated depreciation
+    if (form.element === 'asset') {
+      const isFixedAsset = (acc: Account) => {
+        const code = String(acc.account_code || '').trim();
+        const name = String(acc.account_name || '').toLowerCase();
+        const fixedNames = ['land','building','buildings','plant','machinery','motor vehicle','vehicles','furniture','fixtures','equipment','computer','software','goodwill'];
+        const nameMatches = fixedNames.some(n => name.includes(n));
+        const isAccum = name.includes('accumulated') || name.includes('depreciation') || name.includes('amortization');
+        return !isAccum && (code.startsWith('15') || nameMatches);
+      };
+      debits = debits.filter(isFixedAsset);
+    }
+
     // Exclude the opposite side's currently selected account to avoid duplicates
     if (form.creditAccount) {
       debits = debits.filter(acc => acc.id !== form.creditAccount);
