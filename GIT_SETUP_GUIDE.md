@@ -17,20 +17,20 @@ git init
 git add .
 
 # Create initial commit
-git commit -m "Initial commit: ApexAccounts accounting system with payment portal"
+git commit -m "Initial commit: Rigel Business accounting system with payment portal"
 ```
 
 ## Step 2: Create GitHub Repository
 
 1. Go to https://github.com/new
-2. Create a new repository (e.g., "apex-accounts")
+2. Create a new repository (e.g., "rigel-business")
 3. Don't initialize with README (we already have files)
 
 ## Step 3: Connect Local to GitHub
 
 ```bash
 # Add remote origin (replace YOUR_USERNAME and YOUR_REPO)
-git remote add origin https://github.com/YOUR_USERNAME/apex-accounts.git
+git remote add origin https://github.com/YOUR_USERNAME/rigel-business.git
 
 # Push to GitHub
 git push -u origin main
@@ -57,7 +57,7 @@ git status
 1. Go to https://vercel.com
 2. Click "New Project"
 3. Import from GitHub
-4. Select your "apex-accounts" repository
+4. Select your "rigel-business" repository
 5. Configure environment variables (see below)
 6. Deploy
 
@@ -86,7 +86,7 @@ vercel --prod
 ## Project Structure Overview
 
 ```
-apex-accounts/
+rigel-business/
 ├── src/                    # Source code
 │   ├── components/         # React components
 │   ├── pages/             # Page components

@@ -40,7 +40,7 @@ export default function SalesPage() {
 
   return (
     <>
-      <SEO title="Sales | ApexAccounts" description="Manage sales, invoices, quotes, and products" />
+      <SEO title="Sales | Rigel Business" description="Manage sales, invoices, quotes, and products" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">

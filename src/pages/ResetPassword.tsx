@@ -40,7 +40,7 @@ export default function ResetPassword() {
 
   return (
     <>
-      <SEO title="Reset Password | ApexAccounts" description="Set a new ApexAccounts password" canonical={window.location.href} />
+      <SEO title="Reset Password | Rigel Business" description="Set a new Rigel Business password" canonical={window.location.href} />
       <main className="min-h-screen bg-gradient-to-br from-primary/5 via-accent/5 to-background flex items-center justify-center p-6 relative overflow-hidden">
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=1920&h=1080&fit=crop')] bg-cover bg-center opacity-5" />
         <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-accent/10 backdrop-blur-3xl" />
@@ -49,7 +49,7 @@ export default function ResetPassword() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4 animate-glow">
               <span className="text-3xl font-bold text-primary-foreground">A</span>
             </div>
-            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">ApexAccounts</h1>
+            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
             <p className="text-sm text-muted-foreground mt-2">Set your new password</p>
           </header>
 

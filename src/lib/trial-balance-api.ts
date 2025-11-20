@@ -4,9 +4,19 @@ import type { TrialBalance, TrialBalanceCreate, TrialBalanceUpdate } from '@/typ
 export const trialBalanceApi = {
   // Get all trial balances for current user
   getAll: async (): Promise<TrialBalance[]> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('User not authenticated');
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('user_id', user.id)
+      .single();
+    const companyId = profile?.company_id;
+    if (!companyId) throw new Error('Company not found');
     const { data, error } = await supabase
       .from('trial_balances')
       .select('*')
+      .eq('company_id', companyId)
       .order('account_code', { ascending: true });
     
     if (error) throw error;
@@ -17,11 +27,19 @@ export const trialBalanceApi = {
   create: async (entry: TrialBalanceCreate): Promise<TrialBalance> => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('User not authenticated');
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('user_id', user.id)
+      .single();
+    const companyId = profile?.company_id;
+    if (!companyId) throw new Error('Company not found');
 
     const { data, error } = await supabase
       .from('trial_balances')
       .insert({
         ...entry,
+        company_id: companyId,
         user_id: user.id,
         debit: entry.debit || 0,
         credit: entry.credit || 0,
@@ -35,10 +53,21 @@ export const trialBalanceApi = {
 
   // Update trial balance entry
   update: async (id: string, updates: TrialBalanceUpdate): Promise<TrialBalance> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('User not authenticated');
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('user_id', user.id)
+      .single();
+    const companyId = profile?.company_id;
+    if (!companyId) throw new Error('Company not found');
+
     const { data, error } = await supabase
       .from('trial_balances')
       .update(updates)
       .eq('id', id)
+      .eq('company_id', companyId)
       .select()
       .single();
     
@@ -48,10 +77,21 @@ export const trialBalanceApi = {
 
   // Delete trial balance entry
   delete: async (id: string): Promise<void> => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('User not authenticated');
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('company_id')
+      .eq('user_id', user.id)
+      .single();
+    const companyId = profile?.company_id;
+    if (!companyId) throw new Error('Company not found');
+
     const { error } = await supabase
       .from('trial_balances')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('company_id', companyId);
     
     if (error) throw error;
   },

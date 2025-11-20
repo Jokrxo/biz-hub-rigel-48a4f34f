@@ -229,7 +229,7 @@ export default function InvoicesPage() {
 
   return (
     <>
-      <SEO title="Invoices | ApexAccounts" description="Manage customer invoices" />
+      <SEO title="Invoices | Rigel Business" description="Manage customer invoices" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">

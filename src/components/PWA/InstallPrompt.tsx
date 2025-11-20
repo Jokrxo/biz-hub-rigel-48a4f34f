@@ -65,7 +65,7 @@ export function InstallPrompt() {
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg flex items-center gap-2">
               <Smartphone className="h-5 w-5" />
-              Install ApexAccounts
+              Install Rigel Business
             </CardTitle>
             <Button
               variant="ghost"

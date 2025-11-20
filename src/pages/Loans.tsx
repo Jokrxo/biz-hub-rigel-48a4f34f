@@ -43,7 +43,7 @@ export default function Loans() {
 
   return (
     <>
-      <SEO title="Loans | ApexAccounts" description="Manage company loans" />
+      <SEO title="Loans | Rigel Business" description="Manage company loans" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">

@@ -1,5 +1,5 @@
 @echo off
-echo Setting up Git repository for ApexAccounts...
+echo Setting up Git repository for Rigel Business...
 echo.
 
 REM Check if Git is installed
@@ -31,7 +31,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Creating initial commit...
-git commit -m "Initial commit: ApexAccounts accounting system with payment portal"
+git commit -m "Initial commit: Rigel Business accounting system with payment portal"
 if %errorlevel% neq 0 (
     echo ERROR: Failed to create commit
     pause

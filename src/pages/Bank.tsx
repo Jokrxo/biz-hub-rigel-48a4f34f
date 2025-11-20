@@ -5,7 +5,7 @@ import SEO from "@/components/SEO";
 export default function BankPage() {
   return (
     <>
-      <SEO title="Bank | ApexAccounts" description="Manage bank accounts and transactions" />
+      <SEO title="Bank | Rigel Business" description="Manage bank accounts and transactions" />
       <DashboardLayout>
         <BankManagement />
       </DashboardLayout>

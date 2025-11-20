@@ -114,7 +114,7 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
             </div>
             {open && (
               <div className="flex flex-col">
-                <span className="text-lg font-bold text-sidebar-primary">ApexAccounts</span>
+                <span className="text-lg font-bold text-sidebar-primary">Rigel Business</span>
                 <span className="text-xs text-sidebar-foreground/70">Enterprise</span>
               </div>
             )}

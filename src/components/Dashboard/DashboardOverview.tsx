@@ -52,7 +52,10 @@ export const DashboardOverview = () => {
   const [apKpis, setApKpis] = useState<{ unpaidTotal: number; overdueTotal: number; overdueUnder30Total: number; overdue30Total: number; overdue90Total: number }>({ unpaidTotal: 0, overdueTotal: 0, overdueUnder30Total: 0, overdue30Total: 0, overdue90Total: 0 });
   const [arAging, setArAging] = useState<any[]>([]);
   const [apAging, setApAging] = useState<any[]>([]);
-  const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean }>({ hasCoa: true, hasBank: true });
+  const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean; hasProducts: boolean; hasCustomers: boolean; hasSuppliers: boolean; hasEmployees: boolean }>({ hasCoa: true, hasBank: true, hasProducts: true, hasCustomers: true, hasSuppliers: true, hasEmployees: true });
+  const [userName, setUserName] = useState<string>("");
+  const [companyId, setCompanyId] = useState<string>("");
+  const [onboardingOpen, setOnboardingOpen] = useState<boolean>(false);
   
   // Date filter state
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
@@ -213,7 +216,7 @@ export const DashboardOverview = () => {
 
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
-        .select("company_id")
+        .select("company_id, first_name, last_name")
         .eq("user_id", user.id)
         .single();
 
@@ -224,6 +227,9 @@ export const DashboardOverview = () => {
       }
 
       console.log('Loading dashboard data for company:', profile.company_id);
+      setCompanyId(String(profile.company_id));
+      const fullName = [String(profile.first_name || '').trim(), String(profile.last_name || '').trim()].filter(Boolean).join(' ');
+      setUserName(fullName || (user.user_metadata?.name as string) || user.email || "");
 
       // Calculate date range for selected month/year
       const startDate = new Date(selectedYear, selectedMonth - 1, 1);
@@ -296,7 +302,32 @@ export const DashboardOverview = () => {
         .select("current_balance")
         .eq("company_id", profile.company_id);
 
-      setFirstRun({ hasCoa: (coaCount || 0) > 0, hasBank: (banksList || []).length > 0 });
+      const { count: productsCount } = await supabase
+        .from('items')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', profile.company_id)
+        .eq('item_type', 'product');
+      const { count: customersCount } = await supabase
+        .from('customers')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', profile.company_id);
+      const { count: suppliersCount } = await supabase
+        .from('suppliers')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', profile.company_id);
+      const { count: employeesCount } = await supabase
+        .from('employees')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', profile.company_id);
+
+      const hasCoa = (coaCount || 0) > 0;
+      const hasBank = (banksList || []).length > 0;
+      const hasProducts = (productsCount || 0) > 0;
+      const hasCustomers = (customersCount || 0) > 0;
+      const hasSuppliers = (suppliersCount || 0) > 0;
+      const hasEmployees = (employeesCount || 0) > 0;
+      setFirstRun({ hasCoa, hasBank, hasProducts, hasCustomers, hasSuppliers, hasEmployees });
+      setOnboardingOpen(!(hasProducts && hasCustomers && hasSuppliers && hasEmployees));
 
       // Load bank balance
       const banks = banksList;
@@ -614,6 +645,8 @@ export const DashboardOverview = () => {
     }
   };
 
+  const setupComplete = firstRun.hasCoa && firstRun.hasBank && firstRun.hasProducts && firstRun.hasCustomers && firstRun.hasSuppliers && firstRun.hasEmployees;
+
   const metricCards = [
     {
       title: "Total Assets",
@@ -675,6 +708,90 @@ export const DashboardOverview = () => {
   
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>{userName ? `Welcome, ${userName}` : 'Welcome'}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {setupComplete ? (
+            <div className="space-y-3">
+              <div className="text-sm text-muted-foreground">Your company setup is complete. Choose a module to continue.</div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => navigate('/sales')}>Go to Sales</Button>
+                <Button variant="outline" onClick={() => navigate('/purchase')}>Go to Purchase</Button>
+                <Button variant="outline" onClick={() => navigate('/customers')}>Go to Customers</Button>
+                <Button variant="outline" onClick={() => navigate('/payroll')}>Go to Payroll</Button>
+                <Button variant="outline" onClick={() => navigate('/reports')}>View Reports</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground">Complete your company setup to get started.</div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Sheet open={onboardingOpen} onOpenChange={setOnboardingOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>Company Setup</SheetTitle>
+            <SheetDescription>Add core records for products, customers, suppliers, and employees.</SheetDescription>
+          </SheetHeader>
+          <div className="space-y-6 mt-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Product</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="text-sm text-muted-foreground">Add products via Purchase Orders to capture costs and stock updates.</div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => navigate('/purchase')}>Go to Purchase</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Customer</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="text-sm text-muted-foreground">Manage your customers in the Customers module.</div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => navigate('/customers')}>Go to Customers</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Supplier</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="text-sm text-muted-foreground">Create and manage suppliers in the Purchase module.</div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => navigate('/purchase')}>Go to Purchase</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Employee</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="text-sm text-muted-foreground">Add employees in the Payroll module.</div>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => navigate('/payroll')}>Go to Payroll</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <div className="flex items-center justify-between">
+              <div className="text-sm text-muted-foreground">You can skip and complete later in relevant pages.</div>
+              <Button variant="outline" onClick={() => setOnboardingOpen(false)}>Skip</Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
       {/* First-run setup banner */}
       {(!firstRun.hasCoa || !firstRun.hasBank) && (
         <Card className="border-dashed">

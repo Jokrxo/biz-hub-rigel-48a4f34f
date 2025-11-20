@@ -62,7 +62,7 @@ export default function Login() {
 
   return (
     <>
-      <SEO title="Login | ApexAccounts" description="Secure login to ApexAccounts enterprise dashboard" canonical={window.location.href} />
+      <SEO title="Login | Rigel Business" description="Secure login to Rigel Business enterprise dashboard" canonical={window.location.href} />
       <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
         {/* Background Image */}
         <div className="absolute inset-0 bg-[url('/src/assets/professional-finance-bg.jpg')] bg-cover bg-center" />
@@ -73,7 +73,7 @@ export default function Login() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4">
               <Calculator className="h-8 w-8 text-primary-foreground" />
             </div>
-            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">ApexAccounts</h1>
+            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
             <p className="text-sm text-muted-foreground mt-2">Enterprise Accounting & Financial Management</p>
           </header>
 

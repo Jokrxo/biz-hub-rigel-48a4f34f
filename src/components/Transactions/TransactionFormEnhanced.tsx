@@ -348,12 +348,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     // Asset purchase: narrow debit side to fixed assets only (codes 15xx or known names), exclude accumulated depreciation
     if (form.element === 'asset') {
       const isFixedAsset = (acc: Account) => {
-        const code = String(acc.account_code || '').trim();
         const name = String(acc.account_name || '').toLowerCase();
         const fixedNames = ['land','building','buildings','plant','machinery','motor vehicle','vehicles','furniture','fixtures','equipment','computer','software','goodwill'];
         const nameMatches = fixedNames.some(n => name.includes(n));
         const isAccum = name.includes('accumulated') || name.includes('depreciation') || name.includes('amortization');
-        return !isAccum && (code.startsWith('15') || nameMatches);
+        return !isAccum && nameMatches;
       };
       debits = debits.filter(isFixedAsset);
     }
@@ -1006,10 +1005,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         const debitAcc = accounts.find(a => a.id === form.debitAccount);
         const isAssetType = (debitAcc?.account_type || '').toLowerCase() === 'asset';
         const name = (debitAcc?.account_name || '').toLowerCase();
-        const code = String((debitAcc as any)?.account_code || '');
-        const looksFixedAsset = name.includes('fixed asset') || code.startsWith('15');
-        if (!isAssetType || !looksFixedAsset) {
-          toast({ title: "Select Fixed Asset Ledger", description: "For Asset Purchase, the debit account must be a Fixed Asset ledger (e.g., 1500).", variant: "destructive" });
+        const fixedNames = ['land','building','buildings','plant','machinery','motor vehicle','vehicles','furniture','fixtures','equipment','computer','software','goodwill'];
+        const nameMatches = fixedNames.some(n => name.includes(n));
+        const isAccum = name.includes('accumulated') || name.includes('depreciation') || name.includes('amortization');
+        if (!isAssetType || isAccum || !nameMatches) {
+          toast({ title: "Select Fixed Asset Ledger", description: "For Asset Purchase, choose a fixed asset ledger.", variant: "destructive" });
           return;
         }
       }
@@ -1549,8 +1549,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         const debitAcc = accounts.find(a => a.id === form.debitAccount);
         const isAssetType = (debitAcc?.account_type || '').toLowerCase() === 'asset';
         const name = (debitAcc?.account_name || '').toLowerCase();
-        const code = String((debitAcc as any)?.account_code || '');
-        const isFixedAssetDebit = isAssetType && (name.includes('fixed asset') || code.startsWith('15'));
+        const fixedNames = ['land','building','buildings','plant','machinery','motor vehicle','vehicles','furniture','fixtures','equipment','computer','software','goodwill'];
+        const nameMatches = fixedNames.some(n => name.includes(n));
+        const isAccum = name.includes('accumulated') || name.includes('depreciation') || name.includes('amortization');
+        const isFixedAssetDebit = isAssetType && nameMatches && !isAccum;
         const isAssetTx = form.element === 'asset' || isFixedAssetDebit;
         if (isAssetTx) {
           // Resolve company id

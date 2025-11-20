@@ -32,7 +32,7 @@ export const supabase = createClient<Database>(finalUrl, finalKey, {
   },
   global: {
     headers: {
-      'x-application-name': 'apex-accounts',
+      'x-application-name': 'rigel-business',
     },
   },
   db: {

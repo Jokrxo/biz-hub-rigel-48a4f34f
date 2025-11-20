@@ -104,7 +104,7 @@ export default function Signup() {
 
   return (
     <>
-      <SEO title="Sign Up | ApexAccounts" description="Create your ApexAccounts enterprise account" canonical={window.location.href} />
+      <SEO title="Sign Up | Rigel Business" description="Create your Rigel Business enterprise account" canonical={window.location.href} />
       <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
         {/* Background Image */}
         <div className="absolute inset-0 bg-[url('/src/assets/sa-finance-hero.jpg')] bg-cover bg-center" />
@@ -115,7 +115,7 @@ export default function Signup() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4">
               <span className="text-3xl font-bold text-primary-foreground">A</span>
             </div>
-            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">ApexAccounts</h1>
+            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
             <p className="text-sm text-muted-foreground mt-2">Create your enterprise account</p>
           </header>
 

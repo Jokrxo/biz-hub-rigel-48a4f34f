@@ -26,7 +26,7 @@ export default function SettingsPage() {
   }, [user]);
   return (
     <>
-      <SEO title="Settings | ApexAccounts" description="Company settings and preferences" />
+      <SEO title="Settings | Rigel Business" description="Company settings and preferences" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">

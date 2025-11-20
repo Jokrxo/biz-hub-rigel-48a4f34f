@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-const CACHE_NAME = 'apexaccounts-v1';
+const CACHE_NAME = 'rigel-business-v1';
 const urlsToCache = [
   '/',
   '/index.html',
@@ -102,7 +102,7 @@ async function syncTransactions() {
 // Push notifications
 self.addEventListener('push', (event) => {
   const options = {
-    body: event.data ? event.data.text() : 'New notification from ApexAccounts',
+    body: event.data ? event.data.text() : 'New notification from Rigel Business',
     icon: '/icons/icon-192x192.png',
     badge: '/icons/icon-72x72.png',
     vibrate: [100, 50, 100],
@@ -113,7 +113,7 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification('ApexAccounts', options)
+    self.registration.showNotification('Rigel Business', options)
   );
 });
 

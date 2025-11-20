@@ -28,7 +28,7 @@ function Ensure-User {
   $email = (& git config user.email) 2>$null
   if (-not $name -or -not $email) {
     Write-Host "Setting local git user identity..." -ForegroundColor Yellow
-    & git config user.name "ApexAccounts User"
+    & git config user.name "Rigel Business User"
     & git config user.email "user@example.com"
   }
 }

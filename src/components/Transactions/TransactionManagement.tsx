@@ -140,6 +140,28 @@ export const TransactionManagement = () => {
     return { filtered, totalIncome, totalExpenses };
   }, [items, searchTerm, filterType, filterStatus, sourceTab]);
 
+  const approveOrOpenForm = async (id: string) => {
+    try {
+      const { data: entries } = await supabase
+        .from("transaction_entries")
+        .select("id")
+        .eq("transaction_id", id)
+        .limit(1);
+      if (entries && entries.length > 0) {
+        await setTransactionStatus(id, 'approved');
+        await load();
+        return;
+      }
+      const full = items.find(i => i.id === id) || null;
+      setEditData(full);
+      setOpen(true);
+    } catch {
+      const full = items.find(i => i.id === id) || null;
+      setEditData(full);
+      setOpen(true);
+    }
+  };
+
   const setTransactionStatus = async (id: string, status: 'approved' | 'pending' | 'rejected' | 'unposted') => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -592,7 +614,11 @@ export const TransactionManagement = () => {
                           <DropdownMenuContent align="end">
                             {(transaction.statusKey === "pending" || transaction.statusKey === "unposted") && (
                               <>
-                                <DropdownMenuItem onClick={() => setTransactionStatus(transaction.id, 'approved')}>
+                                <DropdownMenuItem onClick={() => { 
+                                  const full = items.find(i => i.id === transaction.id);
+                                  setEditData(full || transaction);
+                                  setOpen(true);
+                                }}>
                                   <CheckCircle className="mr-2 h-4 w-4" />
                                   <span>Approve</span>
                                 </DropdownMenuItem>

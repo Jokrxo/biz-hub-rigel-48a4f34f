@@ -61,7 +61,7 @@ export default function Payroll() {
 
   return (
     <>
-      <SEO title="Payroll | ApexAccounts" description="Manage payroll runs and employees" />
+      <SEO title="Payroll | Rigel Business" description="Manage payroll runs and employees" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">

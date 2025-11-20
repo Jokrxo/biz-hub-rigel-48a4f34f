@@ -1,4 +1,4 @@
-# ApexAccounts - Enterprise Accounting Solution
+# Rigel Business - Enterprise Accounting Solution
 
 A comprehensive accounting and financial management system built for South African enterprises with multi-branch support.
 
@@ -128,7 +128,7 @@ bun run build
 
 ## Support
 
-For issues or questions, contact the development team.
+For issues or questions, contact the Rigel Business team.
 
 ## License
 

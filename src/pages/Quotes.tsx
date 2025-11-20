@@ -313,7 +313,7 @@ export default function QuotesPage() {
 
   return (
     <>
-      <SEO title="Sales Quotes | ApexAccounts" description="View and download quotes; create quotes in Sales module" />
+      <SEO title="Sales Quotes | Rigel Business" description="View and download quotes; create quotes in Sales module" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">

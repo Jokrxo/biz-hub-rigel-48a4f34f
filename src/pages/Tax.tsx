@@ -13,7 +13,7 @@ export default function TaxPage() {
 
   return (
     <>
-      <SEO title="Tax | ApexAccounts" description="Manage tax rates, returns, and reports" />
+      <SEO title="Tax | Rigel Business" description="Manage tax rates, returns, and reports" />
       <DashboardLayout>
         <div className="space-y-6">
           <div>

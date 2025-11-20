@@ -114,7 +114,7 @@ export default function CustomersPage() {
 
   return (
     <>
-      <SEO title="Customers | ApexAccounts" description="Manage customer information" />
+      <SEO title="Customers | Rigel Business" description="Manage customer information" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">

@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Info } from "lucide-react";
 import { PurchaseOverview } from "@/components/Purchase/PurchaseOverview";
-import { Bills } from "@/components/Purchase/Bills";
 import { PurchaseOrders } from "@/components/Purchase/PurchaseOrders";
 import { Suppliers } from "@/components/Purchase/Suppliers";
 import { PurchaseTransactions } from "@/components/Purchase/PurchaseTransactions";
@@ -30,13 +29,13 @@ export default function PurchasePage() {
 
   return (
     <>
-      <SEO title="Purchase | ApexAccounts" description="Manage bills, purchase orders, expenses, and suppliers" />
+      <SEO title="Purchase | Rigel Business" description="Manage purchase orders, expenses, transactions, and suppliers" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold">Purchase</h1>
-              <p className="text-muted-foreground mt-1">Manage bills, purchase orders, transactions, and suppliers</p>
+              <p className="text-muted-foreground mt-1">Manage purchase orders, transactions, and suppliers</p>
             </div>
             <Button variant="outline" onClick={() => setTutorialOpen(true)}>
               <Info className="h-4 w-4 mr-2" />
@@ -48,15 +47,11 @@ export default function PurchasePage() {
             <TabsList>
               <TabsTrigger value="ap-dashboard">AP Dashboard</TabsTrigger>
               <TabsTrigger value="orders">Purchase Orders</TabsTrigger>
-              <TabsTrigger value="bills">Bills</TabsTrigger>
               <TabsTrigger value="transactions">Transactions (Purchase)</TabsTrigger>
               <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
             </TabsList>
 
 
-            <TabsContent value="bills">
-              <Bills />
-            </TabsContent>
 
             <TabsContent value="ap-dashboard">
               <APDashboard />

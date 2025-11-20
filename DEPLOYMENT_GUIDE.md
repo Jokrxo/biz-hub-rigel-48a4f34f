@@ -1,4 +1,4 @@
-# Deployment Guide for ApexAccounts
+# Deployment Guide for Rigel Business
 
 ## Vercel Deployment Steps
 

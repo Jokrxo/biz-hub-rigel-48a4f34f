@@ -28,9 +28,8 @@ export const LoadingSpinner = ({ className, size = "md" }: LoadingSpinnerProps) 
           {/* Inner core */}
           <div className="absolute inset-4 rounded-full bg-gradient-primary animate-pulse" />
           
-          {/* Center icon */}
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-lg">A</span>
+            <span className="text-primary-foreground font-extrabold text-3xl">R</span>
           </div>
         </div>
       </div>
@@ -45,7 +44,7 @@ export const PageLoader = () => {
         <LoadingSpinner size="lg" />
         <div className="space-y-2">
           <h2 className="text-2xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-            ApexAccounts
+            Rigel Business
           </h2>
           <p className="text-sm text-muted-foreground animate-pulse">Loading your workspace...</p>
         </div>

@@ -364,7 +364,7 @@ export default function FixedAssetsPage() {
 
   return (
     <>
-      <SEO title="Fixed Assets Register | ApexAccounts" description="Manage fixed assets and depreciation" />
+      <SEO title="Fixed Assets Register | Rigel Business" description="Manage fixed assets and depreciation" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">

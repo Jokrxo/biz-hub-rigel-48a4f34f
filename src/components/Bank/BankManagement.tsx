@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Plus, Building2, TrendingUp, TrendingDown } from "lucide-react";
 import { CSVImport } from "./CSVImport";
@@ -41,6 +42,7 @@ interface BankAccount {
 
 export const BankManagement = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -249,23 +251,45 @@ export const BankManagement = () => {
         if (txErr) throw txErr;
 
         const entries = [
-          { transaction_id: tx.id, account_id: bankLedger.id, debit: openingBalance, credit: 0, description: 'Opening balance', status: 'pending' },
-          { transaction_id: tx.id, account_id: (openingEquity as any).id, debit: 0, credit: openingBalance, description: 'Opening balance', status: 'pending' },
+          { transaction_id: tx.id, account_id: bankLedger.id, debit: openingBalance, credit: 0, description: 'Opening balance', status: 'approved' },
+          { transaction_id: tx.id, account_id: (openingEquity as any).id, debit: 0, credit: openingBalance, description: 'Opening balance', status: 'approved' },
         ];
         const { error: teErr } = await supabase.from("transaction_entries").insert(entries);
         if (teErr) throw teErr;
 
-        // Now mark transaction approved
+        // Post to ledger entries for reporting and status consistency
+        const ledgerEntries = entries.map((e) => ({
+          company_id: profile.company_id,
+          account_id: e.account_id,
+          debit: e.debit,
+          credit: e.credit,
+          entry_date: today,
+          is_reversed: false,
+          reference_id: tx.id,
+          transaction_id: tx.id,
+          description: e.description,
+        }));
+        const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerEntries as any);
+        if (leErr) throw leErr;
+
+        // Now mark transaction approved after entries & ledger are posted
         await supabase.from('transactions').update({ status: 'approved' }).eq('id', tx.id);
 
         // Update bank current balance
         await supabase.rpc('update_bank_balance', { _bank_account_id: insertedBank.id, _amount: openingBalance, _operation: 'add' });
+
+        // Persist opening and current balances on the bank record
+        await supabase
+          .from('bank_accounts')
+          .update({ opening_balance: openingBalance, current_balance: openingBalance })
+          .eq('id', insertedBank.id);
       }
 
       toast({ title: "Success", description: "Bank account added successfully" });
       setOpen(false);
       setForm({ account_name: "", account_number: "", bank_name: "", opening_balance: "" });
       loadBanks();
+      navigate('/transactions');
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }

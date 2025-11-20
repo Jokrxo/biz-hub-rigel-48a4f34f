@@ -5,17 +5,17 @@
 # Double-click setup-git.bat or run these commands:
 git init
 git add .
-git commit -m "Initial commit: ApexAccounts with payment portal"
+git commit -m "Initial commit: Rigel Business with payment portal"
 ```
 
 ## Step 2: GitHub
 1. Create repo: https://github.com/new
-2. Name it: `apex-accounts`
+2. Name it: `rigel-business`
 3. Don't add README (we have one)
 
 ## Step 3: Connect & Push
 ```bash
-git remote add origin https://github.com/YOUR_USERNAME/apex-accounts.git
+git remote add origin https://github.com/YOUR_USERNAME/rigel-business.git
 git push -u origin main
 ```
 
@@ -23,7 +23,7 @@ git push -u origin main
 1. Go to: https://vercel.com
 2. Click "New Project"
 3. Import from GitHub
-4. Select your `apex-accounts` repo
+4. Select your `rigel-business` repo
 5. Environment variables are pre-configured in `vercel.json`
 6. Deploy! 🎉
 

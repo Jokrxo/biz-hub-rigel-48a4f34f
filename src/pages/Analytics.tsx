@@ -5,7 +5,7 @@ import { RealAnalytics } from "@/components/Analytics/RealAnalytics";
 export default function AnalyticsPage() {
   return (
     <>
-      <SEO title="Analytics | ApexAccounts" description="Business analytics and insights" />
+      <SEO title="Analytics | Rigel Business" description="Business analytics and insights" />
       <DashboardLayout>
         <div className="space-y-6">
           <div>

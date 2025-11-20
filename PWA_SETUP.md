@@ -1,7 +1,7 @@
-# PWA Setup Instructions for ApexAccounts
+# PWA Setup Instructions for Rigel Business
 
 ## Overview
-ApexAccounts now includes full Progressive Web App (PWA) support with offline functionality, home screen installation, and background sync.
+Rigel Business now includes full Progressive Web App (PWA) support with offline functionality, home screen installation, and background sync.
 
 ## Features Added
 

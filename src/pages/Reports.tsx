@@ -22,7 +22,7 @@ export default function ReportsPage() {
   }, [user]);
   return (
     <>
-      <SEO title="Financial Reports | ApexAccounts" description="GAAP-compliant annual financial statements with drill-down capabilities" />
+      <SEO title="Financial Reports | Rigel Business" description="GAAP-compliant annual financial statements with drill-down capabilities" />
       <DashboardLayout>
         <div className="space-y-6">
           <div className="flex items-center justify-between">
