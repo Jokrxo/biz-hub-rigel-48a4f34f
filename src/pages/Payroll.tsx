@@ -20,7 +20,7 @@ import { useRoles } from "@/hooks/use-roles";
 import { buildPayslipPDF, type PayslipForPDF } from "@/lib/payslip-export";
 import { addLogoToPDF, fetchLogoDataUrl } from "@/lib/invoice-export";
 
-type Employee = { id: string; first_name: string; last_name: string; email: string | null; id_number: string | null; start_date: string | null; salary_type: string | null; position: string | null; role: string | null; bank_name: string | null; bank_branch_code: string | null; bank_account_number: string | null; bank_account_type: string | null; active: boolean };
+type Employee = { id: string; first_name: string; last_name: string; email: string | null; id_number: string | null; start_date: string | null; salary_type: string | null; bank_name: string | null; bank_branch_code: string | null; bank_account_number: string | null; bank_account_type: string | null; active: boolean };
 type PayItem = { id: string; code: string; name: string; type: "earning" | "deduction" | "employer"; taxable: boolean };
 type PayRun = { id: string; company_id: string; period_start: string; period_end: string; status: string };
 type PayRunLine = { id: string; pay_run_id: string; employee_id: string; gross: number; net: number; paye: number; uif_emp: number; uif_er: number; sdl_er: number };
@@ -811,7 +811,7 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", id_number: "", start_date: "", salary_type: "monthly", position: "", role: "employee", salary_amount: "", bank_name: "", bank_branch_code: "", bank_account_number: "", bank_account_type: "checking" });
+  const [form, setForm] = useState({ first_name: "", last_name: "", email: "", id_number: "", start_date: "", salary_type: "monthly", salary_amount: "", bank_name: "", bank_branch_code: "", bank_account_number: "", bank_account_type: "checking" });
 
   const load = async () => {
     setLoading(true);
@@ -845,8 +845,6 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
           id_number: form.id_number || null,
           start_date: form.start_date || null,
           salary_type: form.salary_type || null,
-          position: form.position || null,
-          role: form.role || null,
           bank_name: form.bank_name || null,
           bank_branch_code: form.bank_branch_code || null,
           bank_account_number: form.bank_account_number || null,
@@ -960,7 +958,7 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
       }
       toast({ title: "Success", description: "Employee created" });
       setDialogOpen(false);
-      setForm({ first_name: "", last_name: "", email: "", id_number: "", start_date: "", salary_type: "monthly", position: "", role: "employee", salary_amount: "", bank_name: "", bank_branch_code: "", bank_account_number: "", bank_account_type: "checking" });
+      setForm({ first_name: "", last_name: "", email: "", id_number: "", start_date: "", salary_type: "monthly", salary_amount: "", bank_name: "", bank_branch_code: "", bank_account_number: "", bank_account_type: "checking" });
       load();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -1047,23 +1045,7 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
                 </Select>
               </div>
             </div>
-            <div>
-              <Label>Position</Label>
-              <Input value={form.position} onChange={e => setForm({ ...form, position: e.target.value })} />
-            </div>
-            <div>
-              <Label>Role</Label>
-              <Select value={form.role} onValueChange={(v: any) => setForm({ ...form, role: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="employee">Employee</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="contractor">Contractor</SelectItem>
-                  <SelectItem value="director">Director</SelectItem>
-                  <SelectItem value="intern">Intern</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label>Salary Amount</Label>

@@ -481,12 +481,25 @@ export const TransactionManagement = () => {
 
   const deleteTransaction = async (id: string) => {
     try {
-      const { error } = await supabase
-        .from("transactions")
-        .delete()
-        .eq("id", id);
-
+      // Remove entries and ledger postings first
+      await supabase.from("transaction_entries").delete().eq("transaction_id", id);
+      await supabase.from("ledger_entries").delete().eq("transaction_id", id);
+      await supabase.from("ledger_entries").delete().eq("reference_id", id);
+      const { error } = await supabase.from("transactions").delete().eq("id", id);
       if (error) throw error;
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("company_id")
+            .eq("user_id", user.id)
+            .maybeSingle();
+          if (profile?.company_id) {
+            await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
+          }
+        }
+      } catch {}
       toast({ title: "Success", description: "Transaction deleted" });
       load();
     } catch (e: any) {

@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { transactionsApi } from "@/lib/transactions-api";
+import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
 
 interface Supplier {
   id: string;
@@ -55,6 +56,8 @@ export const PurchaseOrdersManagement = () => {
   const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; account_name: string }>>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
   const { toast } = useToast();
+  const [journalOpen, setJournalOpen] = useState(false);
+  const [journalEditData, setJournalEditData] = useState<any>(null);
 
   const [form, setForm] = useState({
     po_date: new Date().toISOString().slice(0, 10),
@@ -304,9 +307,51 @@ export const PurchaseOrdersManagement = () => {
     if (!confirm("Delete this purchase order?")) return;
 
     try {
+      // Load PO to get company and reference
+      const { data: po } = await supabase
+        .from("purchase_orders")
+        .select("po_number, company_id")
+        .eq("id", id)
+        .single();
+
+      // Find related transactions by reference number (purchase, payment)
+      if (po?.po_number) {
+        const { data: txs } = await supabase
+          .from("transactions")
+          .select("id")
+          .eq("reference_number", po.po_number);
+        const txIds = (txs || []).map((t: any) => t.id);
+        if (txIds.length > 0) {
+          // Remove transaction entries and ledger entries for these transactions
+          await supabase.from("transaction_entries").delete().in("transaction_id", txIds as any);
+          await supabase.from("ledger_entries").delete().in("transaction_id", txIds as any);
+          await supabase.from("ledger_entries").delete().in("reference_id", txIds as any);
+          // Delete transactions
+          await supabase.from("transactions").delete().in("id", txIds as any);
+        }
+      }
+
+      // Delete PO items then PO
+      await supabase.from("purchase_order_items").delete().eq("purchase_order_id", id);
       const { error } = await supabase.from("purchase_orders").delete().eq("id", id);
       if (error) throw error;
-      toast({ title: "Success", description: "Purchase order deleted" });
+
+      // Refresh AFS cache
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("company_id")
+            .eq("user_id", user.id)
+            .maybeSingle();
+          if (profile?.company_id) {
+            await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
+          }
+        }
+      } catch {}
+
+      toast({ title: "Success", description: "Purchase order and postings deleted" });
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -343,7 +388,7 @@ export const PurchaseOrdersManagement = () => {
         .update({ status: "sent" })
         .eq("id", order.id);
       if (error) throw error;
-      await transactionsApi.postPurchaseSentClient(order, order.po_date);
+      await openJournalForPOSent(order, order.po_date);
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
@@ -399,6 +444,51 @@ export const PurchaseOrdersManagement = () => {
     } finally {
       setSentLoading(null);
     }
+  };
+
+  const openJournalForPOSent = async (po: PurchaseOrder, postDateStr?: string) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+      if (!profile?.company_id) return;
+      const { data: accounts } = await supabase
+        .from("chart_of_accounts")
+        .select("id, account_name, account_type, account_code")
+        .eq("company_id", profile.company_id)
+        .eq("is_active", true);
+      const list = (accounts || []).map(a => ({ id: String(a.id), name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+      const pick = (type: string, codes: string[], names: string[]) => {
+        const byType = list.filter(a => a.type === type.toLowerCase());
+        const byCode = byType.find(a => codes.includes(a.code));
+        if (byCode) return byCode.id;
+        const byName = byType.find(a => names.some(k => a.name.includes(k)));
+        return byName?.id || byType[0]?.id || '';
+      };
+      const invId = pick('asset', ['1300'], ['inventory','stock']);
+      const apId = pick('liability', ['2000'], ['accounts payable','payable']);
+      const amount = Number(po.total_amount || 0);
+      const editData = {
+        id: null,
+        transaction_date: postDateStr || po.po_date,
+        description: `PO ${po.po_number || po.id} sent`,
+        reference_number: po.po_number || null,
+        transaction_type: 'asset',
+        payment_method: 'accrual',
+        debit_account_id: invId,
+        credit_account_id: apId,
+        total_amount: amount,
+        bank_account_id: null,
+        lockType: 'po_sent',
+        vat_rate: po.subtotal && po.tax_amount ? Number(((Number(po.tax_amount) / Number(po.subtotal)) * 100).toFixed(2)) : 0,
+      };
+      setJournalEditData(editData);
+      setJournalOpen(true);
+    } catch {}
   };
 
   const openPayDialog = (order: PurchaseOrder) => {
@@ -705,6 +795,7 @@ export const PurchaseOrdersManagement = () => {
         </DialogFooter>
       </DialogContent>
       </Dialog>
+      <TransactionFormEnhanced open={journalOpen} onOpenChange={setJournalOpen} onSuccess={loadData} editData={journalEditData} />
     </div>
   );
 };

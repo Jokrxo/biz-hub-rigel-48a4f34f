@@ -54,6 +54,7 @@ export const PurchaseTaxReport = () => {
           const accName = (e.chart_of_accounts?.account_name || '').toLowerCase();
           const isVatInput = accName.includes('vat input') || accName.includes('vat receivable') || accName.includes('vat');
           const isExpenseTx = String(e.transactions?.transaction_type || '').toLowerCase() === 'expense';
+          const isPurchaseTx = String(e.transactions?.transaction_type || '').toLowerCase() === 'purchase';
           const debit = Number(e.debit || 0);
           const credit = Number(e.credit || 0);
           const txDate = e.transactions?.transaction_date || e.created_at?.slice(0, 10);
@@ -64,15 +65,24 @@ export const PurchaseTaxReport = () => {
             byMonth[ym].vatInput += debit - credit;
             const inclusive = Boolean(e.transactions?.vat_inclusive);
             const total = Number(e.transactions?.total_amount || 0);
-            const net = inclusive ? total - (total / (1 + rate / 100)) : total;
-            const estimatedNet = net > 0 ? net : (debit - credit) * (100 / rate);
-            byMonth[ym].purchasesExclVat += Math.max(0, estimatedNet);
-            detail.push({ date: txDate || '', description: e.transactions?.description || '', net: Math.max(0, estimatedNet), vat: debit - credit, total });
+            const base = Number(e.transactions?.base_amount || 0);
+            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - (debit - credit));
+            byMonth[ym].purchasesExclVat += Math.max(0, net);
+            detail.push({ date: txDate || '', description: e.transactions?.description || '', net: Math.max(0, net), vat: debit - credit, total });
           } else if (isExpenseTx && rate > 0 && Number(e.transactions?.vat_amount || 0) > 0) {
             const inclusive = Boolean(e.transactions?.vat_inclusive);
             const total = Number(e.transactions?.total_amount || 0);
             const net = inclusive ? total - (total / (1 + rate / 100)) : total;
             const vat = inclusive ? total - net : (net * rate) / 100;
+            byMonth[ym].vatInput += Math.max(0, vat);
+            byMonth[ym].purchasesExclVat += Math.max(0, net);
+            detail.push({ date: txDate || '', description: e.transactions?.description || '', net, vat, total });
+          } else if (isPurchaseTx && rate > 0 && Number(e.transactions?.vat_amount || 0) > 0) {
+            const inclusive = Boolean(e.transactions?.vat_inclusive);
+            const total = Number(e.transactions?.total_amount || 0);
+            const base = Number(e.transactions?.base_amount || 0);
+            const vat = Number(e.transactions?.vat_amount || 0);
+            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vat);
             byMonth[ym].vatInput += Math.max(0, vat);
             byMonth[ym].purchasesExclVat += Math.max(0, net);
             detail.push({ date: txDate || '', description: e.transactions?.description || '', net, vat, total });

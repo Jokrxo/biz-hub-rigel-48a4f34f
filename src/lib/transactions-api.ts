@@ -241,6 +241,9 @@ export const transactionsApi = {
     if (!user) throw new Error('Not authenticated');
     const postDate = postDateStr || po.po_date || new Date().toISOString().slice(0, 10);
     const total = Number(po.total_amount || 0);
+    const taxAmount = Number(po.tax_amount ?? 0);
+    const subtotal = Number(po.subtotal ?? (total - taxAmount));
+    const vatRate = subtotal > 0 && taxAmount > 0 ? Number(((taxAmount / subtotal) * 100).toFixed(2)) : 0;
     const { data: accounts } = await supabase
       .from('chart_of_accounts')
       .select('id, account_name, account_type, account_code, is_active')
@@ -256,18 +259,36 @@ export const transactionsApi = {
       return byType?.id || '';
     };
     const inventoryId = pick('asset', ['1300'], ['inventory','stock']);
-    const apId = pick('liability', ['2100'], ['accounts payable','payable']);
+    const apId = pick('liability', ['2000'], ['accounts payable','payable']);
+    const vatInLiabilityId = pick('liability', ['2110'], ['vat input','vat receivable','input tax']);
+    const vatInAssetId = pick('asset', ['1210'], ['vat input','vat receivable','input tax']);
+    const vatInId = vatInLiabilityId || vatInAssetId;
     if (!inventoryId || !apId) throw new Error('Inventory or Accounts Payable account missing');
     const { data: tx, error: txErr } = await supabase
       .from('transactions')
-      .insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `PO ${po.po_number || po.id} sent`, reference_number: po.po_number || null, total_amount: total, transaction_type: 'purchase', status: 'pending' })
+      .insert({
+        company_id: companyId,
+        user_id: user.id,
+        transaction_date: postDate,
+        description: `PO ${po.po_number || po.id} sent`,
+        reference_number: po.po_number || null,
+        total_amount: total,
+        transaction_type: 'purchase',
+        status: 'pending',
+        vat_rate: vatRate > 0 ? vatRate : null,
+        vat_amount: taxAmount > 0 ? taxAmount : null,
+        vat_inclusive: false,
+      })
       .select('id')
       .single();
     if (txErr) throw txErr;
-    const rows = [
-      { transaction_id: tx.id, account_id: inventoryId, debit: total, credit: 0, description: 'Inventory', status: 'approved' },
-      { transaction_id: tx.id, account_id: apId, debit: 0, credit: total, description: 'Accounts Payable', status: 'approved' },
+    const rows: Array<{ transaction_id: string; account_id: string; debit: number; credit: number; description: string; status: string }> = [
+      { transaction_id: tx.id, account_id: inventoryId, debit: Math.max(0, subtotal), credit: 0, description: 'Inventory', status: 'approved' },
+      { transaction_id: tx.id, account_id: apId, debit: 0, credit: Math.max(0, total), description: 'Accounts Payable', status: 'approved' },
     ];
+    if (vatInId && taxAmount > 0) {
+      rows.push({ transaction_id: tx.id, account_id: vatInId, debit: taxAmount, credit: 0, description: 'VAT Input', status: 'approved' });
+    }
     const { error: teErr } = await supabase.from('transaction_entries').insert(rows);
     if (teErr) throw teErr;
     const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: tx.id, description: r.description }));
@@ -309,7 +330,7 @@ export const transactionsApi = {
       const byType = list.find(a => a.type === type.toLowerCase());
       return byType?.id || '';
     };
-    const apId = pick('liability', ['2100'], ['accounts payable','payable']);
+    const apId = pick('liability', ['2000'], ['accounts payable','payable']);
     const bankId = pick('asset', ['1100'], ['bank','cash']);
     if (!apId || !bankId) throw new Error('Accounts Payable or Bank account missing');
     const { data: tx, error: txErr } = await supabase
@@ -354,7 +375,7 @@ export const transactionsApi = {
       return byType?.id || '';
     };
     const expenseId = pick('expense', ['6000'], ['uncategorized expense','expense']);
-    const apId = pick('liability', ['2100'], ['accounts payable','payable']);
+    const apId = pick('liability', ['2000'], ['accounts payable','payable']);
     if (!expenseId || !apId) throw new Error('Expense or Accounts Payable account missing');
     const { data: tx, error: txErr } = await supabase
       .from('transactions')
@@ -401,7 +422,7 @@ export const transactionsApi = {
       const byType = list.find(a => a.type === type.toLowerCase());
       return byType?.id || '';
     };
-    const apId = pick('liability', ['2100'], ['accounts payable','payable']);
+    const apId = pick('liability', ['2000'], ['accounts payable','payable']);
     const bankId = pick('asset', ['1100'], ['bank','cash']);
     if (!apId || !bankId) throw new Error('Accounts Payable or Bank account missing');
     const { data: tx, error: txErr } = await supabase

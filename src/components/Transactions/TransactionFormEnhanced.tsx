@@ -131,14 +131,7 @@ const ACCOUNTING_ELEMENTS = [
     creditTypes: ['asset'],
     description: "Pay loan interest (Dr Interest Expense / Cr Bank)"
   }
-  ,{
-    value: "depreciation",
-    label: "Depreciation",
-    icon: TrendingDown,
-    debitType: 'expense',
-    creditTypes: ['asset'],
-    description: "Post monthly depreciation (Dr Depreciation Expense / Cr Accumulated Depreciation)"
-  }
+  
 ];
 
 const PAYMENT_METHODS = [
@@ -201,6 +194,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     loanTermType: "short",
     installmentNumber: ""
   });
+  const [showFixedAssetsUI] = useState<boolean>(false);
 
   useEffect(() => {
     if (open && prefill) {
@@ -307,6 +301,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       const bankId = form.debitAccount || pick('asset', ['1100'], ['bank','cash']);
       const arId = form.creditAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
       setForm(prev => ({ ...prev, debitAccount: bankId, creditAccount: arId }));
+    } else if (lockType === 'po_sent') {
+      const invId = form.debitAccount || pick('asset', ['1300'], ['inventory','stock']);
+      const apId = form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']);
+      setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: apId }));
     }
   }, [open, lockAccounts, lockType, accounts]);
 
@@ -467,6 +465,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           const bankId = form.debitAccount || pick('asset', ['1100'], ['bank','cash']);
           const arId = form.creditAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
           setForm(prev => ({ ...prev, debitAccount: bankId, creditAccount: arId }));
+        } else if (lockType === 'po_sent') {
+          const invId = form.debitAccount || pick('asset', ['1300'], ['inventory','stock']);
+          const apId = form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']);
+          setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: apId }));
         }
       }
     } catch (error: any) {
@@ -564,10 +566,14 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           setForm(prev => ({ ...prev, creditAccount: bankAccount.id }));
         }
       } else if (form.element === 'expense' || form.element === 'asset' || form.element === 'liability') {
-        // For expenses, assets, and liabilities: Credit side (payment from)
-        const creditAccount = credits.find(acc => 
-          keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
-        );
+        let creditAccount: Account | undefined;
+        if (paymentMethod.value === 'accrual') {
+          creditAccount = credits.find(acc => (acc.account_type || '').toLowerCase() === 'liability' && ((acc.account_code || '').toString() === '2000' || (acc.account_name || '').toLowerCase().includes('accounts payable') || (acc.account_name || '').toLowerCase().includes('payable')));
+        } else {
+          creditAccount = credits.find(acc => 
+            keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
+          );
+        }
         if (creditAccount) {
           setForm(prev => ({ ...prev, creditAccount: creditAccount.id }));
         }
@@ -658,7 +664,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             transaction_date: form.date,
             description: form.description.trim(),
             reference_number: form.reference ? form.reference.trim() : null,
-            transaction_type: form.element || null,
+            transaction_type: lockType === 'po_sent' ? 'purchase' : (form.element || null),
             bank_account_id: form.bankAccountId && form.bankAccountId.trim() !== "" ? form.bankAccountId : null,
             total_amount: isNaN(amountNum) ? 0 : amountNum,
             debit_account_id: form.debitAccount,
@@ -666,7 +672,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             vat_rate: vatRate > 0 ? vatRate : null,
             vat_amount: vatAmount > 0 ? vatAmount : null,
             base_amount: netAmount,
-            vat_inclusive: vatRate > 0,
+            vat_inclusive: lockType === 'po_sent' ? false : (vatRate > 0),
            })
           .eq("id", editData.id);
 
@@ -763,6 +769,33 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 debit: 0,
                 credit: vatAmount,
                 description: 'VAT Output',
+                status: "approved"
+              }
+            );
+          } else if (form.element === 'asset') {
+            entries.push(
+              {
+                transaction_id: editData.id,
+                account_id: form.debitAccount,
+                debit: netAmount,
+                credit: 0,
+                description: sanitizedDescription,
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: vatAccount.id,
+                debit: vatAmount,
+                credit: 0,
+                description: 'VAT Input',
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: form.creditAccount,
+                debit: 0,
+                credit: amountAbs,
+                description: sanitizedDescription,
                 status: "approved"
               }
             );
@@ -887,6 +920,39 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 is_reversed: false,
               }
             );
+          } else if (form.element === 'asset') {
+            ledgerRows.push(
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.debitAccount,
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: netAmount,
+                credit: 0,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: vatAccount.id,
+                entry_date: form.date,
+                description: 'VAT Input',
+                debit: vatAmount,
+                credit: 0,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.creditAccount,
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: 0,
+                credit: amountAbs,
+                is_reversed: false,
+              }
+            );
           } else {
             // Other transaction types - treat as no VAT for now
             ledgerRows.push(
@@ -1001,7 +1067,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       }
 
       // Validate asset purchase: require debit account to be a Fixed Asset ledger
-      if (form.element === 'asset') {
+      if (showFixedAssetsUI && form.element === 'asset') {
         const debitAcc = accounts.find(a => a.id === form.debitAccount);
         const isAssetType = (debitAcc?.account_type || '').toLowerCase() === 'asset';
         const name = (debitAcc?.account_name || '').toLowerCase();
@@ -1025,21 +1091,37 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       // Sanitize inputs
       const sanitizedDescription = form.description.trim();
-      const descriptionWithMethod = form.element === 'asset' ? `${sanitizedDescription} [method:${depreciationMethod}]` : sanitizedDescription;
+      const descriptionWithMethod = sanitizedDescription;
       const sanitizedReference = form.reference ? form.reference.trim() : null;
 
       // Get VAT account if needed
       let vatAccount = null;
       if (vatAmount > 0 && vatRate > 0) {
-        vatAccount = accounts.find(acc => 
-          (acc.account_name || '').toLowerCase().includes('vat') || 
-          (acc.account_name || '').toLowerCase().includes('tax')
-        );
-        
+        const norm = accounts.map(a => ({
+          ...a,
+          account_name: (a.account_name || '').toLowerCase(),
+          account_type: (a.account_type || '').toLowerCase(),
+          account_code: (a.account_code || '').toString(),
+        }));
+        const findVatInput = () => {
+          return (
+            norm.find(a => (a.account_name.includes('vat input') || a.account_name.includes('input tax') || a.account_name.includes('vat receivable')) && (a.account_type === 'asset' || a.account_type === 'liability'))
+            || norm.find(a => a.account_code === '2110')
+            || norm.find(a => a.account_code === '1210')
+          );
+        };
+        const findVatOutput = () => {
+          return (
+            norm.find(a => (a.account_name.includes('vat output') || a.account_name.includes('output tax') || a.account_name.includes('vat payable')) && a.account_type === 'liability')
+            || norm.find(a => a.account_code === '2100')
+          );
+        };
+        const isSales = lockType === 'sent' || form.element === 'income';
+        vatAccount = isSales ? findVatOutput() : findVatInput();
         if (!vatAccount) {
           toast({ 
             title: "VAT Account Missing", 
-            description: "Please create a VAT account in Chart of Accounts before adding VAT transactions.", 
+            description: "Please create VAT Input/Output accounts in Chart of Accounts.", 
             variant: "destructive" 
           });
           return;
@@ -1052,15 +1134,15 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           company_id: companyId,
           user_id: user.id,
           transaction_date: form.date,
-          description: descriptionWithMethod,
+          description: sanitizedDescription,
           reference_number: sanitizedReference,
           total_amount: amount,
           vat_rate: vatRate > 0 ? vatRate : null,
           vat_amount: vatAmount > 0 ? vatAmount : null,
           base_amount: netAmount,
-          vat_inclusive: vatRate > 0,
+          vat_inclusive: lockType === 'po_sent' ? false : (vatRate > 0),
           bank_account_id: bankAccountId,
-          transaction_type: form.element,
+          transaction_type: lockType === 'po_sent' ? 'purchase' : form.element,
           category: autoClassification?.category || null,
           status: "pending"
         })
@@ -1222,6 +1304,33 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               debit: 0,
               credit: vatAmount,
               description: 'VAT Output',
+              status: "pending"
+            }
+          );
+        } else if (form.element === 'asset') {
+          entries.push(
+            {
+              transaction_id: transaction.id,
+              account_id: form.debitAccount,
+              debit: netAmount,
+              credit: 0,
+              description: sanitizedDescription,
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: vatAccount.id,
+              debit: vatAmount,
+              credit: 0,
+              description: 'VAT Input',
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: form.creditAccount,
+              debit: 0,
+              credit: amount,
+              description: sanitizedDescription,
               status: "pending"
             }
           );
@@ -1408,6 +1517,15 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           console.error('Ledger entries insert error:', ledgerInsErr);
           throw ledgerInsErr;
         }
+        // For PO Sent flows, mark transaction as posted after entries/ledger inserted
+        if (lockType === 'po_sent') {
+          try {
+            await supabase
+              .from('transactions')
+              .update({ status: 'posted' })
+              .eq('id', transaction.id);
+          } catch {}
+        }
       } catch (ledErr: any) {
         notify.error("Ledger sync warning", { description: `Entries saved, but AFS sync failed: ${ledErr.message}`, duration: 6000 });
       }
@@ -1490,12 +1608,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
       }
 
-      if (form.element === 'asset') {
+      if (showFixedAssetsUI && form.element === 'asset') {
         const costNum = parseFloat(form.amount || '0');
         if (costNum > 0) {
           await supabase.from('fixed_assets').insert({
             company_id: companyId,
-            description: descriptionWithMethod,
+            description: sanitizedDescription,
             cost: costNum,
             purchase_date: form.date,
             useful_life_years: parseInt(assetUsefulLifeYears || '5'),
@@ -1503,7 +1621,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             status: 'active'
           } as any);
         }
-      } else if (form.element === 'depreciation' && selectedAssetId) {
+      } else if (showFixedAssetsUI && form.element === 'depreciation' && selectedAssetId) {
         const asset = fixedAssets.find(a => a.id === selectedAssetId);
         const amt = parseFloat(form.amount || '0');
         if (asset && amt > 0) {
@@ -1728,7 +1846,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     {form.description.length}/500 characters
                   </p>
                 </div>
-                {form.element === 'asset' && (
+                {showFixedAssetsUI && form.element === 'asset' && (
                   <div>
                     <Label className="text-xs">Select Fixed Asset</Label>
                     <Select value={selectedAssetId} onValueChange={(val) => {
@@ -1748,7 +1866,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   </div>
                 )}
               </div>
-              {form.element === 'asset' && (
+              {showFixedAssetsUI && form.element === 'asset' && (
                 <div className="mt-3 grid grid-cols-2 gap-4">
                   <div>
                     <Label>Depreciation Method</Label>
@@ -1776,7 +1894,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="element">Accounting Element *</Label>
-                <Select value={form.element} onValueChange={(val) => setForm({ ...form, element: val, debitAccount: "", creditAccount: "", paymentMethod: val === 'depreciation' ? 'accrual' : form.paymentMethod, bankAccountId: val === 'depreciation' ? '' : form.bankAccountId })} disabled={lockAccounts}>
+                <Select value={form.element} onValueChange={(val) => setForm({ ...form, element: val, debitAccount: "", creditAccount: "" })} disabled={lockAccounts}>
                   <SelectTrigger id="element">
                     <SelectValue placeholder="Select element" />
                   </SelectTrigger>
@@ -1789,13 +1907,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   </SelectContent>
                 </Select>
               </div>
-              {form.element === 'asset' && (
+              {showFixedAssetsUI && form.element === 'asset' && (
                 <div>
                   <Label htmlFor="assetUsefulLife">Useful Life (years)</Label>
                   <Input id="assetUsefulLife" type="number" min={1} value={assetUsefulLifeYears} onChange={(e) => setAssetUsefulLifeYears(e.target.value)} />
                 </div>
               )}
-              {form.element === 'depreciation' && (
+              {showFixedAssetsUI && form.element === 'depreciation' && (
                 <div>
                   <Label>Select Asset *</Label>
                   <Select value={selectedAssetId} onValueChange={(val) => setSelectedAssetId(val)}>

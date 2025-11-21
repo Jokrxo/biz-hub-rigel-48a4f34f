@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GeneralSettings } from "@/components/Settings/GeneralSettings";
 import { AdministrationSettings } from "@/components/Settings/AdministrationSettings";
 import { DataManagement } from "@/components/Settings/DataManagement";
+import { SecuritySettings } from "@/components/Settings/SecuritySettings";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Info } from "lucide-react";
@@ -41,11 +42,12 @@ export default function SettingsPage() {
           </div>
 
           <Tabs defaultValue="company" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-5">
               <TabsTrigger value="company">Company Settings</TabsTrigger>
               <TabsTrigger value="general">General Settings</TabsTrigger>
               <TabsTrigger value="administration">Administration</TabsTrigger>
               <TabsTrigger value="data">Data Management</TabsTrigger>
+              <TabsTrigger value="security">Security</TabsTrigger>
             </TabsList>
             
             <TabsContent value="company" className="space-y-4">
@@ -62,6 +64,10 @@ export default function SettingsPage() {
             
             <TabsContent value="data" className="space-y-4">
               <DataManagement />
+            </TabsContent>
+
+            <TabsContent value="security" className="space-y-4">
+              <SecuritySettings />
             </TabsContent>
           </Tabs>
 

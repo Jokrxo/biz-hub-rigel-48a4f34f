@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { LineChart, Line, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { calculateDepreciation } from "@/components/FixedAssets/DepreciationCalculator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -52,6 +52,8 @@ export const DashboardOverview = () => {
   const [apKpis, setApKpis] = useState<{ unpaidTotal: number; overdueTotal: number; overdueUnder30Total: number; overdue30Total: number; overdue90Total: number }>({ unpaidTotal: 0, overdueTotal: 0, overdueUnder30Total: 0, overdue30Total: 0, overdue90Total: 0 });
   const [arAging, setArAging] = useState<any[]>([]);
   const [apAging, setApAging] = useState<any[]>([]);
+  const [netProfitTrend, setNetProfitTrend] = useState<any[]>([]);
+  const [plTrend, setPlTrend] = useState<any[]>([]);
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean; hasProducts: boolean; hasCustomers: boolean; hasSuppliers: boolean; hasEmployees: boolean }>({ hasCoa: true, hasBank: true, hasProducts: true, hasCustomers: true, hasSuppliers: true, hasEmployees: true });
   const [userName, setUserName] = useState<string>("");
   const [companyId, setCompanyId] = useState<string>("");
@@ -65,6 +67,8 @@ export const DashboardOverview = () => {
   const [widgets, setWidgets] = useState(() => {
     const defaultWidgets = {
       metrics: true,
+      netProfit: true,
+      incomeVsExpense: true,
       incomeExpense: true,
       expenseBreakdown: true,
       assetTrend: true,
@@ -202,6 +206,74 @@ export const DashboardOverview = () => {
 
   const toggleWidget = (widget: string) => {
     setWidgets((prev: any) => ({ ...prev, [widget]: !prev[widget] }));
+  };
+
+  const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
+    const startDateObj = new Date(start);
+    const endDateObj = new Date(end);
+    endDateObj.setHours(23, 59, 59, 999);
+    const { data, error } = await supabase
+      .from('chart_of_accounts')
+      .select(`
+        id,
+        account_code,
+        account_name,
+        account_type,
+        transaction_entries (
+          debit,
+          credit,
+          transactions!inner (
+            transaction_date
+          )
+        )
+      `)
+      .eq('company_id', companyId)
+      .eq('is_active', true)
+      .not('transaction_entries.transactions.transaction_date', 'is', null)
+      .gte('transaction_entries.transactions.transaction_date', start)
+      .lte('transaction_entries.transactions.transaction_date', end)
+      .order('account_code');
+    if (error) throw error;
+    const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
+    (data || []).forEach((acc: any) => {
+      let sumDebit = 0;
+      let sumCredit = 0;
+      (acc.transaction_entries || []).forEach((le: any) => {
+        const dStr = le.transactions?.transaction_date;
+        const d = dStr ? new Date(dStr) : null;
+        if (d && d >= startDateObj && d <= endDateObj) {
+          sumDebit += Number(le.debit || 0);
+          sumCredit += Number(le.credit || 0);
+        }
+      });
+      const type = (acc.account_type || '').toLowerCase();
+      const naturalDebit = type === 'asset' || type === 'expense';
+      const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+      if (Math.abs(balance) > 0.01) {
+        trialBalance.push({
+          account_id: acc.id,
+          account_code: acc.account_code,
+          account_name: acc.account_name,
+          account_type: acc.account_type,
+          balance
+        });
+      }
+    });
+    return trialBalance;
+  };
+
+  const netProfitFromTrialBalance = (tb: any[]) => {
+    const rev = tb.filter((a: any) => a.account_type.toLowerCase() === 'revenue' || a.account_type.toLowerCase() === 'income').reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    const cogs = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && ((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    const opex = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && !((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    return rev - cogs - opex;
+  };
+
+  const totalsFromTrialBalance = (tb: any[]) => {
+    const income = tb.filter((a: any) => a.account_type.toLowerCase() === 'revenue' || a.account_type.toLowerCase() === 'income').reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    const cogs = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && ((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    const opex = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && !((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    return { income, expenses: cogs + opex };
   };
 
   const loadDashboardData = async () => {
@@ -368,6 +440,38 @@ export const DashboardOverview = () => {
         expenses: monthlyMap.get(m.key)?.expenses || 0,
       }));
       setChartData(incomeExpenseData);
+      const netData = await Promise.all(monthsSeq.map(async m => {
+        const [yy, mm] = m.key.split('-');
+        const s = `${yy}-${mm}-01`;
+        const eDate = new Date(Number(yy), Number(mm), 0);
+        const e = `${eDate.getFullYear()}-${String(eDate.getMonth() + 1).padStart(2,'0')}-${String(eDate.getDate()).padStart(2,'0')}`;
+        try {
+          const tb = await fetchTrialBalanceForPeriod(String(profile.company_id), s, e);
+          const np = netProfitFromTrialBalance(tb);
+          return { month: m.label, netProfit: np };
+        } catch (_err) {
+          const fallback = (monthlyMap.get(m.key)?.income || 0) - (monthlyMap.get(m.key)?.expenses || 0);
+          return { month: m.label, netProfit: fallback };
+        }
+      }));
+      setNetProfitTrend(netData);
+
+      const plData = await Promise.all(monthsSeq.map(async m => {
+        const [yy, mm] = m.key.split('-');
+        const s = `${yy}-${mm}-01`;
+        const eDate = new Date(Number(yy), Number(mm), 0);
+        const e = `${eDate.getFullYear()}-${String(eDate.getMonth() + 1).padStart(2,'0')}-${String(eDate.getDate()).padStart(2,'0')}`;
+        try {
+          const tb = await fetchTrialBalanceForPeriod(String(profile.company_id), s, e);
+          const { income, expenses } = totalsFromTrialBalance(tb);
+          return { month: m.label, income, expenses };
+        } catch (_err) {
+          const inc = monthlyMap.get(m.key)?.income || 0;
+          const exp = monthlyMap.get(m.key)?.expenses || 0;
+          return { month: m.label, income: inc, expenses: exp };
+        }
+      }));
+      setPlTrend(plData);
 
       const incTotals = new Map<string, number>();
       transactions?.forEach(tx => {
@@ -920,6 +1024,82 @@ export const DashboardOverview = () => {
 
       {/* Charts Section */}
       <div className="grid gap-6 lg:grid-cols-2">
+        {widgets.incomeVsExpense && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-primary" />
+                Income vs Expenses
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <AreaChart data={plTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                  <defs>
+                    <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#2563eb" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#2563eb" stopOpacity={0.05} />
+                    </linearGradient>
+                    <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#EF4444" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#EF4444" stopOpacity={0.05} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
+                  <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} domain={["dataMin", "dataMax"]} />
+                  <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
+                  <Tooltip 
+                    formatter={(value: any, name: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, name === 'income' ? 'Income' : 'Expenses']}
+                    contentStyle={{ 
+                      backgroundColor: 'hsl(var(--card))', 
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '6px'
+                    }} 
+                  />
+                  <Legend />
+                  <Area type="monotone" dataKey="income" name="Income" stroke="#2563eb" strokeWidth={2} fill="url(#incomeGradient)" stackId="1" dot />
+                  <Area type="monotone" dataKey="expenses" name="Expenses" stroke="#EF4444" strokeWidth={2} fill="url(#expenseGradient)" stackId="1" dot />
+                </AreaChart>
+              </ResponsiveContainer>
+              {plTrend.length === 0 && (
+                <div className="text-sm text-muted-foreground mt-2">No income/expense data for the selected period</div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        {widgets.netProfit && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-primary" />
+                Net Profit Trend
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={netProfitTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
+                  <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} domain={["dataMin", "dataMax"]} />
+                  <Tooltip 
+                    formatter={(value: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, 'Net Profit']}
+                    contentStyle={{ 
+                      backgroundColor: 'hsl(var(--card))', 
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: '6px'
+                    }} 
+                  />
+                  <Legend />
+                  <Line type="monotone" dataKey="netProfit" name="Net Profit" stroke="#10B981" strokeWidth={2} dot />
+                </LineChart>
+              </ResponsiveContainer>
+              {netProfitTrend.length === 0 && (
+                <div className="text-sm text-muted-foreground mt-2">No profit data for the selected period</div>
+              )}
+            </CardContent>
+          </Card>
+        )}
         {widgets.incomeExpense && (
           <Card className="card-professional">
             <CardHeader>
