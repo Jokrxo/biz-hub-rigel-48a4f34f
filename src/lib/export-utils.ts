@@ -172,3 +172,96 @@ export const exportInvoicesToExcel = (
   XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
   XLSX.writeFile(wb, `${filename}.xlsx`);
 };
+
+export const exportInvoicesToPDF = (
+  rows: ExportableInvoiceRow[],
+  periodLabel: string,
+  filename = 'invoices'
+) => {
+  const doc = new jsPDF();
+  doc.setFontSize(20);
+  doc.text('Customer Statement', 14, 22);
+  doc.setFontSize(10);
+  doc.text(`Period: ${periodLabel}`, 14, 30);
+  doc.text(`Generated on: ${new Date().toLocaleDateString('en-ZA')}`, 14, 36);
+
+  const body = rows.map((inv) => {
+    const total = Number(inv.total_amount || 0);
+    const paid = Number(inv.amount_paid || 0);
+    const outstanding = Math.max(0, total - paid);
+    const invDate = typeof inv.invoice_date === 'string' ? new Date(inv.invoice_date) : inv.invoice_date;
+    const dueDateRaw = inv.due_date ?? null;
+    const dueDate = dueDateRaw ? (typeof dueDateRaw === 'string' ? new Date(dueDateRaw) : dueDateRaw) : null;
+    return [
+      inv.invoice_number,
+      inv.customer_name,
+      invDate.toLocaleDateString('en-ZA'),
+      dueDate ? dueDate.toLocaleDateString('en-ZA') : '-',
+      inv.status,
+      `R ${total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      `R ${outstanding.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+    ];
+  });
+
+  autoTable(doc, {
+    head: [['Invoice #','Customer','Date','Due Date','Status','Total','Outstanding']],
+    body,
+    startY: 45,
+    styles: { fontSize: 9, cellPadding: 3 },
+    headStyles: { fillColor: [34, 139, 34], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 248, 248] },
+  });
+
+  doc.save(`${filename}.pdf`);
+};
+
+export interface StatementEntry { date: string; description: string; reference?: string | null; dr: number; cr: number }
+
+export const exportCustomerStatementToPDF = (
+  entries: StatementEntry[],
+  customerName: string,
+  periodLabel: string,
+  openingBalance: number,
+  filename = 'statement',
+  customerInfo?: { email?: string; phone?: string; address?: string }
+) => {
+  const doc = new jsPDF();
+  doc.setFontSize(20);
+  doc.text('Customer Statement', 14, 22);
+  doc.setFontSize(10);
+  doc.text(`Customer: ${customerName}`, 14, 30);
+  doc.text(`Period: ${periodLabel}`, 14, 36);
+  doc.text(`Generated on: ${new Date().toLocaleDateString('en-ZA')}`, 14, 42);
+  if (customerInfo?.email) doc.text(`Email: ${customerInfo.email}`, 14, 48);
+  if (customerInfo?.phone) doc.text(`Phone: ${customerInfo.phone}`, 14, 54);
+  if (customerInfo?.address) doc.text(`Address: ${customerInfo.address}`, 14, 60);
+
+  let running = Number(openingBalance || 0);
+  const body = [
+    ['', 'Opening Balance', '', '', '', `R ${running.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`],
+    ...entries.map(e => {
+      const dr = Number(e.dr || 0);
+      const cr = Number(e.cr || 0);
+      running = running + dr - cr;
+      return [
+        typeof e.date === 'string' ? new Date(e.date).toLocaleDateString('en-ZA') : new Date(e.date).toLocaleDateString('en-ZA'),
+        e.description,
+        e.reference ?? '',
+        dr ? `R ${dr.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '',
+        cr ? `R ${cr.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '',
+        `R ${running.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      ];
+    })
+  ];
+
+  autoTable(doc, {
+    head: [['Date','Description','Reference','DR','CR','Balance']],
+    body,
+    startY: customerInfo?.address || customerInfo?.phone || customerInfo?.email ? 66 : 50,
+    styles: { fontSize: 9, cellPadding: 3 },
+    headStyles: { fillColor: [34, 139, 34], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 248, 248] },
+  });
+
+  doc.save(`${filename}.pdf`);
+};

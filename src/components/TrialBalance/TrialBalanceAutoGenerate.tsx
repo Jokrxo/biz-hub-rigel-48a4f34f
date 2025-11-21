@@ -9,6 +9,29 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { exportToExcel, exportToPDF } from "@/lib/export-utils";
 
+// Function to calculate total inventory value from products
+const calculateTotalInventoryValue = async (companyId: string) => {
+  try {
+    const { data: products } = await supabase
+      .from('items')
+      .select('cost_price, quantity_on_hand')
+      .eq('company_id', companyId)
+      .eq('item_type', 'product')
+      .gt('quantity_on_hand', 0);
+    
+    const totalValue = (products || []).reduce((sum, product) => {
+      const cost = Number(product.cost_price || 0);
+      const qty = Number(product.quantity_on_hand || 0);
+      return sum + (cost * qty);
+    }, 0);
+    
+    return totalValue;
+  } catch (error) {
+    console.error('Error calculating inventory value:', error);
+    return 0;
+  }
+};
+
 interface TrialBalanceEntry {
   account_code: string;
   account_name: string;
@@ -47,48 +70,81 @@ export const TrialBalanceAutoGenerate = () => {
       const startDate = new Date(selectedYear, selectedMonth - 1, 1);
       const endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
 
-      // Fetch accounts with transaction entries filtered by date range
-      const { data: accounts, error } = await supabase
+      // Fetch all active accounts
+      const { data: accounts, error: accountsError } = await supabase
         .from("chart_of_accounts")
-        .select(`
-          account_code,
-          account_name,
-          transaction_entries (
-            debit,
-            credit,
-            transactions!inner (
-              transaction_date
-            )
-          )
-        `)
+        .select('account_code, account_name, id')
         .eq("company_id", profile.company_id)
         .eq("is_active", true)
-        .gte("transaction_entries.transactions.transaction_date", startDate.toISOString())
-        .lte("transaction_entries.transactions.transaction_date", endDate.toISOString())
         .order("account_code");
 
-      if (error) throw error;
+      if (accountsError) throw accountsError;
+
+      // Fetch transaction entries
+      const { data: txEntries, error: txError } = await supabase
+        .from("transaction_entries")
+        .select(`
+          account_id,
+          debit,
+          credit,
+          transactions!inner (
+            transaction_date
+          )
+        `)
+        .eq("transactions.company_id", profile.company_id)
+        .gte("transactions.transaction_date", startDate.toISOString())
+        .lte("transactions.transaction_date", endDate.toISOString());
+
+      if (txError) throw txError;
+
+      // Fetch ledger entries
+      const { data: ledgerEntries, error: ledgerError } = await supabase
+        .from("ledger_entries")
+        .select('account_id, debit, credit, entry_date')
+        .eq("company_id", profile.company_id)
+        .gte("entry_date", startDate.toISOString())
+        .lte("entry_date", endDate.toISOString());
+
+      if (ledgerError) throw ledgerError;
 
       // Calculate balances for each account
       const trialBalanceData: TrialBalanceEntry[] = [];
       
+      // Calculate total inventory value from products
+      const totalInventoryValue = await calculateTotalInventoryValue(profile.company_id);
+
       accounts?.forEach(account => {
         let totalDebit = 0;
         let totalCredit = 0;
 
-        // Sum up transaction entries within the date range
-        account.transaction_entries?.forEach((entry: any) => {
-          const txDateStr = entry.transactions?.transaction_date;
-          const txDate = txDateStr ? new Date(txDateStr) : null;
-          // If the entry has no transaction date, include it; otherwise enforce range
-          if (!txDate || (txDate >= startDate && txDate <= endDate)) {
+        // Sum transaction entries
+        txEntries?.forEach((entry: any) => {
+          if (entry.account_id === account.id) {
             totalDebit += entry.debit || 0;
             totalCredit += entry.credit || 0;
           }
         });
 
+        // Sum ledger entries
+        ledgerEntries?.forEach((entry: any) => {
+          if (entry.account_id === account.id) {
+            totalDebit += entry.debit || 0;
+            totalCredit += entry.credit || 0;
+          }
+        });
+
+        // Special handling for inventory account - use actual product values (only account 1300)
+        if (account.account_code === '1300') {
+          totalDebit = totalInventoryValue;
+          totalCredit = 0;
+          console.log(`Inventory account ${account.account_code} - Using total product value: R ${totalInventoryValue}`);
+        }
+
         // Only include accounts with non-zero balances
-        if (totalDebit > 0 || totalCredit > 0) {
+        const isInventoryName = (account.account_name || '').toLowerCase().includes('inventory');
+        const isPrimaryInventory = account.account_code === '1300';
+        const shouldShow = (totalDebit > 0 || totalCredit > 0) && (!isInventoryName || isPrimaryInventory);
+        if (shouldShow) {
           trialBalanceData.push({
             account_code: account.account_code,
             account_name: account.account_name,

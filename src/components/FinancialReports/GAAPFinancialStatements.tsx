@@ -68,6 +68,7 @@ export const GAAPFinancialStatements = () => {
     net_change_in_cash: number;
   } | null>(null);
   const [ppeBookValue, setPpeBookValue] = useState<number>(0);
+  const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
 
   useEffect(() => {
     loadFinancialData();
@@ -124,6 +125,9 @@ export const GAAPFinancialStatements = () => {
         balance: Number(r.balance || 0),
       }));
       setTrialBalance(normalized);
+
+      const cogsFallback = await calculateCOGSFromInvoices(companyProfile.company_id, periodStart, periodEnd);
+      setFallbackCOGS(cogsFallback);
 
       const { data: fa } = await supabase
         .from('fixed_assets')
@@ -691,13 +695,13 @@ export const GAAPFinancialStatements = () => {
   // GAAP Income Statement
   const renderIncomeStatement = () => {
     const revenue = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
-    const expenses = trialBalance.filter(r => r.account_type === 'expense');
-    const costOfSales = expenses.filter(r => r.account_name.toLowerCase().includes('cost of') || r.account_code.startsWith('50'));
-    const operatingExpenses = expenses.filter(r => !costOfSales.includes(r));
+    const costOfSales = trialBalance.filter(r => (String(r.account_code || '')).startsWith('50') || (String(r.account_name || '').toLowerCase().includes('cost of')));
+    const operatingExpenses = trialBalance.filter(r => (String(r.account_type || '').toLowerCase() === 'expense') && !costOfSales.includes(r));
 
     const totalRevenue = revenue.reduce((sum, r) => sum + r.balance, 0);
     const totalCostOfSales = costOfSales.reduce((sum, r) => sum + r.balance, 0);
-    const grossProfit = totalRevenue - totalCostOfSales;
+    const cogsValue = totalCostOfSales > 0 ? totalCostOfSales : fallbackCOGS;
+    const grossProfit = totalRevenue - cogsValue;
     const totalOperatingExpenses = operatingExpenses.reduce((sum, r) => sum + r.balance, 0);
     const netProfit = grossProfit - totalOperatingExpenses;
 
@@ -736,29 +740,32 @@ export const GAAPFinancialStatements = () => {
             </div>
           </div>
 
-          {costOfSales.length > 0 && (
-            <>
-              <h3 className="text-xl font-bold border-b-2 pb-2">COST OF SALES</h3>
-              <div className="pl-4">
-                {costOfSales.map(row => (
-                  <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
-                       onClick={() => handleDrilldown(row.account_id, row.account_name)}>
-                    <span>{row.account_code} - {row.account_name}</span>
-                    <span className="font-mono">(R {row.balance.toLocaleString()})</span>
-                  </div>
-                ))}
-                <div className="flex justify-between py-2 font-semibold border-t mt-2">
-                  <span>Total Cost of Sales</span>
-                  <span className="font-mono">(R {totalCostOfSales.toLocaleString()})</span>
+          <>
+            <h3 className="text-xl font-bold border-b-2 pb-2">COST OF SALES</h3>
+            <div className="pl-4">
+              {costOfSales.length > 0 ? costOfSales.map(row => (
+                <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
+                     onClick={() => handleDrilldown(row.account_id, row.account_name)}>
+                  <span>{row.account_code} - {row.account_name}</span>
+                  <span className="font-mono">(R {row.balance.toLocaleString()})</span>
                 </div>
+              )) : (
+                <div className="flex justify-between py-1 px-2">
+                  <span>5000 - Cost of Sales</span>
+                  <span className="font-mono">(R {cogsValue.toLocaleString()})</span>
+                </div>
+              )}
+              <div className="flex justify-between py-2 font-semibold border-t mt-2">
+                <span>Total Cost of Sales</span>
+                <span className="font-mono">(R {cogsValue.toLocaleString()})</span>
               </div>
+            </div>
 
-              <div className="flex justify-between py-2 text-lg font-bold border-t-2">
-                <span>GROSS PROFIT</span>
-                <span className="font-mono">R {grossProfit.toLocaleString()}</span>
-              </div>
-            </>
-          )}
+            <div className="flex justify-between py-2 text-lg font-bold border-t-2">
+              <span>GROSS PROFIT</span>
+              <span className="font-mono">R {grossProfit.toLocaleString()}</span>
+            </div>
+          </>
 
           <h3 className="text-xl font-bold border-b-2 pb-2">OPERATING EXPENSES</h3>
           <div className="pl-4">
@@ -1037,6 +1044,29 @@ export const GAAPFinancialStatements = () => {
 };
 
 // Period-scoped trial balance computation using transaction_entries joined to transactions.transaction_date
+// Function to calculate total inventory value from products
+const calculateTotalInventoryValue = async (companyId: string) => {
+  try {
+    const { data: products } = await supabase
+      .from('items')
+      .select('cost_price, quantity_on_hand')
+      .eq('company_id', companyId)
+      .eq('item_type', 'product')
+      .gt('quantity_on_hand', 0);
+    
+    const totalValue = (products || []).reduce((sum, product) => {
+      const cost = Number(product.cost_price || 0);
+      const qty = Number(product.quantity_on_hand || 0);
+      return sum + (cost * qty);
+    }, 0);
+    
+    return totalValue;
+  } catch (error) {
+    console.error('Error calculating inventory value:', error);
+    return 0;
+  }
+};
+
 const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
   const startDateObj = new Date(start);
   const startISO = startDateObj.toISOString();
@@ -1044,49 +1074,83 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
   endDateObj.setHours(23, 59, 59, 999);
   const endISO = endDateObj.toISOString();
 
-  const { data, error } = await supabase
+  // Get all active accounts
+  const { data: accounts, error: accountsError } = await supabase
     .from('chart_of_accounts')
-    .select(`
-      id,
-      account_code,
-      account_name,
-      account_type,
-      transaction_entries (
-        debit,
-        credit,
-        transactions!inner (
-          transaction_date
-        )
-      )
-    `)
+    .select('id, account_code, account_name, account_type')
     .eq('company_id', companyId)
     .eq('is_active', true)
-    .not('transaction_entries.transactions.transaction_date', 'is', null)
-    .gte('transaction_entries.transactions.transaction_date', startISO)
-    .lte('transaction_entries.transactions.transaction_date', endISO)
     .order('account_code');
 
-  if (error) throw error;
+  if (accountsError) throw accountsError;
+
+  // Get transaction entries
+  const { data: txEntries, error: txError } = await supabase
+    .from('transaction_entries')
+    .select(`
+      account_id,
+      debit,
+      credit,
+      transactions!inner (
+        transaction_date
+      )
+    `)
+    .eq('transactions.company_id', companyId)
+    .gte('transactions.transaction_date', startISO)
+    .lte('transactions.transaction_date', endISO);
+
+  if (txError) throw txError;
+
+  // Get ledger entries
+  const { data: ledgerEntries, error: ledgerError } = await supabase
+    .from('ledger_entries')
+    .select('account_id, debit, credit, entry_date')
+    .eq('company_id', companyId)
+    .gte('entry_date', startISO)
+    .lte('entry_date', endISO);
+
+  if (ledgerError) throw ledgerError;
 
   const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
 
-  (data || []).forEach((acc: any) => {
+  // Calculate total inventory value from products
+  const totalInventoryValue = await calculateTotalInventoryValue(companyId);
+
+  // Process each account
+  (accounts || []).forEach((acc: any) => {
     let sumDebit = 0;
     let sumCredit = 0;
-    (acc.transaction_entries || []).forEach((le: any) => {
-      const dStr = le.transactions?.transaction_date;
-      const d = dStr ? new Date(dStr) : null;
-      if (d && d >= startDateObj && d <= endDateObj) {
-        sumDebit += Number(le.debit || 0);
-        sumCredit += Number(le.credit || 0);
+
+    // Sum transaction entries
+    (txEntries || []).forEach((entry: any) => {
+      if (entry.account_id === acc.id) {
+        sumDebit += Number(entry.debit || 0);
+        sumCredit += Number(entry.credit || 0);
+      }
+    });
+
+    // Sum ledger entries
+    (ledgerEntries || []).forEach((entry: any) => {
+      if (entry.account_id === acc.id) {
+        sumDebit += Number(entry.debit || 0);
+        sumCredit += Number(entry.credit || 0);
       }
     });
 
     const type = (acc.account_type || '').toLowerCase();
     const naturalDebit = type === 'asset' || type === 'expense';
-    const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+    let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
-    if (Math.abs(balance) > 0.01) {
+    // Special handling for inventory account - use actual product values (only account 1300)
+    if (acc.account_code === '1300') {
+      balance = totalInventoryValue;
+      console.log(`Inventory account ${acc.account_code} - Using total product value: R ${totalInventoryValue}`);
+    }
+
+    const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
+    const isPrimaryInventory = acc.account_code === '1300';
+    const shouldShow = Math.abs(balance) > 0.01 && (!isInventoryName || isPrimaryInventory);
+    if (shouldShow) {
       trialBalance.push({
         account_id: acc.id,
         account_code: acc.account_code,
@@ -1098,6 +1162,55 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
   });
 
   return trialBalance;
+};
+
+const calculateCOGSFromInvoices = async (companyId: string, start: string, end: string) => {
+  try {
+    const { data: invoices } = await supabase
+      .from('invoices')
+      .select('id, invoice_date, sent_at, status')
+      .eq('company_id', companyId)
+      .in('status', ['sent','paid','approved','posted']);
+    const startDt = new Date(start);
+    const endDt = new Date(end);
+    endDt.setHours(23,59,59,999);
+    const inPeriod = (inv: any) => {
+      const dStr = inv.sent_at || inv.invoice_date;
+      if (!dStr) return false;
+      const d = new Date(dStr);
+      return d >= startDt && d <= endDt;
+    };
+    const ids = (invoices || []).filter(inPeriod).map((i: any) => i.id);
+    if (!ids.length) return 0;
+    const { data: items } = await supabase
+      .from('invoice_items')
+      .select('invoice_id, description, quantity, unit_price, item_type')
+      .in('invoice_id', ids as any);
+    const onlyProducts = (items || []).filter((it: any) => String(it.item_type || '').toLowerCase() === 'product');
+    let total = 0;
+    const { data: prodByName } = await supabase
+      .from('items')
+      .select('name, cost_price')
+      .eq('company_id', companyId)
+      .eq('item_type', 'product');
+    const catalog = (prodByName || []).map((p: any) => ({ name: String(p.name || '').toLowerCase().trim(), cost: Number(p.cost_price || 0) }));
+    onlyProducts.forEach((it: any) => {
+      const desc = String(it.description || '').toLowerCase().trim();
+      let cp = 0;
+      const exact = catalog.find(c => c.name === desc);
+      if (exact) cp = exact.cost;
+      else {
+        const contains = catalog.find(c => desc.includes(c.name) || c.name.includes(desc));
+        if (contains) cp = contains.cost;
+      }
+      if (!cp || cp <= 0) cp = Number(it.unit_price || 0);
+      const qty = Number(it.quantity || 0);
+      total += (cp * qty);
+    });
+    return total;
+  } catch {
+    return 0;
+  }
 };
 
 const computeCashFlowFallback = async (companyId: string, start: string, end: string) => {

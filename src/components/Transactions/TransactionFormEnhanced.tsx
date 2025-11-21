@@ -195,6 +195,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     installmentNumber: ""
   });
   const [showFixedAssetsUI] = useState<boolean>(false);
+  const [cogsTotal, setCogsTotal] = useState<number>(0);
+  const [cogsAccount, setCogsAccount] = useState<Account | null>(null);
+  const [inventoryAccount, setInventoryAccount] = useState<Account | null>(null);
+  const [invoiceIdForRef, setInvoiceIdForRef] = useState<string>("");
 
   useEffect(() => {
     if (open && prefill) {
@@ -252,6 +256,101 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       setLockType(String(editData.lockType || ''));
     } catch {}
   }, [open, editData]);
+
+  useEffect(() => {
+    const computeCOGS = async () => {
+      try {
+        if (!open) return;
+        if (lockType !== 'sent') return;
+        const ref = (form.reference || '').trim();
+        if (!ref) return;
+        let effectiveCompanyId = companyId;
+        if (!effectiveCompanyId || effectiveCompanyId.trim() === '') {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (user) {
+            const { data: prof } = await supabase
+              .from('profiles')
+              .select('company_id')
+              .eq('user_id', user.id)
+              .maybeSingle();
+            effectiveCompanyId = (prof as any)?.company_id || effectiveCompanyId;
+          }
+        }
+        if (!effectiveCompanyId || effectiveCompanyId.trim() === '') return;
+        const { data: inv } = await supabase
+          .from('invoices')
+          .select('id')
+          .eq('company_id', effectiveCompanyId)
+          .eq('invoice_number', ref)
+          .maybeSingle();
+        const invId = (inv as any)?.id || '';
+        if (!invId) return;
+        setInvoiceIdForRef(invId);
+        const { data: invItems } = await supabase
+          .from('invoice_items')
+          .select('description, quantity, unit_price, item_type')
+          .eq('invoice_id', invId);
+        let totalCost = 0;
+          const names = (invItems || [])
+            .filter((it: any) => String(it.item_type || '').toLowerCase() === 'product')
+            .map((it: any) => String(it.description || ''))
+            .filter(Boolean);
+          if (names.length > 0) {
+            const { data: prodByName } = await supabase
+              .from('items')
+              .select('name, cost_price')
+              .eq('company_id', effectiveCompanyId)
+              .eq('item_type', 'product');
+            const costByName = new Map<string, number>();
+            (prodByName || []).forEach((p: any) => costByName.set(String(p.name || ''), Number(p.cost_price || 0)));
+            (invItems || []).forEach((it: any) => {
+              if (String(it.item_type || '').toLowerCase() !== 'product') return;
+              let cp = costByName.get(String(it.description || '')) || 0;
+              if (!cp || cp <= 0) cp = Number(it.unit_price || 0);
+              const qty = Number(it.quantity || 0);
+              totalCost += (cp * qty);
+            });
+          }
+        const lower = accounts.map(a => ({
+          ...a,
+          account_type: (a.account_type || '').toLowerCase(),
+          account_name: (a.account_name || '').toLowerCase(),
+          account_code: (a.account_code || '').toString(),
+        }));
+        const findAccount = (type: string, codes: string[], names: string[]): Account | null => {
+          const byCode = lower.find(a => a.account_type === type.toLowerCase() && codes.includes(a.account_code));
+          if (byCode) return accounts.find(x => x.id === byCode.id) || null;
+          const byName = lower.find(a => a.account_type === type.toLowerCase() && names.some(n => a.account_name.includes(n)));
+          if (byName) return accounts.find(x => x.id === byName.id) || null;
+          return null;
+        };
+        let cogsAcc = findAccount('expense', ['5000'], ['cost of sales','cost of goods','cogs']);
+        let invAcc = findAccount('asset', ['1300'], ['inventory','stock']);
+        if (totalCost > 0) {
+          if (!cogsAcc) {
+            const { data: created } = await supabase
+              .from('chart_of_accounts')
+              .insert({ company_id: effectiveCompanyId, account_code: '5000', account_name: 'Cost of Sales', account_type: 'expense', is_active: true })
+              .select('*')
+              .single();
+            cogsAcc = created as any as Account;
+          }
+          if (!invAcc) {
+            const { data: created } = await supabase
+              .from('chart_of_accounts')
+              .insert({ company_id: effectiveCompanyId, account_code: '1300', account_name: 'Inventory', account_type: 'asset', is_active: true })
+              .select('*')
+              .single();
+            invAcc = created as any as Account;
+          }
+        }
+        setCogsTotal(totalCost);
+        setCogsAccount(cogsAcc || null);
+        setInventoryAccount(invAcc || null);
+      } catch {}
+    };
+    computeCOGS();
+  }, [open, lockType, form.reference, accounts, companyId]);
 
   useEffect(() => {
     if (form.element === 'loan_interest') {
@@ -1243,6 +1342,102 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             { transaction_id: transaction.id, account_id: form.creditAccount, debit: 0, credit: amount, description: sanitizedDescription, status: 'pending' }
           );
         }
+        let cogsAmt = cogsTotal;
+        let cogsAccId = cogsAccount?.id || '';
+        let invAccId = inventoryAccount?.id || '';
+        if ((!cogsAmt || !cogsAccId || !invAccId) && invoiceIdForRef) {
+          try {
+            const { data: invItems } = await supabase
+              .from('invoice_items')
+              .select('description, quantity, unit_price, item_type, product_id')
+              .eq('invoice_id', invoiceIdForRef);
+            let totalCost = 0;
+            const prodIds = (invItems || [])
+              .filter((it: any) => String(it.item_type || '').toLowerCase() === 'product' && it.product_id)
+              .map((it: any) => String(it.product_id));
+            if (prodIds.length > 0) {
+              const { data: prodInfos } = await supabase
+                .from('items')
+                .select('id, cost_price')
+                .in('id', prodIds as any);
+              const costMap = new Map<string, number>();
+              (prodInfos || []).forEach((p: any) => costMap.set(String(p.id), Number(p.cost_price || 0)));
+              (invItems || []).forEach((it: any) => {
+                const isProd = String(it.item_type || '').toLowerCase() === 'product';
+                if (!isProd) return;
+                let cp = costMap.get(String(it.product_id)) || 0;
+                if (!cp || cp <= 0) cp = Number(it.unit_price || 0);
+                const qty = Number(it.quantity || 0);
+                totalCost += (cp * qty);
+              });
+            }
+            if (totalCost === 0) {
+              const names = (invItems || [])
+                .filter((it: any) => String(it.item_type || '').toLowerCase() === 'product')
+                .map((it: any) => String(it.description || ''))
+                .filter(Boolean);
+              if (names.length > 0) {
+                const { data: prodByName } = await supabase
+                  .from('items')
+                  .select('name, cost_price')
+                  .eq('company_id', companyId)
+                  .in('name', names as any)
+                  .eq('item_type', 'product');
+                const costByName = new Map<string, number>();
+                (prodByName || []).forEach((p: any) => costByName.set(String(p.name || ''), Number(p.cost_price || 0)));
+                (invItems || []).forEach((it: any) => {
+                  if (String(it.item_type || '').toLowerCase() !== 'product') return;
+                  let cp = costByName.get(String(it.description || '')) || 0;
+                  if (!cp || cp <= 0) cp = Number(it.unit_price || 0);
+                  const qty = Number(it.quantity || 0);
+                  totalCost += (cp * qty);
+                });
+              }
+            }
+            cogsAmt = totalCost;
+            const lower = accounts.map(a => ({
+              ...a,
+              account_type: (a.account_type || '').toLowerCase(),
+              account_name: (a.account_name || '').toLowerCase(),
+              account_code: (a.account_code || '').toString(),
+            }));
+            const findId = (type: string, codes: string[], names: string[]): string => {
+              const byCode = lower.find(a => a.account_type === type.toLowerCase() && codes.includes(a.account_code));
+              if (byCode) return byCode.id;
+              const byName = lower.find(a => a.account_type === type.toLowerCase() && names.some(n => a.account_name.includes(n)));
+              if (byName) return byName.id;
+              const byType = lower.find(a => a.account_type === type.toLowerCase());
+              return byType?.id || '';
+            };
+            cogsAccId = findId('expense', ['5000'], ['cost of sales','cost of goods','cogs']);
+            invAccId = findId('asset', ['1300'], ['inventory','stock']);
+            if (cogsAmt > 0) {
+              if (!cogsAccId) {
+                const { data: created } = await supabase
+                  .from('chart_of_accounts')
+                  .insert({ company_id: companyId, account_code: '5000', account_name: 'Cost of Sales', account_type: 'expense', is_active: true })
+                  .select('id')
+                  .single();
+                cogsAccId = (created as any)?.id || cogsAccId;
+              }
+              if (!invAccId) {
+                const { data: created } = await supabase
+                  .from('chart_of_accounts')
+                  .insert({ company_id: companyId, account_code: '1300', account_name: 'Inventory', account_type: 'asset', is_active: true })
+                  .select('id')
+                  .single();
+                invAccId = (created as any)?.id || invAccId;
+              }
+            }
+          } catch {}
+        }
+        if (cogsAmt > 0 && cogsAccId && invAccId) {
+          console.log('Adding COGS entries to transaction:', { cogsAmt, cogsAccId, invAccId });
+          entries.push(
+            { transaction_id: transaction.id, account_id: cogsAccId, debit: cogsAmt, credit: 0, description: 'Cost of Goods Sold', status: 'approved' },
+            { transaction_id: transaction.id, account_id: invAccId, debit: 0, credit: cogsAmt, description: 'Inventory', status: 'approved' }
+          );
+        }
       } else if (lockType === 'paid') {
         // Payment collection: Dr Bank (amount), Cr AR (amount) — no VAT
         entries.push(
@@ -1517,8 +1712,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           console.error('Ledger entries insert error:', ledgerInsErr);
           throw ledgerInsErr;
         }
-        // For PO Sent flows, mark transaction as posted after entries/ledger inserted
-        if (lockType === 'po_sent') {
+        // For locked flows, mark transaction as posted after entries/ledger inserted
+        if (lockType === 'po_sent' || lockType === 'sent') {
           try {
             await supabase
               .from('transactions')
@@ -2180,14 +2375,22 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               </div>
 
               {debitAccountName && creditAccountName && (
-                <Alert className="bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800">
-                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                  <AlertDescription className="text-green-900 dark:text-green-100">
-                    <strong>Journal Entry:</strong> Dr {debitAccountName} / Cr {creditAccountName}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </div>
+              <Alert className="bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800">
+                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                <AlertDescription className="text-green-900 dark:text-green-100">
+                  <strong>Journal Entry:</strong> Dr {debitAccountName} / Cr {creditAccountName}
+                </AlertDescription>
+              </Alert>
+            )}
+            {lockAccounts && lockType === 'sent' && cogsTotal > 0 && cogsAccount && inventoryAccount && (
+              <Alert className="bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800">
+                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                <AlertDescription className="text-green-900 dark:text-green-100">
+                  <strong>Additional Entry:</strong> Dr {cogsAccount.account_name} / Cr {inventoryAccount.account_name} • R {cogsTotal.toFixed(2)}
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
           )}
 
           {/* Step 4: Amount & VAT / Interest (for loans) */}

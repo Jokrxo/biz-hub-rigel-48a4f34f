@@ -39,6 +39,7 @@ export const SalesInvoices = () => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [services, setServices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -145,6 +146,13 @@ export const SalesInvoices = () => {
         .eq("item_type", "product")
         .order("name");
       setProducts(productsData || []);
+      const { data: servicesData } = await supabase
+        .from("items")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .eq("item_type", "service")
+        .order("name");
+      setServices(servicesData || []);
 
       // Load invoices
       const { data, error } = await supabase
@@ -176,7 +184,7 @@ export const SalesInvoices = () => {
         .eq("id", sentInvoice.id);
       if (error) throw error;
       await openJournalForSent(sentInvoice, sentDate);
-      toast({ title: "Success", description: "Opening journal to post invoice" });
+      toast({ title: "Success", description: "Opening transaction form to post AR/Revenue and COGS/Inventory" });
       setSentDialogOpen(false);
       setSentInvoice(null);
       loadData();
@@ -205,13 +213,15 @@ export const SalesInvoices = () => {
 
   const updateItemProduct = (index: number, productId: string) => {
     const product = products.find((p: any) => String(p.id) === String(productId));
+    const service = services.find((s: any) => String(s.id) === String(productId));
     const newItems = [...formData.items];
     newItems[index] = { ...newItems[index], product_id: productId };
-    if (product) {
-      const name = (product.name ?? product.description ?? '').toString();
+    const picked = product || service;
+    if (picked) {
+      const name = (picked.name ?? picked.description ?? '').toString();
       newItems[index].description = name;
-      if (typeof product.unit_price === 'number') {
-        newItems[index].unit_price = product.unit_price;
+      if (typeof picked.unit_price === 'number') {
+        newItems[index].unit_price = picked.unit_price;
       }
     }
     setFormData({ ...formData, items: newItems });
@@ -261,6 +271,8 @@ export const SalesInvoices = () => {
     // Validate stock availability against loaded products
     for (const it of formData.items) {
       const prod = products.find((p: any) => String(p.id) === String(it.product_id));
+      const svc = services.find((s: any) => String(s.id) === String(it.product_id));
+      if (svc) continue;
       const available = Number(prod?.quantity_on_hand ?? 0);
       const requested = Number(it.quantity ?? 0);
       if (!prod) {
@@ -326,7 +338,7 @@ export const SalesInvoices = () => {
         unit_price: item.unit_price,
         tax_rate: item.tax_rate,
         amount: item.quantity * item.unit_price * (1 + item.tax_rate / 100),
-        item_type: 'product'
+        item_type: services.find((s: any) => String(s.id) === String(item.product_id)) ? 'service' : 'product'
       }));
 
       const { error: itemsError } = await supabase
@@ -338,7 +350,8 @@ export const SalesInvoices = () => {
       // Decrease stock for each product item
       for (const it of formData.items) {
         const prod = products.find((p: any) => String(p.id) === String(it.product_id));
-        if (!prod) continue;
+        const svc = services.find((s: any) => String(s.id) === String(it.product_id));
+        if (!prod || svc) continue;
         const currentQty = Number(prod.quantity_on_hand ?? 0);
         const newQty = currentQty - Number(it.quantity ?? 0);
         const { error: stockError } = await supabase
@@ -447,16 +460,14 @@ export const SalesInvoices = () => {
   const postInvoiceSent = async (inv: any, postDateStr?: string) => {
     try {
       setPosting(true);
-      try {
-        await (supabase as any).rpc('post_invoice_sent', { _invoice_id: inv.id, _post_date: postDateStr || inv.invoice_date });
-      } catch (rpcErr) {
-        await transactionsApi.postInvoiceSentClient(inv, postDateStr || inv.invoice_date);
-      }
+      const postDate = postDateStr || inv.invoice_date;
+      // Post full AR/Revenue/VAT and COGS/Inventory via client to guarantee all four accounts
+      await transactionsApi.postInvoiceSentClient(inv, postDate);
       const companyId = await getCompanyId();
       if (companyId) {
         try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
       }
-      toast({ title: "Success", description: `Posted invoice ${inv.invoice_number} to Receivable and Revenue` });
+      toast({ title: "Success", description: `Posted invoice ${inv.invoice_number}: Dr Receivable | Cr Revenue, Cr VAT; Dr COGS | Cr Inventory` });
     } catch (e: any) {
       toast({ title: "Error", description: e.message || 'Failed to post Sent invoice', variant: 'destructive' });
     } finally {
@@ -1073,15 +1084,20 @@ export const SalesInvoices = () => {
                 {formData.items.map((item, index) => (
                   <div key={index} className="grid grid-cols-12 gap-2 items-end p-3 border rounded-lg">
                     <div className="col-span-4">
-                      <Label className="text-xs">Product</Label>
+                      <Label className="text-xs">Product/Service</Label>
                       <Select value={item.product_id || ""} onValueChange={(val) => updateItemProduct(index, val)}>
                         <SelectTrigger>
-                          <SelectValue placeholder={products.length ? "Select a product" : "No products found"} />
+                          <SelectValue placeholder={(products.length + services.length) ? "Select an item" : "No items found"} />
                         </SelectTrigger>
                         <SelectContent>
                           {products.map((p: any) => (
                             <SelectItem key={p.id} value={String(p.id)}>
                               {(p.name ?? p.title ?? p.description ?? `Product ${p.id}`) as string}
+                            </SelectItem>
+                          ))}
+                          {services.map((s: any) => (
+                            <SelectItem key={s.id} value={String(s.id)}>
+                              {((s.name ?? s.title ?? s.description ?? `Service ${s.id}`) as string)}
                             </SelectItem>
                           ))}
                         </SelectContent>

@@ -7,11 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Users, Mail, Phone, Info } from "lucide-react";
+import { Plus, Users, Mail, Phone, Info, FileDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/AuthContext";
 import { useRoles } from "@/hooks/use-roles";
+import { exportCustomerStatementToPDF } from "@/lib/export-utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 interface Customer {
   id: string;
@@ -27,6 +30,12 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [statementOpen, setStatementOpen] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [monthsPreset, setMonthsPreset] = useState<string>("12");
+  const [useCustomRange, setUseCustomRange] = useState<boolean>(false);
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
@@ -111,6 +120,110 @@ export default function CustomersPage() {
   };
 
   const canEdit = isAdmin || isAccountant;
+
+  const downloadStatement = async (customer: Customer, start: string, end: string) => {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .single();
+      if (!profile?.company_id) throw new Error("Company not found");
+
+      const { data: periodInv, error: invErr1 } = await supabase
+        .from("invoices")
+        .select("invoice_number, invoice_date, total_amount")
+        .eq("company_id", profile.company_id)
+        .eq("customer_name", customer.name)
+        .gte("invoice_date", start)
+        .lte("invoice_date", end)
+        .order("invoice_date", { ascending: true });
+      if (invErr1) throw invErr1;
+
+      const { data: priorInv, error: invErr2 } = await supabase
+        .from("invoices")
+        .select("invoice_number, invoice_date, total_amount")
+        .eq("company_id", profile.company_id)
+        .eq("customer_name", customer.name)
+        .lt("invoice_date", start);
+      if (invErr2) throw invErr2;
+
+      const allNumbers = Array.from(new Set([...
+        (periodInv || []).map((i: any) => String(i.invoice_number)),
+        (priorInv || []).map((i: any) => String(i.invoice_number))
+      ]));
+
+      let txAll: any[] = [];
+      if (allNumbers.length > 0) {
+        const { data: tx, error: txErr } = await supabase
+          .from("transactions")
+          .select("reference_number, transaction_date, total_amount, description, transaction_type, status")
+          .eq("company_id", profile.company_id)
+          .eq("transaction_type", "receipt")
+          .eq("status", "posted")
+          .in("reference_number", allNumbers);
+        if (txErr) throw txErr;
+        txAll = tx || [];
+      }
+
+      const paymentsPrior = txAll.filter((t) => String(t.transaction_date) < start);
+      const paymentsPeriod = txAll.filter((t) => String(t.transaction_date) >= start && String(t.transaction_date) <= end);
+
+      const openingInvoicesTotal = (priorInv || []).reduce((sum: number, r: any) => sum + Number(r.total_amount || 0), 0);
+      const openingPaymentsTotal = paymentsPrior.reduce((sum: number, r: any) => sum + Number(r.total_amount || 0), 0);
+      const openingBalance = openingInvoicesTotal - openingPaymentsTotal;
+
+      const entries = [
+        ...((periodInv || []).map((r: any) => ({
+          date: r.invoice_date,
+          description: `Invoice ${r.invoice_number}`,
+          reference: r.invoice_number,
+          dr: Number(r.total_amount || 0),
+          cr: 0,
+        }))),
+        ...(paymentsPeriod.map((t: any) => ({
+          date: t.transaction_date,
+          description: t.description || `Payment ${t.reference_number || ''}`.trim(),
+          reference: t.reference_number || null,
+          dr: 0,
+          cr: Number(t.total_amount || 0),
+        })))
+      ].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+      const periodLabel = `${new Date(start).toLocaleDateString('en-ZA')} – ${new Date(end).toLocaleDateString('en-ZA')}`;
+      exportCustomerStatementToPDF(entries, customer.name, periodLabel, openingBalance, `statement_${customer.name.replace(/\s+/g,'_')}` , { email: customer.email || undefined, phone: customer.phone || undefined, address: customer.address || undefined });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const openStatementDialog = (customer: Customer) => {
+    setSelectedCustomer(customer);
+    setStatementOpen(true);
+    setMonthsPreset("12");
+    setUseCustomRange(false);
+    const end = new Date();
+    const start = new Date();
+    start.setMonth(start.getMonth() - 12);
+    setStartDate(start.toISOString().split('T')[0]);
+    setEndDate(end.toISOString().split('T')[0]);
+  };
+
+  const exportStatement = async () => {
+    if (!selectedCustomer) return;
+    let start = startDate;
+    let end = endDate;
+    if (!useCustomRange) {
+      const endDt = new Date();
+      const months = parseInt(monthsPreset || "12");
+      const startDt = new Date();
+      startDt.setMonth(startDt.getMonth() - months);
+      start = startDt.toISOString().split('T')[0];
+      end = endDt.toISOString().split('T')[0];
+    }
+    await downloadStatement(selectedCustomer, start, end);
+    setStatementOpen(false);
+  };
 
   return (
     <>
@@ -199,6 +312,7 @@ export default function CustomersPage() {
                       <TableHead>Phone</TableHead>
                       <TableHead>Address</TableHead>
                       <TableHead>Added</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -227,13 +341,60 @@ export default function CustomersPage() {
                         </TableCell>
                         <TableCell>{customer.address || "-"}</TableCell>
                         <TableCell>{new Date(customer.created_at).toLocaleDateString()}</TableCell>
+                        <TableCell>
+                          <Button variant="outline" size="sm" onClick={() => openStatementDialog(customer)}>
+                            <FileDown className="h-4 w-4 mr-2" /> Statement PDF
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               )}
-            </CardContent>
+          </CardContent>
           </Card>
+
+          <Dialog open={statementOpen} onOpenChange={setStatementOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Statement Options</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Quick period</Label>
+                    <Select value={monthsPreset} onValueChange={setMonthsPreset}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select period" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="3">Last 3 months</SelectItem>
+                        <SelectItem value="6">Last 6 months</SelectItem>
+                        <SelectItem value="12">Last 12 months</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch checked={useCustomRange} onCheckedChange={setUseCustomRange} />
+                    <Label>Use custom date range</Label>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Start date</Label>
+                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={!useCustomRange} />
+                  </div>
+                  <div>
+                    <Label>End date</Label>
+                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={!useCustomRange} />
+                  </div>
+                </div>
+              </div>
+              <div className="pt-4">
+                <Button onClick={exportStatement} className="w-full bg-gradient-primary">Export PDF</Button>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
             <DialogContent className="sm:max-w-[640px] p-4">
