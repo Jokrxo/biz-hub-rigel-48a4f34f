@@ -239,13 +239,19 @@ export const GAAPFinancialStatements = () => {
           r.account_type.toLowerCase() === 'liability' &&
           (r.account_name.toLowerCase().includes('payable') ||
            r.account_name.toLowerCase().includes('sars') ||
-           r.account_name.toLowerCase().includes('vat') ||
-           parseInt(r.account_code) < 2300)
+           r.account_name.toLowerCase().includes('vat')) &&
+          !(
+            r.account_name.toLowerCase().includes('vat input') ||
+            r.account_name.toLowerCase().includes('vat receivable')
+          )
+        );
+        const vatInputAsAssets = trialBalance.filter(r =>
+          (r.account_name.toLowerCase().includes('vat input') || r.account_name.toLowerCase().includes('vat receivable'))
         );
         const nonCurrentLiabilities = trialBalance.filter(r => r.account_type.toLowerCase() === 'liability' && !currentLiabilities.includes(r));
         const equity = trialBalance.filter(r => r.account_type.toLowerCase() === 'equity');
         const revenueRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
-        const expenseRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'expense');
+        const expenseRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat'));
         const totalRevenue = revenueRows.reduce((sum, r) => sum + r.balance, 0);
         const totalExpenses = expenseRows.reduce((sum, r) => sum + r.balance, 0);
         const netProfitForPeriod = totalRevenue - totalExpenses;
@@ -272,6 +278,7 @@ export const GAAPFinancialStatements = () => {
           { account: 'Total Current Assets', amount: totalCurrentAssets, type: 'subtotal' },
           { account: 'Non-current Assets', amount: 0, type: 'subheader' },
           ...nonCurrentAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: nbvFor(r), type: 'asset' })),
+          ...vatInputAsAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'asset' })),
           { account: 'Property, Plant & Equipment (Book Value)', amount: ppeBookValue, type: 'asset' },
           { account: 'Total Non-current Assets', amount: totalNonCurrentAssets, type: 'subtotal' },
           { account: 'TOTAL ASSETS', amount: totalAssets, type: 'total' },
@@ -300,9 +307,11 @@ export const GAAPFinancialStatements = () => {
       }
       if (report === 'pl') {
         const revenue = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
-        const expenses = trialBalance.filter(r => r.account_type === 'expense');
+        const expenses = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
         const costOfSales = expenses.filter(r => r.account_name.toLowerCase().includes('cost of') || r.account_code.startsWith('50'));
-        const operatingExpenses = expenses.filter(r => !costOfSales.includes(r));
+        const operatingExpenses = expenses
+          .filter(r => !costOfSales.includes(r))
+          .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
         const totalRevenue = revenue.reduce((sum, r) => sum + r.balance, 0);
         const totalCostOfSales = costOfSales.reduce((sum, r) => sum + r.balance, 0);
         const grossProfit = totalRevenue - totalCostOfSales;
@@ -524,7 +533,7 @@ export const GAAPFinancialStatements = () => {
 
     // Compute net profit for the period to roll into retained earnings
     const revenueRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
-    const expenseRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'expense');
+    const expenseRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat'));
     const totalRevenue = revenueRows.reduce((sum, r) => sum + r.balance, 0);
     const totalExpenses = expenseRows.reduce((sum, r) => sum + r.balance, 0);
     const netProfitForPeriod = totalRevenue - totalExpenses;
@@ -696,7 +705,9 @@ export const GAAPFinancialStatements = () => {
   const renderIncomeStatement = () => {
     const revenue = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
     const costOfSales = trialBalance.filter(r => (String(r.account_code || '')).startsWith('50') || (String(r.account_name || '').toLowerCase().includes('cost of')));
-    const operatingExpenses = trialBalance.filter(r => (String(r.account_type || '').toLowerCase() === 'expense') && !costOfSales.includes(r));
+    const operatingExpenses = trialBalance
+      .filter(r => (String(r.account_type || '').toLowerCase() === 'expense') && !costOfSales.includes(r))
+      .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
 
     const totalRevenue = revenue.reduce((sum, r) => sum + r.balance, 0);
     const totalCostOfSales = costOfSales.reduce((sum, r) => sum + r.balance, 0);
@@ -1088,6 +1099,7 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
   const { data: txEntries, error: txError } = await supabase
     .from('transaction_entries')
     .select(`
+      transaction_id,
       account_id,
       debit,
       credit,
@@ -1104,7 +1116,7 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
   // Get ledger entries
   const { data: ledgerEntries, error: ledgerError } = await supabase
     .from('ledger_entries')
-    .select('account_id, debit, credit, entry_date')
+    .select('transaction_id, account_id, debit, credit, entry_date')
     .eq('company_id', companyId)
     .gte('entry_date', startISO)
     .lte('entry_date', endISO);
@@ -1117,12 +1129,15 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
   const totalInventoryValue = await calculateTotalInventoryValue(companyId);
 
   // Process each account
+  const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+  const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
   (accounts || []).forEach((acc: any) => {
     let sumDebit = 0;
     let sumCredit = 0;
 
     // Sum transaction entries
-    (txEntries || []).forEach((entry: any) => {
+    (filteredTxEntries || []).forEach((entry: any) => {
       if (entry.account_id === acc.id) {
         sumDebit += Number(entry.debit || 0);
         sumCredit += Number(entry.credit || 0);

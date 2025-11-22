@@ -84,6 +84,7 @@ export const TrialBalanceAutoGenerate = () => {
       const { data: txEntries, error: txError } = await supabase
         .from("transaction_entries")
         .select(`
+          transaction_id,
           account_id,
           debit,
           credit,
@@ -100,7 +101,7 @@ export const TrialBalanceAutoGenerate = () => {
       // Fetch ledger entries
       const { data: ledgerEntries, error: ledgerError } = await supabase
         .from("ledger_entries")
-        .select('account_id, debit, credit, entry_date')
+        .select('transaction_id, account_id, debit, credit, entry_date')
         .eq("company_id", profile.company_id)
         .gte("entry_date", startDate.toISOString())
         .lte("entry_date", endDate.toISOString());
@@ -113,12 +114,15 @@ export const TrialBalanceAutoGenerate = () => {
       // Calculate total inventory value from products
       const totalInventoryValue = await calculateTotalInventoryValue(profile.company_id);
 
+      const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+      const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
       accounts?.forEach(account => {
         let totalDebit = 0;
         let totalCredit = 0;
 
         // Sum transaction entries
-        txEntries?.forEach((entry: any) => {
+        filteredTxEntries?.forEach((entry: any) => {
           if (entry.account_id === account.id) {
             totalDebit += entry.debit || 0;
             totalCredit += entry.credit || 0;

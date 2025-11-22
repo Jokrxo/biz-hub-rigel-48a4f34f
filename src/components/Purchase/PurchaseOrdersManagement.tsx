@@ -477,7 +477,7 @@ export const PurchaseOrdersManagement = () => {
         transaction_date: postDateStr || po.po_date,
         description: `PO ${po.po_number || po.id} sent`,
         reference_number: po.po_number || null,
-        transaction_type: 'asset',
+        transaction_type: 'product_purchase',
         payment_method: 'accrual',
         debit_account_id: invId,
         credit_account_id: apId,

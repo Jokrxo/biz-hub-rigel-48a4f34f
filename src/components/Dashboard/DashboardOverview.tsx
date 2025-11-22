@@ -250,6 +250,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     const { data: txEntries, error: txError } = await supabase
       .from('transaction_entries')
       .select(`
+        transaction_id,
         account_id,
         debit,
         credit,
@@ -266,7 +267,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     // Get ledger entries
     const { data: ledgerEntries, error: ledgerError } = await supabase
       .from('ledger_entries')
-      .select('account_id, debit, credit, entry_date')
+      .select('transaction_id, account_id, debit, credit, entry_date')
       .eq('company_id', companyId)
       .gte('entry_date', start)
       .lte('entry_date', end);
@@ -278,12 +279,15 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     // Calculate total inventory value from products
     const totalInventoryValue = await calculateTotalInventoryValue(companyId);
     
+    const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+    const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
     (accounts || []).forEach((acc: any) => {
       let sumDebit = 0;
       let sumCredit = 0;
       
       // Sum transaction entries
-      txEntries?.forEach((entry: any) => {
+      filteredTxEntries?.forEach((entry: any) => {
         if (entry.account_id === acc.id) {
           sumDebit += Number(entry.debit || 0);
           sumCredit += Number(entry.credit || 0);

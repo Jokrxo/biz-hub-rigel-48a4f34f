@@ -171,40 +171,43 @@ export default function FixedAssetsPage() {
         }
         const creditAccountId = formData.funding_source === 'loan' ? formData.loan_account_id : formData.bank_account_id;
         if (assetAccountId && creditAccountId && costNum > 0) {
-          const { data: tx, error: txErr } = await supabase
-            .from("transactions")
-            .insert({
-              company_id: profile!.company_id,
-              user_id: user!.id,
-              transaction_date: formData.purchase_date,
-              description: `Asset Purchase - ${formData.description} [method:${formData.depreciation_method}]`,
-              reference_number: null,
-              total_amount: costNum,
-              bank_account_id: null,
-              transaction_type: "asset",
-              status: "pending"
-            })
-            .select("id")
-            .single();
-          if (!txErr && tx?.id) {
+          const basePayload: any = {
+            company_id: profile!.company_id,
+            user_id: user!.id,
+            transaction_date: formData.purchase_date,
+            description: `Asset Purchase - ${formData.description} [method:${formData.depreciation_method}]`,
+            reference_number: null,
+            total_amount: costNum,
+            bank_account_id: null,
+            status: "pending"
+          };
+          let txId: string | null = null;
+          try {
+            const { data: tx } = await supabase
+              .from("transactions" as any)
+              .insert({ ...basePayload, transaction_type: "asset" } as any)
+              .select("id")
+              .single();
+            txId = tx?.id || null;
+          } catch (err: any) {
+            const msg = String(err?.message || '').toLowerCase();
+            const retry = msg.includes('column') && msg.includes('does not exist');
+            if (!retry) throw err;
+            const { data: tx2 } = await supabase
+              .from("transactions" as any)
+              .insert(basePayload as any)
+              .select("id")
+              .single();
+            txId = tx2?.id || null;
+          }
+          if (txId) {
             const entries = [
-              { transaction_id: tx.id, account_id: assetAccountId as string, debit: costNum, credit: 0, description: `Asset Purchase - ${formData.description}`, status: 'approved' },
-              { transaction_id: tx.id, account_id: creditAccountId as string, debit: 0, credit: costNum, description: `Asset Purchase - ${formData.description}`, status: 'approved' }
+              { transaction_id: txId, account_id: assetAccountId as string, debit: costNum, credit: 0, description: `Asset Purchase - ${formData.description}`, status: 'approved' },
+              { transaction_id: txId, account_id: creditAccountId as string, debit: 0, credit: costNum, description: `Asset Purchase - ${formData.description}`, status: 'approved' }
             ];
             const { error: entErr } = await supabase.from("transaction_entries").insert(entries as any);
             if (!entErr) {
-              await supabase.from("transactions").update({ status: 'approved' }).eq("id", tx.id);
-              const ledgerRows = entries.map(e => ({
-                company_id: profile!.company_id,
-                transaction_id: tx.id,
-                account_id: e.account_id,
-                entry_date: formData.purchase_date,
-                description: e.description,
-                debit: e.debit,
-                credit: e.credit,
-                is_reversed: false,
-              }));
-              await supabase.from('ledger_entries').insert(ledgerRows as any);
+              await supabase.from("transactions").update({ status: 'approved' }).eq("id", txId);
             }
           }
         }
@@ -294,53 +297,57 @@ export default function FixedAssetsPage() {
 
         const description = `Asset Disposal - ${selectedAsset.description}`;
 
-        const { data: tx, error: txErr } = await supabase
-          .from("transactions")
-          .insert({
-            company_id: companyId,
-            user_id: user!.id,
-            transaction_date: disposalData.disposal_date,
-            description,
-            reference_number: null,
-            total_amount: proceeds,
-            bank_account_id: bankId || null,
-            transaction_type: "asset_disposal",
-            status: "approved"
-          })
-          .select("id")
-          .single();
+        const basePayload: any = {
+          company_id: companyId,
+          user_id: user!.id,
+          transaction_date: disposalData.disposal_date,
+          description,
+          reference_number: null,
+          total_amount: proceeds,
+          bank_account_id: bankId || null,
+          status: "approved"
+        };
+        let txId: string | null = null;
+        try {
+          const { data: tx } = await supabase
+            .from("transactions" as any)
+            .insert({ ...basePayload, transaction_type: "asset_disposal" } as any)
+            .select("id")
+            .single();
+          txId = tx?.id || null;
+        } catch (err: any) {
+          const msg = String(err?.message || '').toLowerCase();
+          const retry = msg.includes('column') && msg.includes('does not exist');
+          if (!retry) throw err;
+          const { data: tx2 } = await supabase
+            .from("transactions" as any)
+            .insert(basePayload as any)
+            .select("id")
+            .single();
+          txId = tx2?.id || null;
+        }
 
-        if (!txErr && tx?.id) {
+        if (txId) {
           const entries: any[] = [];
           if (proceeds > 0 && bankId) {
-            entries.push({ transaction_id: tx.id, account_id: bankId, debit: proceeds, credit: 0, description: 'Proceeds from Disposal', status: 'approved' });
+            entries.push({ transaction_id: txId, account_id: bankId, debit: proceeds, credit: 0, description: 'Proceeds from Disposal', status: 'approved' });
           }
           if (disposalIncomeId && proceeds > 0) {
-            entries.push({ transaction_id: tx.id, account_id: disposalIncomeId, debit: 0, credit: proceeds, description: 'Disposal Income (Proceeds)', status: 'approved' });
+            entries.push({ transaction_id: txId, account_id: disposalIncomeId, debit: 0, credit: proceeds, description: 'Disposal Income (Proceeds)', status: 'approved' });
           }
           if (accDepAccountId && accum > 0) {
-            entries.push({ transaction_id: tx.id, account_id: accDepAccountId, debit: accum, credit: 0, description: 'Derecognize Accumulated Depreciation', status: 'approved' });
+            entries.push({ transaction_id: txId, account_id: accDepAccountId, debit: accum, credit: 0, description: 'Derecognize Accumulated Depreciation', status: 'approved' });
           }
           if (disposalExpenseId && nbv > 0) {
-            entries.push({ transaction_id: tx.id, account_id: disposalExpenseId, debit: nbv, credit: 0, description: 'Disposal Expense (NBV)', status: 'approved' });
+            entries.push({ transaction_id: txId, account_id: disposalExpenseId, debit: nbv, credit: 0, description: 'Disposal Expense (NBV)', status: 'approved' });
           }
           if (assetAccountId && cost > 0) {
-            entries.push({ transaction_id: tx.id, account_id: assetAccountId, debit: 0, credit: cost, description: 'Derecognize Asset Cost', status: 'approved' });
+            entries.push({ transaction_id: txId, account_id: assetAccountId, debit: 0, credit: cost, description: 'Derecognize Asset Cost', status: 'approved' });
           }
 
           const { error: entErr } = await supabase.from("transaction_entries").insert(entries as any);
           if (!entErr) {
-            const ledgerRows = entries.map(e => ({
-              company_id: companyId,
-              transaction_id: tx.id,
-              account_id: e.account_id,
-              entry_date: disposalData.disposal_date,
-              description: e.description,
-              debit: e.debit,
-              credit: e.credit,
-              is_reversed: false,
-            }));
-            await supabase.from('ledger_entries').insert(ledgerRows as any);
+            await supabase.from("transactions").update({ status: 'approved' }).eq("id", txId);
           }
         }
       } catch {}

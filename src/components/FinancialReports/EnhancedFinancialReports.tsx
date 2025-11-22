@@ -165,6 +165,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     const { data: txEntries, error: txError } = await supabase
       .from('transaction_entries')
       .select(`
+        transaction_id,
         account_id,
         debit,
         credit,
@@ -181,7 +182,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     // Get ledger entries
     const { data: ledgerEntries, error: ledgerError } = await supabase
       .from('ledger_entries')
-      .select('account_id, debit, credit, entry_date')
+      .select('transaction_id, account_id, debit, credit, entry_date')
       .eq('company_id', companyId)
       .gte('entry_date', start)
       .lte('entry_date', end);
@@ -193,12 +194,15 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     // Calculate total inventory value from products
     const totalInventoryValue = await calculateTotalInventoryValue(companyId);
 
+    const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+    const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
     (accounts || []).forEach((acc: any) => {
       let sumDebit = 0;
       let sumCredit = 0;
       
       // Sum transaction entries
-      txEntries?.forEach((entry: any) => {
+      filteredTxEntries?.forEach((entry: any) => {
         if (entry.account_id === acc.id) {
           sumDebit += Number(entry.debit || 0);
           sumCredit += Number(entry.credit || 0);
@@ -391,7 +395,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     // Current Assets
     data.push({ type: 'subheader', account: 'Current Assets', amount: 0, accountId: null });
     const currentAssets = trialBalance.filter(a => 
-      a.account_type.toLowerCase() === 'asset' && 
+      (a.account_type.toLowerCase() === 'asset' || (String(a.account_name || '').toLowerCase().includes('vat input') || String(a.account_name || '').toLowerCase().includes('vat receivable'))) && 
       parseInt(a.account_code || '0') < 1500
     );
     
@@ -448,7 +452,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
     data.push({ type: 'header', account: 'LIABILITIES', amount: 0, accountId: null });
     
-    const liabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability');
+    const liabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability' && !(String(a.account_name || '').toLowerCase().includes('vat input') || String(a.account_name || '').toLowerCase().includes('vat receivable')));
     let totalLiabilities = 0;
     liabilities.forEach(acc => {
       // Use balance from trial balance directly

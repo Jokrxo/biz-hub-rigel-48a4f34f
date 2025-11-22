@@ -91,6 +91,14 @@ const ACCOUNTING_ELEMENTS = [
     creditTypes: ['asset', 'liability'],
     description: "Record asset purchases (Dr Fixed Asset / Cr Bank or Payable)"
   },
+  {
+    value: "product_purchase",
+    label: "Product Purchase",
+    icon: TrendingDown,
+    debitType: 'asset',
+    creditTypes: ['asset','liability'],
+    description: "Record product/inventory purchases (Dr Inventory / Cr Bank or Payable)"
+  },
   { 
     value: "liability", 
     label: "Liability Payment", 
@@ -130,6 +138,15 @@ const ACCOUNTING_ELEMENTS = [
     debitType: 'expense', 
     creditTypes: ['asset'],
     description: "Pay loan interest (Dr Interest Expense / Cr Bank)"
+  }
+  ,
+  {
+    value: "depreciation",
+    label: "Depreciation",
+    icon: TrendingDown,
+    debitType: 'expense',
+    creditTypes: ['asset'],
+    description: "Record periodic depreciation (Dr Depreciation / Cr Accumulated Depreciation)"
   }
   
 ];
@@ -194,7 +211,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     loanTermType: "short",
     installmentNumber: ""
   });
-  const [showFixedAssetsUI] = useState<boolean>(false);
+  const [showFixedAssetsUI, setShowFixedAssetsUI] = useState<boolean>(false);
   const [cogsTotal, setCogsTotal] = useState<number>(0);
   const [cogsAccount, setCogsAccount] = useState<Account | null>(null);
   const [inventoryAccount, setInventoryAccount] = useState<Account | null>(null);
@@ -206,6 +223,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     }
   }, [open, prefill]);
   const [depreciationMethod, setDepreciationMethod] = useState<string>("straight_line");
+
+  useEffect(() => {
+    setShowFixedAssetsUI(form.element === 'asset' || form.element === 'depreciation');
+  }, [form.element]);
 
   useEffect(() => {
     if (open) {
@@ -244,7 +265,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         description: editData.description || "",
         reference: editData.reference_number || "",
         bankAccountId: editData.bank_account_id || "",
-        element: (editData.transaction_type || (Number(editData.total_amount || 0) >= 0 ? 'income' : 'expense')),
+        element: (String(editData.lockType || '') === 'po_sent')
+          ? 'product_purchase'
+          : (editData.transaction_type || (Number(editData.total_amount || 0) >= 0 ? 'income' : 'expense')),
         paymentMethod: editData.payment_method || prev.paymentMethod,
         debitAccount: editData.debit_account_id || prev.debitAccount,
         creditAccount: editData.credit_account_id || prev.creditAccount,
@@ -452,6 +475,18 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         return !isAccum && nameMatches;
       };
       debits = debits.filter(isFixedAsset);
+    }
+
+    // Product purchase: narrow debit side to inventory accounts (code 1300 or names)
+    if (form.element === 'product_purchase') {
+      const isInventory = (acc: Account) => {
+        const code = String(acc.account_code || '');
+        const name = String(acc.account_name || '').toLowerCase();
+        const isInvName = name.includes('inventory') || name.includes('stock');
+        const isInvCode = code === '1300' || code.startsWith('13');
+        return isInvName || isInvCode;
+      };
+      debits = debits.filter(isInventory);
     }
 
     // Exclude the opposite side's currently selected account to avoid duplicates
@@ -898,6 +933,33 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 status: "approved"
               }
             );
+          } else if (form.element === 'product_purchase') {
+            entries.push(
+              {
+                transaction_id: editData.id,
+                account_id: form.debitAccount,
+                debit: netAmount,
+                credit: 0,
+                description: sanitizedDescription,
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: vatAccount.id,
+                debit: vatAmount,
+                credit: 0,
+                description: 'VAT Input',
+                status: "approved"
+              },
+              {
+                transaction_id: editData.id,
+                account_id: form.creditAccount,
+                debit: 0,
+                credit: amountAbs,
+                description: sanitizedDescription,
+                status: "approved"
+              }
+            );
           } else {
             // Other transaction types - treat as no VAT for now
             entries.push(
@@ -1020,6 +1082,39 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               }
             );
           } else if (form.element === 'asset') {
+            ledgerRows.push(
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.debitAccount,
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: netAmount,
+                credit: 0,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: vatAccount.id,
+                entry_date: form.date,
+                description: 'VAT Input',
+                debit: vatAmount,
+                credit: 0,
+                is_reversed: false,
+              },
+              {
+                company_id: effectiveCompanyId,
+                transaction_id: editData.id,
+                account_id: form.creditAccount,
+                entry_date: form.date,
+                description: sanitizedDescription,
+                debit: 0,
+                credit: amountAbs,
+                is_reversed: false,
+              }
+            );
+          } else if (form.element === 'product_purchase') {
             ledgerRows.push(
               {
                 company_id: effectiveCompanyId,
@@ -1190,7 +1285,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       // Sanitize inputs
       const sanitizedDescription = form.description.trim();
-      const descriptionWithMethod = sanitizedDescription;
+      const descriptionWithMethod = form.element === 'asset' 
+        ? `${sanitizedDescription} [method:${depreciationMethod}]` 
+        : sanitizedDescription;
       const sanitizedReference = form.reference ? form.reference.trim() : null;
 
       // Get VAT account if needed
@@ -1206,7 +1303,6 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           return (
             norm.find(a => (a.account_name.includes('vat input') || a.account_name.includes('input tax') || a.account_name.includes('vat receivable')) && (a.account_type === 'asset' || a.account_type === 'liability'))
             || norm.find(a => a.account_code === '2110')
-            || norm.find(a => a.account_code === '1210')
           );
         };
         const findVatOutput = () => {
@@ -1218,12 +1314,40 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         const isSales = lockType === 'sent' || form.element === 'income';
         vatAccount = isSales ? findVatOutput() : findVatInput();
         if (!vatAccount) {
-          toast({ 
-            title: "VAT Account Missing", 
-            description: "Please create VAT Input/Output accounts in Chart of Accounts.", 
-            variant: "destructive" 
-          });
-          return;
+          const code = isSales ? '2100' : '2110';
+          const name = isSales ? 'VAT Output (15%)' : 'VAT Input';
+          const type = isSales ? 'liability' : 'asset';
+          const { error: createErr } = await supabase
+            .from('chart_of_accounts')
+            .insert({ company_id: companyId, account_code: code, account_name: name, account_type: type, is_active: true });
+          if (createErr) {
+            toast({ title: 'VAT Account Missing', description: 'Could not auto-create VAT account. Please create VAT accounts in Chart of Accounts.', variant: 'destructive' });
+            return;
+          }
+          const { data: refreshed } = await supabase
+            .from('chart_of_accounts')
+            .select('*')
+            .eq('company_id', companyId);
+          setAccounts((refreshed || []) as any);
+          const refreshedNorm = (refreshed || []).map(a => ({
+            ...a,
+            account_name: (a.account_name || '').toLowerCase(),
+            account_type: (a.account_type || '').toLowerCase(),
+            account_code: (a.account_code || '').toString(),
+          }));
+          const reFindInput = () => (
+            refreshedNorm.find(a => (a.account_name.includes('vat input') || a.account_name.includes('input tax') || a.account_name.includes('vat receivable')) && (a.account_type === 'asset'))
+            || refreshedNorm.find(a => a.account_code === '2110')
+          );
+          const reFindOutput = () => (
+            refreshedNorm.find(a => (a.account_name.includes('vat output') || a.account_name.includes('output tax') || a.account_name.includes('vat payable')) && a.account_type === 'liability')
+            || refreshedNorm.find(a => a.account_code === '2100')
+          );
+          vatAccount = isSales ? reFindOutput() : reFindInput();
+          if (!vatAccount) {
+            toast({ title: 'VAT Account Missing', description: 'VAT account still missing after auto-create. Please create VAT accounts in Chart of Accounts.', variant: 'destructive' });
+            return;
+          }
         }
       }
 
@@ -1529,6 +1653,33 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               status: "pending"
             }
           );
+        } else if (form.element === 'product_purchase') {
+          entries.push(
+            {
+              transaction_id: transaction.id,
+              account_id: form.debitAccount,
+              debit: netAmount,
+              credit: 0,
+              description: sanitizedDescription,
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: vatAccount.id,
+              debit: vatAmount,
+              credit: 0,
+              description: 'VAT Input',
+              status: "pending"
+            },
+            {
+              transaction_id: transaction.id,
+              account_id: form.creditAccount,
+              debit: 0,
+              credit: amount,
+              description: sanitizedDescription,
+              status: "pending"
+            }
+          );
         } else {
           // Other transaction types - treat as no VAT for now
           entries.push(
@@ -1808,7 +1959,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if (costNum > 0) {
           await supabase.from('fixed_assets').insert({
             company_id: companyId,
-            description: sanitizedDescription,
+            description: descriptionWithMethod,
             cost: costNum,
             purchase_date: form.date,
             useful_life_years: parseInt(assetUsefulLifeYears || '5'),

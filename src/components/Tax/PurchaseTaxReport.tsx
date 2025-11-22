@@ -38,15 +38,16 @@ export const PurchaseTaxReport = () => {
         const { data } = await supabase
           .from("transaction_entries")
           .select(`
-            debit, credit, created_at,
-            transactions(transaction_date, company_id, vat_rate, vat_inclusive, total_amount, description, status, transaction_type),
-            chart_of_accounts(account_name, account_type
-            )
+            debit, credit,
+            transactions!inner(transaction_date, company_id, vat_rate, vat_inclusive, total_amount, description, status, transaction_type),
+            chart_of_accounts!inner(account_name, account_type)
           `)
-          .gte("created_at", from)
-          .order("created_at", { ascending: false });
+          .eq('transactions.company_id', profile.company_id)
+          .gte('transactions.transaction_date', from)
+          .eq('transactions.status', 'posted')
+          .order('transactions.transaction_date', { ascending: false });
 
-        const filtered = (data || []).filter((e: any) => e.transactions?.company_id === profile.company_id && (e.transactions?.status === 'approved' || e.transactions?.status === 'posted'));
+        const filtered = (data || []);
 
         const byMonth: Record<string, { vatInput: number; purchasesExclVat: number; rate: number }> = {};
         const detail: DetailRow[] = [];
@@ -86,6 +87,31 @@ export const PurchaseTaxReport = () => {
             byMonth[ym].vatInput += Math.max(0, vat);
             byMonth[ym].purchasesExclVat += Math.max(0, net);
             detail.push({ date: txDate || '', description: e.transactions?.description || '', net, vat, total });
+          }
+        }
+
+        if (filtered.length === 0) {
+          const { data: txs } = await supabase
+            .from('transactions')
+            .select('transaction_date, company_id, vat_rate, vat_inclusive, total_amount, description, status, transaction_type, vat_amount, base_amount')
+            .eq('company_id', profile.company_id)
+            .gte('transaction_date', from)
+            .eq('status', 'posted');
+          for (const t of (txs || []) as any[]) {
+            const type = String(t.transaction_type || '').toLowerCase();
+            const isPurchase = type === 'expense' || type === 'purchase' || type === 'bill' || type === 'product_purchase';
+            const rate = Number(t.vat_rate || 0);
+            const vat = Number(t.vat_amount || 0);
+            if (!isPurchase || rate <= 0 || vat <= 0) continue;
+            const ym = String(t.transaction_date || '').slice(0, 7);
+            if (!byMonth[ym]) byMonth[ym] = { vatInput: 0, purchasesExclVat: 0, rate };
+            const total = Number(t.total_amount || 0);
+            const base = Number(t.base_amount || 0);
+            const inclusive = Boolean(t.vat_inclusive);
+            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vat);
+            byMonth[ym].vatInput += vat;
+            byMonth[ym].purchasesExclVat += Math.max(0, net);
+            detail.push({ date: String(t.transaction_date || ''), description: t.description || '', net, vat, total });
           }
         }
 

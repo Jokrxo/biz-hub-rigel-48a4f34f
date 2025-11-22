@@ -43,13 +43,76 @@ export const DataManagement = () => {
       const companyId = profile.company_id;
 
       // Delete data in order (child tables first to avoid FK constraints)
-      await supabase.from("transaction_entries").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("bill_items").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("invoice_items").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("purchase_order_items").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("quote_items").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      await supabase.from("account_categories").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-      
+      // 1) Collect parent IDs for scoping child deletes
+      const { data: txIdsRows } = await supabase
+        .from("transactions")
+        .select("id")
+        .eq("company_id", companyId);
+      const txIds = (txIdsRows || []).map((r: any) => r.id);
+
+      const { data: billRows } = await supabase
+        .from("bills")
+        .select("id")
+        .eq("company_id", companyId);
+      const billIds = (billRows || []).map((r: any) => r.id);
+
+      const { data: invRows } = await supabase
+        .from("invoices")
+        .select("id")
+        .eq("company_id", companyId);
+      const invIds = (invRows || []).map((r: any) => r.id);
+
+      const { data: poRows } = await supabase
+        .from("purchase_orders")
+        .select("id")
+        .eq("company_id", companyId);
+      const poIds = (poRows || []).map((r: any) => r.id);
+
+      const { data: quoteRows } = await supabase
+        .from("quotes")
+        .select("id")
+        .eq("company_id", companyId);
+      const quoteIds = (quoteRows || []).map((r: any) => r.id);
+
+      const { data: loanRows } = await supabase
+        .from("loans" as any)
+        .select("id")
+        .eq("company_id", companyId);
+      const loanIds = (loanRows || []).map((r: any) => r.id);
+
+      const { data: payRunRows } = await supabase
+        .from("pay_runs" as any)
+        .select("id")
+        .eq("company_id", companyId);
+      const payRunIds = (payRunRows || []).map((r: any) => r.id);
+
+      // 2) Child tables scoped deletes
+      if (txIds.length) {
+        await supabase.from("transaction_entries").delete().in("transaction_id", txIds as any);
+      }
+      await supabase.from("ledger_entries").delete().eq("company_id", companyId);
+
+      if (billIds.length) {
+        await supabase.from("bill_items").delete().in("bill_id", billIds as any);
+      }
+      if (invIds.length) {
+        await supabase.from("invoice_items").delete().in("invoice_id", invIds as any);
+      }
+      if (poIds.length) {
+        await supabase.from("purchase_order_items").delete().in("purchase_order_id", poIds as any);
+      }
+      if (quoteIds.length) {
+        await supabase.from("quote_items").delete().in("quote_id", quoteIds as any);
+      }
+      if (loanIds.length) {
+        await supabase.from("loan_payments" as any).delete().in("loan_id", loanIds as any);
+      }
+      if (payRunIds.length) {
+        await supabase.from("pay_run_lines" as any).delete().in("pay_run_id", payRunIds as any);
+      }
+      await supabase.from("account_categories").delete().eq("company_id", companyId);
+
+      // 3) Parent tables
       await supabase.from("transactions").delete().eq("company_id", companyId);
       await supabase.from("bills").delete().eq("company_id", companyId);
       await supabase.from("invoices").delete().eq("company_id", companyId);
@@ -61,7 +124,12 @@ export const DataManagement = () => {
       await supabase.from("financial_reports").delete().eq("company_id", companyId);
       await supabase.from("budgets").delete().eq("company_id", companyId);
       await supabase.from("budget_periods").delete().eq("company_id", companyId);
-      
+
+      await supabase.from("loans" as any).delete().eq("company_id", companyId);
+      await supabase.from("pay_runs" as any).delete().eq("company_id", companyId);
+
+      await supabase.from("employees" as any).delete().eq("company_id", companyId);
+
       await supabase.from("bank_accounts").delete().eq("company_id", companyId);
       await supabase.from("fixed_assets").delete().eq("company_id", companyId);
       await supabase.from("items").delete().eq("company_id", companyId);

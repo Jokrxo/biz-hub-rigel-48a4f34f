@@ -11,7 +11,7 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useEffect, useMemo, useState } from "react";
-import { Users, FileText, Calculator, Plus, Check, BarChart, Info, ArrowRight } from "lucide-react";
+import { Users, FileText, Calculator, Plus, Check, BarChart, Info, ArrowRight, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
@@ -26,7 +26,7 @@ type PayRun = { id: string; company_id: string; period_start: string; period_end
 type PayRunLine = { id: string; pay_run_id: string; employee_id: string; gross: number; net: number; paye: number; uif_emp: number; uif_er: number; sdl_er: number };
 
 export default function Payroll() {
-  const [tab, setTab] = useState("runs");
+  const [tab, setTab] = useState("dashboard");
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
@@ -77,70 +77,31 @@ export default function Payroll() {
 
           <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
-            <TabsTrigger value="simple">Simple</TabsTrigger>
+            <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+            <TabsTrigger value="run">Run Payroll</TabsTrigger>
             <TabsTrigger value="employees">Employees</TabsTrigger>
             <TabsTrigger value="items">Pay Items</TabsTrigger>
-            <TabsTrigger value="periods">Periods</TabsTrigger>
-            <TabsTrigger value="process">Process</TabsTrigger>
-            <TabsTrigger value="payslip">Payslip</TabsTrigger>
-            <TabsTrigger value="reports">Reports</TabsTrigger>
+            <TabsTrigger value="history">Payroll History</TabsTrigger>
           </TabsList>
 
-            <TabsContent value="simple">
-              <SimplePayroll setTab={setTab} canEdit={canEdit} />
+            <TabsContent value="dashboard">
+              <PayrollDashboard companyId={companyId} setTab={setTab} />
             </TabsContent>
 
-            <TabsContent value="dashboard">
-              <PayrollDashboard companyId={companyId} />
+            <TabsContent value="run">
+              <RunPayrollWizard companyId={companyId} canEdit={canEdit} />
             </TabsContent>
 
             <TabsContent value="employees">
-              <EmployeesTab companyId={companyId} canEdit={canEdit} />
+              <EmployeesSimple companyId={companyId} canEdit={canEdit} />
             </TabsContent>
 
             <TabsContent value="items">
-              <PayItemsTab companyId={companyId} canEdit={canEdit} />
+              <PayItemsSimple companyId={companyId} canEdit={canEdit} />
             </TabsContent>
 
-            <TabsContent value="runs">
-              <PayRunsTab companyId={companyId} canEdit={canEdit} />
-            </TabsContent>
-
-            <TabsContent value="setup">
-              <PayrollSetup companyId={companyId} canEdit={canEdit} />
-            </TabsContent>
-
-            <TabsContent value="periods">
-              <PayrollPeriods companyId={companyId} canEdit={canEdit} />
-            </TabsContent>
-
-            <TabsContent value="process">
-              <PayrollProcess companyId={companyId} canEdit={canEdit} />
-            </TabsContent>
-
-            <TabsContent value="payslip">
-              <PayslipPreview companyId={companyId} />
-            </TabsContent>
-
-            <TabsContent value="reports">
-              <PayrollReports companyId={companyId} />
-            </TabsContent>
-
-            <TabsContent value="help">
-              <Card>
-                <CardHeader><CardTitle>Payroll Manual</CardTitle></CardHeader>
-                <CardContent>
-                  <div className="space-y-3 text-sm">
-                    <div>1. Setup: Open Setup and configure UIF%, SDL%, tax brackets, pension rules, overtime rules, allowances.</div>
-                    <div>2. Periods: Create the payroll period for the current month and keep status open.</div>
-                    <div>3. Employees: Add employees with master data including banking, tax number, UI F coverage, salary type, pension, medical aid.</div>
-                    <div>4. Process: Select a period, choose an employee, capture time & attendance, overtime, bonuses and commission, then submit to create a line.</div>
-                    <div>5. Pay Runs: Open the run, review totals; Finalize to post entries, Pay to post net wages, Remit to post PAYE/UIF/SDL.</div>
-                    <div>6. Payslip: Select the run and employee to preview; use Download Payslip or Send to email.</div>
-                    <div>7. Reports: Use the Reports tab for monthly payroll totals and statutory summaries.</div>
-                  </div>
-                </CardContent>
-              </Card>
+            <TabsContent value="history">
+              <PayrollHistory companyId={companyId} />
             </TabsContent>
           </Tabs>
 
@@ -189,6 +150,277 @@ export default function Payroll() {
         </div>
       </DashboardLayout>
     </>
+  );
+}
+
+function EarningsTab({ companyId, canEdit }: { companyId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [runs, setRuns] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [selectedRun, setSelectedRun] = useState<string>("");
+  const [selectedEmp, setSelectedEmp] = useState<string>("");
+  const [type, setType] = useState<string>("basic_salary");
+  const [hours, setHours] = useState<string>("");
+  const [rate, setRate] = useState<string>("");
+  const [amount, setAmount] = useState<string>("");
+  const [line, setLine] = useState<any | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data: rs } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false });
+      setRuns(rs || []);
+      const emps = await getEmployees(companyId);
+      setEmployees(emps as any);
+    };
+    if (companyId) load();
+  }, [companyId]);
+
+  const pickRun = async (id: string) => {
+    setSelectedRun(id);
+    setLine(null);
+  };
+  const pickEmp = async (id: string) => {
+    setSelectedEmp(id);
+    if (!selectedRun) return;
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", selectedRun).eq("employee_id", id).maybeSingle();
+    setLine(data || null);
+  };
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRun || !selectedEmp) { toast({ title: "Error", description: "Select run and employee", variant: "destructive" }); return; }
+    await postEarnings({ pay_run_id: selectedRun, employee_id: selectedEmp, type: type as any, hours: hours ? parseFloat(hours) : null, rate: rate ? parseFloat(rate) : null, amount: amount ? parseFloat(amount) : null } as any);
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", selectedRun).eq("employee_id", selectedEmp).maybeSingle();
+    setLine(data || null);
+    toast({ title: "Success", description: "Earning captured" });
+    setHours(""); setRate(""); setAmount("");
+  };
+
+  const remove = async (t: string) => {
+    if (!selectedRun || !selectedEmp) return;
+    await deleteEarnings(selectedRun, selectedEmp, t);
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", selectedRun).eq("employee_id", selectedEmp).maybeSingle();
+    setLine(data || null);
+  };
+
+  const earnings = Array.isArray(line?.details?.earnings) ? line.details.earnings : [];
+
+  return (
+    <Card>
+      <CardHeader className="flex items-center justify-between">
+        <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5 text-primary" />Earnings</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={add} className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <Label>Pay Run</Label>
+              <Select onValueChange={pickRun} value={selectedRun}>
+                <SelectTrigger><SelectValue placeholder="Select run" /></SelectTrigger>
+                <SelectContent>
+                  {runs.map(r => <SelectItem key={r.id} value={r.id}>{new Date(r.period_start).toLocaleDateString()} - {new Date(r.period_end).toLocaleDateString()}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Employee</Label>
+              <Select onValueChange={pickEmp} value={selectedEmp}>
+                <SelectTrigger><SelectValue placeholder="Select employee" /></SelectTrigger>
+                <SelectContent>
+                  {employees.map(e => <SelectItem key={e.id} value={e.id}>{e.first_name} {e.last_name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Type</Label>
+              <Select value={type} onValueChange={(v: any) => setType(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="basic_salary">Basic Salary</SelectItem>
+                  <SelectItem value="overtime_1_5">Overtime (1.5x)</SelectItem>
+                  <SelectItem value="overtime_2">Overtime (2x)</SelectItem>
+                  <SelectItem value="bonus">Bonus</SelectItem>
+                  <SelectItem value="commission">Commission</SelectItem>
+                  <SelectItem value="travel_allowance">Travel Allowance</SelectItem>
+                  <SelectItem value="subsistence_allowance">Subsistence Allowance</SelectItem>
+                  <SelectItem value="cellphone_allowance">Cellphone Allowance</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <Label>Hours</Label>
+              <Input type="number" step="0.01" value={hours} onChange={e => setHours(e.target.value)} />
+            </div>
+            <div>
+              <Label>Rate</Label>
+              <Input type="number" step="0.01" value={rate} onChange={e => setRate(e.target.value)} />
+            </div>
+            <div>
+              <Label>Amount (optional)</Label>
+              <Input type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} />
+            </div>
+          </div>
+          {canEdit && <Button type="submit" className="bg-gradient-primary">Add/Update</Button>}
+        </form>
+
+        <div className="mt-6">
+          {!line ? (
+            <div className="py-6 text-center text-muted-foreground">Select a run and employee</div>
+          ) : earnings.length === 0 ? (
+            <div className="py-6 text-center text-muted-foreground">No earnings</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {earnings.map((e: any, idx: number) => (
+                  <TableRow key={idx}>
+                    <TableCell className="capitalize">{String(e.type).replace(/_/g, " ")}</TableCell>
+                    <TableCell>R {(Number(e.amount || 0)).toFixed(2)}</TableCell>
+                    <TableCell className="text-right"><Button variant="outline" size="sm" onClick={() => remove(e.type)}><Trash2 className="h-4 w-4 mr-2" />Remove</Button></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeductionsTab({ companyId, canEdit }: { companyId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [runs, setRuns] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [selectedRun, setSelectedRun] = useState<string>("");
+  const [selectedEmp, setSelectedEmp] = useState<string>("");
+  const [type, setType] = useState<string>("paye");
+  const [amount, setAmount] = useState<string>("");
+  const [line, setLine] = useState<any | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      const { data: rs } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false });
+      setRuns(rs || []);
+      const emps = await getEmployees(companyId);
+      setEmployees(emps as any);
+    };
+    if (companyId) load();
+  }, [companyId]);
+
+  const pickRun = async (id: string) => { setSelectedRun(id); setLine(null); };
+  const pickEmp = async (id: string) => {
+    setSelectedEmp(id);
+    if (!selectedRun) return;
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", selectedRun).eq("employee_id", id).maybeSingle();
+    setLine(data || null);
+  };
+
+  const add = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedRun || !selectedEmp) { toast({ title: "Error", description: "Select run and employee", variant: "destructive" }); return; }
+    await postDeductions({ pay_run_id: selectedRun, employee_id: selectedEmp, type: type as any, amount: amount ? parseFloat(amount) : 0 } as any);
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", selectedRun).eq("employee_id", selectedEmp).maybeSingle();
+    setLine(data || null);
+    toast({ title: "Success", description: "Deduction captured" });
+    setAmount("");
+  };
+  const remove = async (t: string) => {
+    if (!selectedRun || !selectedEmp) return;
+    await deleteDeductions(selectedRun, selectedEmp, t);
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", selectedRun).eq("employee_id", selectedEmp).maybeSingle();
+    setLine(data || null);
+  };
+  const deductions = Array.isArray(line?.details?.deductions) ? line.details.deductions : [];
+
+  return (
+    <Card>
+      <CardHeader className="flex items-center justify-between">
+        <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5 text-primary" />Deductions</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={add} className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <Label>Pay Run</Label>
+              <Select onValueChange={pickRun} value={selectedRun}>
+                <SelectTrigger><SelectValue placeholder="Select run" /></SelectTrigger>
+                <SelectContent>
+                  {runs.map(r => <SelectItem key={r.id} value={r.id}>{new Date(r.period_start).toLocaleDateString()} - {new Date(r.period_end).toLocaleDateString()}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Employee</Label>
+              <Select onValueChange={pickEmp} value={selectedEmp}>
+                <SelectTrigger><SelectValue placeholder="Select employee" /></SelectTrigger>
+                <SelectContent>
+                  {employees.map(e => <SelectItem key={e.id} value={e.id}>{e.first_name} {e.last_name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Type</Label>
+              <Select value={type} onValueChange={(v: any) => setType(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paye">PAYE</SelectItem>
+                  <SelectItem value="uif_emp">UIF Employee</SelectItem>
+                  <SelectItem value="medical_aid">Medical Aid</SelectItem>
+                  <SelectItem value="pension_fund">Pension Fund</SelectItem>
+                  <SelectItem value="retirement_annuity">Retirement Annuity</SelectItem>
+                  <SelectItem value="union_fees">Union Fees</SelectItem>
+                  <SelectItem value="garnishee">Garnishee</SelectItem>
+                  <SelectItem value="loan">Loan</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <Label>Amount</Label>
+              <Input type="number" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} />
+            </div>
+          </div>
+          {canEdit && <Button type="submit" className="bg-gradient-primary">Add/Update</Button>}
+        </form>
+
+        <div className="mt-6">
+          {!line ? (
+            <div className="py-6 text-center text-muted-foreground">Select a run and employee</div>
+          ) : deductions.length === 0 ? (
+            <div className="py-6 text-center text-muted-foreground">No deductions</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {deductions.map((d: any, idx: number) => (
+                  <TableRow key={idx}>
+                    <TableCell className="capitalize">{String(d.type).replace(/_/g, " ")}</TableCell>
+                    <TableCell>R {(Number(d.amount || 0)).toFixed(2)}</TableCell>
+                    <TableCell className="text-right"><Button variant="outline" size="sm" onClick={() => remove(d.type)}><Trash2 className="h-4 w-4 mr-2" />Remove</Button></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -260,7 +492,7 @@ function StatCard({ title, value }: { title: string; value: string }) {
   );
 }
 
-function PayrollDashboard({ companyId }: { companyId: string }) {
+function PayrollDashboard({ companyId, setTab }: { companyId: string; setTab: (t: string) => void }) {
   const [totals, setTotals] = useState<{ employees: number; gross: number; paye: number; uif: number; sdl: number; overtime: number; net: number }>({ employees: 0, gross: 0, paye: 0, uif: 0, sdl: 0, overtime: 0, net: 0 });
   useEffect(() => {
     const load = async () => {
@@ -283,14 +515,27 @@ function PayrollDashboard({ companyId }: { companyId: string }) {
     if (companyId) load();
   }, [companyId]);
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      <StatCard title="Total Employees" value={`${totals.employees}`} />
-      <StatCard title="This Month Payroll Cost" value={`R ${totals.gross.toFixed(2)}`} />
-      <StatCard title="PAYE" value={`R ${totals.paye.toFixed(2)}`} />
-      <StatCard title="UIF" value={`R ${totals.uif.toFixed(2)}`} />
-      <StatCard title="SDL" value={`R ${totals.sdl.toFixed(2)}`} />
-      <StatCard title="Total Overtime" value={`R ${totals.overtime.toFixed(2)}`} />
-      <StatCard title="Net Pay" value={`R ${totals.net.toFixed(2)}`} />
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard title="Total Employees" value={`${totals.employees}`} />
+        <StatCard title="Gross Pay" value={`R ${totals.gross.toFixed(2)}`} />
+        <StatCard title="PAYE" value={`R ${totals.paye.toFixed(2)}`} />
+        <StatCard title="UIF" value={`R ${totals.uif.toFixed(2)}`} />
+        <StatCard title="SDL" value={`R ${totals.sdl.toFixed(2)}`} />
+        <StatCard title="Overtime" value={`R ${totals.overtime.toFixed(2)}`} />
+        <StatCard title="Net Pay" value={`R ${totals.net.toFixed(2)}`} />
+      </div>
+      <Card>
+        <CardHeader><CardTitle>Actions</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Button className="bg-gradient-primary" onClick={() => setTab("run")}><Calculator className="h-4 w-4 mr-2" />Run Payroll</Button>
+            <Button variant="outline" onClick={() => setTab("employees")}><Users className="h-4 w-4 mr-2" />Employees</Button>
+            <Button variant="outline" onClick={() => setTab("items")}><FileText className="h-4 w-4 mr-2" />Pay Items</Button>
+            <Button variant="outline" onClick={() => setTab("history")}><BarChart className="h-4 w-4 mr-2" />Payroll History</Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -550,6 +795,16 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
     toast({ title: "Success", description: "Captured payroll for employee" });
     setForm({ employee_id: "", allowances: "", overtime: "", bonuses: "", travel_fixed: "", travel_reimb: "", medical_contrib: "", pension_contrib: "", extra_deductions: "" });
   };
+  const processViaEngine = async () => {
+    const p = periods.find((x: any) => x.id === period);
+    if (!p) { toast({ title: "Error", description: "Select a period", variant: "destructive" }); return; }
+    if (!form.employee_id) { toast({ title: "Error", description: "Select employee", variant: "destructive" }); return; }
+    const r = await ensureRun();
+    if (!r) return;
+    const res = await postPayrollProcess({ company_id: companyId, employee_id: form.employee_id, period_start: (r as any).period_start, period_end: (r as any).period_end, pay_run_id: (r as any).id } as any);
+    toast({ title: "Processed", description: `Gross R ${res.gross.toFixed(2)} | Net R ${res.net.toFixed(2)}` });
+    await loadLines((r as any).id);
+  };
   return (
     <Card>
       <CardHeader><CardTitle>Process Payroll</CardTitle></CardHeader>
@@ -614,6 +869,7 @@ function PayrollProcess({ companyId, canEdit }: { companyId: string; canEdit: bo
             </div>
           </div>
           {canEdit && <Button type="submit" className="bg-gradient-primary">Capture</Button>}
+          {canEdit && <Button type="button" className="ml-2" onClick={processViaEngine}>Process via Engine</Button>}
         </form>
       </CardContent>
     </Card>
@@ -627,6 +883,8 @@ function PayslipPreview({ companyId }: { companyId: string }) {
   const [runs, setRuns] = useState<any[]>([]);
   const [lines, setLines] = useState<any[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [jsonOpen, setJsonOpen] = useState(false);
+  const [jsonData, setJsonData] = useState<any>(null);
   useEffect(() => {
     const load = async () => {
       const { data: rs } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false });
@@ -665,13 +923,19 @@ function PayslipPreview({ companyId }: { companyId: string }) {
     const { data: company } = await supabase
       .from('companies')
       .select('name,email,phone,address,tax_number,vat_number,logo_url')
-      .limit(1)
+      .eq('id', companyId)
       .maybeSingle();
     const doc = buildPayslipPDF(slip, (company as any) || { name: 'Company' });
     const logoDataUrl = await fetchLogoDataUrl((company as any)?.logo_url);
     if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
     const periodName = `${new Date(run.period_start).toLocaleDateString('en-ZA')} - ${new Date(run.period_end).toLocaleDateString('en-ZA')}`;
     doc.save(`payslip_${employee_name.replace(/\s+/g,'_')}_${periodName.replace(/\s+/g,'_')}.pdf`);
+  };
+  const viewJSON = async () => {
+    if (!run || !line) return;
+    const data = await postPayrollPayslip(run.id, line.employee_id);
+    setJsonData(data);
+    setJsonOpen(true);
   };
   const postToLedger = async () => {
     if (!run || !line) return;
@@ -696,67 +960,122 @@ function PayslipPreview({ companyId }: { companyId: string }) {
     const uifPayable = await ensureAccount('UIF Payable', 'liability', '2100-UIF');
     const sdlPayable = await ensureAccount('SDL Payable', 'liability', '2100-SDL');
     const { data: { user } } = await supabase.auth.getUser();
-    const { data: tx, error: txErr } = await supabase
-      .from('transactions' as any)
-      .insert({ company_id: companyId, user_id: user?.id || '', transaction_date: postDate, description: `Payroll posting ${new Date(run.period_start).toLocaleDateString()} - ${new Date(run.period_end).toLocaleDateString()}`, reference_number: null, total_amount: gross, transaction_type: 'payroll', status: 'pending' } as any)
-      .select('id')
-      .single();
+    const basePayload: any = { company_id: companyId, user_id: user?.id || '', transaction_date: postDate, description: `Payroll posting ${new Date(run.period_start).toLocaleDateString()} - ${new Date(run.period_end).toLocaleDateString()}`, total_amount: gross, status: 'pending' };
+    let txRes: any = null;
+    let txErr: any = null;
+    try {
+      const res = await supabase
+        .from('transactions' as any)
+        .insert({ ...basePayload, transaction_type: 'payroll' } as any)
+        .select('id')
+        .single();
+      txRes = res.data; txErr = res.error;
+      if (txErr) throw txErr;
+    } catch (err: any) {
+      const msg = String(err?.message || '').toLowerCase();
+      const retry = msg.includes('column') && msg.includes('does not exist');
+      if (!retry) throw err;
+      const res2 = await supabase
+        .from('transactions' as any)
+        .insert(basePayload as any)
+        .select('id')
+        .single();
+      txRes = res2.data; txErr = res2.error;
+    }
     if (txErr) { return; }
     const rows = [
-      { transaction_id: (tx as any).id, account_id: salaryExp, debit: gross, credit: 0, description: 'Salary Expense', status: 'approved' },
-      { transaction_id: (tx as any).id, account_id: uifExp, debit: uifEr, credit: 0, description: 'Employer UIF Expense', status: 'approved' },
-      { transaction_id: (tx as any).id, account_id: sdlExp, debit: sdlEr, credit: 0, description: 'Employer SDL Expense', status: 'approved' },
-      { transaction_id: (tx as any).id, account_id: netPayable, debit: 0, credit: net, description: 'Net Salaries Payable', status: 'approved' },
-      { transaction_id: (tx as any).id, account_id: payePayable, debit: 0, credit: paye, description: 'PAYE Payable', status: 'approved' },
-      { transaction_id: (tx as any).id, account_id: uifPayable, debit: 0, credit: uifEmp + uifEr, description: 'UIF Payable', status: 'approved' },
-      { transaction_id: (tx as any).id, account_id: sdlPayable, debit: 0, credit: sdlEr, description: 'SDL Payable', status: 'approved' },
+      { transaction_id: (txRes as any).id, account_id: salaryExp, debit: gross, credit: 0, description: 'Salary Expense', status: 'approved' },
+      { transaction_id: (txRes as any).id, account_id: uifExp, debit: uifEr, credit: 0, description: 'Employer UIF Expense', status: 'approved' },
+      { transaction_id: (txRes as any).id, account_id: sdlExp, debit: sdlEr, credit: 0, description: 'Employer SDL Expense', status: 'approved' },
+      { transaction_id: (txRes as any).id, account_id: netPayable, debit: 0, credit: net, description: 'Net Salaries Payable', status: 'approved' },
+      { transaction_id: (txRes as any).id, account_id: payePayable, debit: 0, credit: paye, description: 'PAYE Payable', status: 'approved' },
+      { transaction_id: (txRes as any).id, account_id: uifPayable, debit: 0, credit: uifEmp + uifEr, description: 'UIF Payable', status: 'approved' },
+      { transaction_id: (txRes as any).id, account_id: sdlPayable, debit: 0, credit: sdlEr, description: 'SDL Payable', status: 'approved' },
     ];
     const { error: teErr } = await supabase.from('transaction_entries' as any).insert(rows as any);
     if (teErr) { return; }
-    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (txRes as any).id, description: r.description }));
     await supabase.from('ledger_entries' as any).insert(ledgerRows as any);
-    await supabase.from('transactions' as any).update({ status: 'posted' } as any).eq('id', (tx as any).id);
+    await supabase.from('transactions' as any).update({ status: 'posted' } as any).eq('id', (txRes as any).id);
     toast({ title: 'Success', description: 'Payroll posted to ledger' });
   };
   return (
-    <Card>
-      <CardHeader><CardTitle>Payslip Preview</CardTitle></CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <Select onValueChange={pickRun}>
-            <SelectTrigger><SelectValue placeholder="Select run" /></SelectTrigger>
-            <SelectContent>
-              {runs.map(r => <SelectItem key={r.id} value={r.id}>{new Date(r.period_start).toLocaleDateString()} - {new Date(r.period_end).toLocaleDateString()}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select onValueChange={(id: any) => setLine(lines.find(l => l.id === id))}>
-            <SelectTrigger><SelectValue placeholder="Select employee" /></SelectTrigger>
-            <SelectContent>
-              {lines.map(l => <SelectItem key={l.id} value={l.id}>{l.employee_id}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        {!line ? (
-          <div className="py-8 text-center text-muted-foreground">Select a run and employee</div>
-        ) : (
-          <div className="border rounded-md p-6 space-y-2">
-            <div className="text-xl font-semibold">Payslip</div>
-            <div className="grid grid-cols-2">
-              <div>Gross: R {line.gross.toFixed(2)}</div>
-              <div>Net: R {line.net.toFixed(2)}</div>
-              <div>PAYE: R {line.paye.toFixed(2)}</div>
-              <div>UIF (Emp+Er): R {(line.uif_emp + line.uif_er).toFixed(2)}</div>
-              <div>SDL: R {line.sdl_er.toFixed(2)}</div>
-            </div>
-            <div>Earnings vs Deductions</div>
-            <div className="pt-2">
-              <Button variant="outline" onClick={download}>Download Payslip</Button>
-              <Button className="ml-2 bg-gradient-primary" onClick={postToLedger}>Post to Ledger</Button>
-            </div>
+    <>
+      <Card>
+        <CardHeader><CardTitle>Payslip Preview</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <Select onValueChange={pickRun}>
+              <SelectTrigger><SelectValue placeholder="Select run" /></SelectTrigger>
+              <SelectContent>
+                {runs.map(r => <SelectItem key={r.id} value={r.id}>{new Date(r.period_start).toLocaleDateString()} - {new Date(r.period_end).toLocaleDateString()}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select onValueChange={(id: any) => setLine(lines.find(l => l.id === id))}>
+              <SelectTrigger><SelectValue placeholder="Select employee" /></SelectTrigger>
+              <SelectContent>
+                {lines.map(l => <SelectItem key={l.id} value={l.id}>{l.employee_id}</SelectItem>)}
+              </SelectContent>
+            </Select>
           </div>
-        )}
-      </CardContent>
-    </Card>
+          {!line ? (
+            <div className="py-8 text-center text-muted-foreground">Select a run and employee</div>
+          ) : (
+            <div className="border rounded-md p-6 space-y-2">
+              <div className="text-xl font-semibold">Payslip</div>
+              <div className="grid grid-cols-2">
+                <div>Gross: R {line.gross.toFixed(2)}</div>
+                <div>Net: R {line.net.toFixed(2)}</div>
+                <div>PAYE: R {line.paye.toFixed(2)}</div>
+                <div>UIF (Emp+Er): R {(line.uif_emp + line.uif_er).toFixed(2)}</div>
+                <div>SDL: R {line.sdl_er.toFixed(2)}</div>
+              </div>
+              <div>Earnings vs Deductions</div>
+          <div className="pt-2">
+            <Button variant="outline" onClick={download}>Download Payslip</Button>
+            {runs.length && lines.length ? (
+              <Button variant="outline" className="ml-2" onClick={async () => {
+                if (!run) return;
+                const { data: company } = await supabase
+                  .from('companies')
+                  .select('name,email,phone,address,tax_number,vat_number,logo_url')
+                  .eq('id', companyId)
+                  .maybeSingle();
+                const logoDataUrl = await fetchLogoDataUrl((company as any)?.logo_url);
+                for (const l of lines) {
+                  const emp = employees.find(e => e.id === l.employee_id);
+                  const employee_name = emp ? `${emp.first_name} ${emp.last_name}` : l.employee_id;
+                  const slip: PayslipForPDF = { period_start: run.period_start, period_end: run.period_end, employee_name, gross: l.gross, net: l.net, paye: l.paye, uif_emp: l.uif_emp, uif_er: l.uif_er, sdl_er: l.sdl_er, details: null };
+                  const doc = buildPayslipPDF(slip, (company as any) || { name: 'Company' });
+                  if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
+                  const blob = doc.output('blob');
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  const periodName = `${new Date(run.period_start).toLocaleDateString('en-ZA')} - ${new Date(run.period_end).toLocaleDateString('en-ZA')}`;
+                  a.href = url;
+                  a.download = `payslip_${employee_name.replace(/\s+/g,'_')}_${periodName.replace(/\s+/g,'_')}.pdf`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }
+              }}>Download All</Button>
+            ) : null}
+            <Button variant="outline" className="ml-2" onClick={viewJSON}>View JSON</Button>
+            <Button className="ml-2 bg-gradient-primary" onClick={postToLedger}>Post to Ledger</Button>
+          </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <Dialog open={jsonOpen} onOpenChange={setJsonOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Payslip JSON</DialogTitle></DialogHeader>
+          <pre className="text-xs whitespace-pre-wrap">{jsonData ? JSON.stringify(jsonData, null, 2) : ""}</pre>
+          <DialogFooter><Button variant="outline" onClick={() => setJsonOpen(false)}>Close</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -764,6 +1083,11 @@ function PayrollReports({ companyId }: { companyId: string }) {
   const [month, setMonth] = useState<string>("");
   const [runs, setRuns] = useState<any[]>([]);
   const [lines, setLines] = useState<any[]>([]);
+  const [emp201, setEmp201] = useState<any>(null);
+  const [emp501, setEmp501] = useState<any>(null);
+  const [irp5, setIrp5] = useState<any>(null);
+  const [employeeForIrp5, setEmployeeForIrp5] = useState<string>("");
+  const [employees, setEmployees] = useState<Employee[]>([]);
   useEffect(() => {
     const load = async () => {
       const { data: rs } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false });
@@ -800,6 +1124,46 @@ function PayrollReports({ companyId }: { companyId: string }) {
           <StatCard title="UIF Report" value={`R ${totals.uif.toFixed(2)}`} />
           <StatCard title="SDL Report" value={`R ${totals.sdl.toFixed(2)}`} />
           <StatCard title="Net Pay" value={`R ${totals.net.toFixed(2)}`} />
+        </div>
+        <div className="mt-6 space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            <Button variant="outline" onClick={async () => {
+              if (!runs.length) return;
+              const r = runs[0];
+              const res = await getReportsEmp201(companyId, r.period_start, r.period_end);
+              setEmp201(res);
+            }}>Get EMP201 (current selection)</Button>
+            <Button variant="outline" onClick={async () => {
+              const yearStart = new Date(new Date().getFullYear(), 2, 1).toISOString().split('T')[0];
+              const yearEnd = new Date(new Date().getFullYear()+1, 1, 28).toISOString().split('T')[0];
+              const res = await getReportsEmp501(companyId, yearStart, yearEnd);
+              setEmp501(res);
+            }}>Get EMP501 (current tax year)</Button>
+            <div className="flex items-end gap-2">
+              <div className="w-full">
+                <Label>Employee for IRP5</Label>
+                <Select value={employeeForIrp5} onValueChange={(v: any) => setEmployeeForIrp5(v)}>
+                  <SelectTrigger><SelectValue placeholder="Select employee" /></SelectTrigger>
+                  <SelectContent>
+                    {employees.map(e => <SelectItem key={e.id} value={e.id}>{e.first_name} {e.last_name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button variant="outline" onClick={async () => {
+                if (!runs.length || !employeeForIrp5) return;
+                const r = runs[0];
+                const yearStart = new Date(new Date().getFullYear(), 2, 1).toISOString().split('T')[0];
+                const yearEnd = new Date(new Date().getFullYear()+1, 1, 28).toISOString().split('T')[0];
+                const res = await getReportsIrp5(companyId, employeeForIrp5, yearStart, yearEnd);
+                setIrp5(res);
+              }}>Get IRP5</Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Card><CardHeader><CardTitle>EMP201</CardTitle></CardHeader><CardContent><pre className="text-xs whitespace-pre-wrap">{emp201 ? JSON.stringify(emp201, null, 2) : ""}</pre></CardContent></Card>
+            <Card><CardHeader><CardTitle>EMP501</CardTitle></CardHeader><CardContent><pre className="text-xs whitespace-pre-wrap">{emp501 ? JSON.stringify(emp501, null, 2) : ""}</pre></CardContent></Card>
+            <Card><CardHeader><CardTitle>IRP5</CardTitle></CardHeader><CardContent><pre className="text-xs whitespace-pre-wrap">{irp5 ? JSON.stringify(irp5, null, 2) : ""}</pre></CardContent></Card>
+          </div>
         </div>
       </CardContent>
     </Card>
@@ -1373,7 +1737,7 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
     const { data: company } = await supabase
       .from('companies')
       .select('name,email,phone,address,tax_number,vat_number,logo_url')
-      .limit(1)
+      .eq('id', companyId)
       .maybeSingle();
     const doc = buildPayslipPDF(slip, (company as any) || { name: 'Company' });
     const logoDataUrl = await fetchLogoDataUrl((company as any)?.logo_url);
@@ -1414,7 +1778,7 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
       const { data: company } = await supabase
         .from('companies')
         .select('name,email,phone,address,tax_number,vat_number,logo_url')
-        .limit(1)
+        .eq('id', companyId)
         .maybeSingle();
       const doc = buildPayslipPDF(slip, (company as any) || { name: 'Company' });
       const logoDataUrl = await fetchLogoDataUrl((company as any)?.logo_url);
@@ -1594,6 +1958,733 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+function RunPayrollWizard({ companyId, canEdit }: { companyId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [step, setStep] = useState<number>(1);
+  const [frequency, setFrequency] = useState<string>("monthly");
+  const [year, setYear] = useState<number>(new Date().getFullYear());
+  const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
+  const [run, setRun] = useState<any>(null);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [editOpen, setEditOpen] = useState<boolean>(false);
+  const [editEmp, setEditEmp] = useState<Employee | null>(null);
+  const [editRate, setEditRate] = useState<string>("");
+  const [entries, setEntries] = useState<Record<string, { allowance: string; overtime: string }>>({});
+  const [lines, setLines] = useState<any[]>([]);
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase.from("employees" as any).select("*").eq("company_id", companyId).order("first_name", { ascending: true });
+      setEmployees((data || []) as any);
+    };
+    if (companyId) load();
+  }, [companyId]);
+  const ensureRun = async () => {
+    const start = new Date(year, month - 1, 1).toISOString().slice(0, 10);
+    const end = new Date(year, month, 0).toISOString().slice(0, 10);
+    const { data: existing } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).eq("period_start", start).eq("period_end", end).maybeSingle();
+    if (existing) { setRun(existing); return existing; }
+    const { data, error } = await supabase.from("pay_runs" as any).insert({ company_id: companyId, period_start: start, period_end: end, status: "draft" } as any).select("*").single();
+    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return null; }
+    setRun(data); return data;
+  };
+  const openEdit = async (emp: Employee) => {
+    setEditEmp(emp);
+    const { data: basicItem } = await supabase.from("pay_items" as any).select("id").eq("company_id", companyId).eq("name", "Basic Salary").maybeSingle();
+    const basicId = (basicItem as any)?.id;
+    if (!basicId) { setEditRate("0"); setEditOpen(true); return; }
+    const { data: ep } = await supabase.from("employee_pay_items" as any).select("amount").eq("employee_id", emp.id).eq("pay_item_id", basicId).maybeSingle();
+    const amt = ep ? Number((ep as any).amount || 0) : 0;
+    setEditRate(String(amt));
+    setEditOpen(true);
+  };
+  const saveEdit = async () => {
+    if (!editEmp) return;
+    const { data: basicItem } = await supabase.from("pay_items" as any).select("id").eq("company_id", companyId).eq("name", "Basic Salary").maybeSingle();
+    const basicId = (basicItem as any)?.id;
+    if (!basicId) {
+      const { data } = await supabase.from("pay_items" as any).insert({ company_id: companyId, code: "BASIC_SALARY", name: "Basic Salary", type: "earning", taxable: true } as any).select("id").single();
+      const newId = (data as any)?.id;
+      if (!newId) return;
+      await supabase.from("employee_pay_items" as any).insert({ employee_id: editEmp.id, pay_item_id: newId, amount: parseFloat(editRate || "0"), rate: null, unit: null } as any);
+    } else {
+      const { data: ep } = await supabase.from("employee_pay_items" as any).select("id").eq("employee_id", editEmp.id).eq("pay_item_id", basicId).maybeSingle();
+      if (ep) {
+        await supabase.from("employee_pay_items" as any).update({ amount: parseFloat(editRate || "0") } as any).eq("id", (ep as any).id);
+      } else {
+        await supabase.from("employee_pay_items" as any).insert({ employee_id: editEmp.id, pay_item_id: basicId, amount: parseFloat(editRate || "0"), rate: null, unit: null } as any);
+      }
+    }
+    setEditOpen(false);
+  };
+  const computePAYE = (monthlyGross: number): number => {
+    const annual = monthlyGross * 12;
+    const brackets = [
+      { upTo: 237100, base: 0, rate: 0.18, over: 0 },
+      { upTo: 370500, base: 42678, rate: 0.26, over: 237100 },
+      { upTo: 512800, base: 77362, rate: 0.31, over: 370500 },
+      { upTo: 673000, base: 121475, rate: 0.36, over: 512800 },
+      { upTo: 857900, base: 179147, rate: 0.39, over: 673000 },
+      { upTo: 1817000, base: 251258, rate: 0.41, over: 857900 },
+      { upTo: Infinity, base: 644489, rate: 0.45, over: 1817000 },
+    ];
+    let taxAnnual = 0;
+    for (const b of brackets) { if (annual <= b.upTo) { taxAnnual = b.base + (annual - b.over) * b.rate; break; } }
+    const rebateAnnual = 17235;
+    const taxAfterRebate = Math.max(0, taxAnnual - rebateAnnual);
+    return +(taxAfterRebate / 12).toFixed(2);
+  };
+  const processAll = async () => {
+    const r = await ensureRun();
+    if (!r) return;
+    const { data: basicItem } = await supabase.from("pay_items" as any).select("id").eq("company_id", companyId).eq("name", "Basic Salary").maybeSingle();
+    const basicId = (basicItem as any)?.id;
+    const basics: Record<string, number> = {};
+    if (basicId) {
+      const { data: all } = await supabase.from("employee_pay_items" as any).select("employee_id, amount").in("employee_id", employees.map(e => e.id)).eq("pay_item_id", basicId);
+      (all || []).forEach((row: any) => { basics[row.employee_id] = Number(row.amount || 0); });
+    }
+    for (const e of employees) {
+      const basic = basics[e.id] || 0;
+      const allowance = parseFloat(entries[e.id]?.allowance || "0");
+      const overtime = parseFloat(entries[e.id]?.overtime || "0");
+      const gross = +(basic + allowance + overtime).toFixed(2);
+      const uifCapMonthly = 177.12;
+      const uifEmpRaw = +(gross * 0.01).toFixed(2);
+      const uif_emp = Math.min(uifEmpRaw, uifCapMonthly);
+      const uif_er = +(gross * 0.01).toFixed(2);
+      const sdl_er = +(gross * 0.01).toFixed(2);
+      const paye = computePAYE(gross);
+      const net = +(gross - paye - uif_emp).toFixed(2);
+      const payload = { pay_run_id: (r as any).id, employee_id: e.id, gross, net, paye, uif_emp, uif_er, sdl_er } as any;
+      const { data: existing } = await supabase.from("pay_run_lines" as any).select("id").eq("pay_run_id", (r as any).id).eq("employee_id", e.id).maybeSingle();
+      if (existing) { await supabase.from("pay_run_lines" as any).update(payload as any).eq("id", (existing as any).id); } else { await supabase.from("pay_run_lines" as any).insert(payload as any); }
+    }
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", (r as any).id);
+    setLines((data || []) as any);
+    toast({ title: "Processed", description: "Calculations updated" });
+    setStep(4);
+  };
+  const loadLines = async () => {
+    if (!run) return;
+    const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", (run as any).id);
+    setLines((data || []) as any);
+  };
+  useEffect(() => { loadLines(); }, [run?.id]);
+  const totals = useMemo(() => ({
+    gross: lines.reduce((s, l: any) => s + (l.gross || 0), 0),
+    paye: lines.reduce((s, l: any) => s + (l.paye || 0), 0),
+    uif: lines.reduce((s, l: any) => s + (l.uif_emp || 0) + (l.uif_er || 0), 0),
+    sdl: lines.reduce((s, l: any) => s + (l.sdl_er || 0), 0),
+    net: lines.reduce((s, l: any) => s + (l.net || 0), 0),
+  }), [lines]);
+  const finalizePosting = async () => {
+    if (!run) return;
+    const { error } = await supabase.rpc("post_pay_run_finalize", { _pay_run_id: (run as any).id });
+    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "Posted", description: "General ledger posting completed" });
+  };
+  const downloadAll = async () => {
+    if (!run) return;
+    const { data: company } = await supabase
+      .from('companies')
+      .select('name,email,phone,address,tax_number,vat_number,logo_url')
+      .eq('id', companyId)
+      .maybeSingle();
+    const logoDataUrl = await fetchLogoDataUrl((company as any)?.logo_url);
+    for (const l of lines) {
+      const emp = employees.find(e => e.id === l.employee_id);
+      const employee_name = emp ? `${emp.first_name} ${emp.last_name}` : l.employee_id;
+      const slip: PayslipForPDF = { period_start: run.period_start, period_end: run.period_end, employee_name, gross: l.gross, net: l.net, paye: l.paye, uif_emp: l.uif_emp, uif_er: l.uif_er, sdl_er: l.sdl_er, details: null };
+      const doc = buildPayslipPDF(slip, (company as any) || { name: 'Company' });
+      if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const periodName = `${new Date(run.period_start).toLocaleDateString('en-ZA')} - ${new Date(run.period_end).toLocaleDateString('en-ZA')}`;
+      a.href = url;
+      a.download = `payslip_${employee_name.replace(/\s+/g,'_')}_${periodName.replace(/\s+/g,'_')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+  return (
+    <Card>
+      <CardHeader><CardTitle>Run Payroll</CardTitle></CardHeader>
+      <CardContent>
+        {step === 1 && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Frequency</Label>
+                <Select value={frequency} onValueChange={(v: any) => setFrequency(v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="fortnight">Fortnight</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Year</Label>
+                <Input type="number" value={year} onChange={e => setYear(parseInt(e.target.value || '0'))} />
+              </div>
+              <div>
+                <Label>Month</Label>
+                <Input type="number" value={month} onChange={e => setMonth(parseInt(e.target.value || '0'))} />
+              </div>
+            </div>
+            <Button className="bg-gradient-primary" onClick={async () => { const r = await ensureRun(); if (r) setStep(2); }}>Next</Button>
+          </div>
+        )}
+        {step === 2 && (
+          <div className="space-y-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Salary Type</TableHead>
+                  <TableHead>Rate</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {employees.map(e => (
+                  <TableRow key={e.id}>
+                    <TableCell>{e.first_name} {e.last_name}</TableCell>
+                    <TableCell>{e.salary_type || '-'}</TableCell>
+                    <TableCell>
+                      <Button size="sm" variant="outline" onClick={() => openEdit(e)}>Edit Rate</Button>
+                    </TableCell>
+                    <TableCell>{e.active ? 'Active' : 'Inactive'}</TableCell>
+                    <TableCell></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
+              <Button className="bg-gradient-primary" onClick={() => setStep(3)}>Next</Button>
+            </div>
+            <Dialog open={editOpen} onOpenChange={setEditOpen}>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Edit Rate</DialogTitle></DialogHeader>
+                <div className="space-y-3">
+                  <Label>Basic Salary</Label>
+                  <Input type="number" step="0.01" value={editRate} onChange={e => setEditRate(e.target.value)} />
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+                  <Button onClick={saveEdit}>Save</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        )}
+        {step === 3 && (
+          <div className="space-y-4">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Employee</TableHead>
+                  <TableHead>Salary</TableHead>
+                  <TableHead>Overtime</TableHead>
+                  <TableHead>Allowances</TableHead>
+                  <TableHead>UIF</TableHead>
+                  <TableHead>PAYE</TableHead>
+                  <TableHead>Net</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {employees.map(e => {
+                  const entry = entries[e.id] || { allowance: "", overtime: "" };
+                  const line = lines.find(l => l.employee_id === e.id);
+                  const paye = line ? `R ${Number(line.paye || 0).toFixed(2)}` : "-";
+                  const uif = line ? `R ${(Number(line.uif_emp || 0) + Number(line.uif_er || 0)).toFixed(2)}` : "-";
+                  const net = line ? `R ${Number(line.net || 0).toFixed(2)}` : "-";
+                  return (
+                    <TableRow key={e.id}>
+                      <TableCell>{e.first_name} {e.last_name}</TableCell>
+                      <TableCell>Basic</TableCell>
+                      <TableCell>
+                        <Input className="w-28" type="number" step="0.01" value={entry.overtime} onChange={ev => setEntries({ ...entries, [e.id]: { ...entry, overtime: ev.target.value } })} />
+                      </TableCell>
+                      <TableCell>
+                        <Input className="w-28" type="number" step="0.01" value={entry.allowance} onChange={ev => setEntries({ ...entries, [e.id]: { ...entry, allowance: ev.target.value } })} />
+                      </TableCell>
+                      <TableCell>{uif}</TableCell>
+                      <TableCell>{paye}</TableCell>
+                      <TableCell>{net}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
+              <Button className="bg-gradient-primary" onClick={processAll}>Process All</Button>
+            </div>
+          </div>
+        )}
+        {step === 4 && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <StatCard title="Gross Pay" value={`R ${totals.gross.toFixed(2)}`} />
+              <StatCard title="PAYE" value={`R ${totals.paye.toFixed(2)}`} />
+              <StatCard title="UIF" value={`R ${totals.uif.toFixed(2)}`} />
+              <StatCard title="SDL" value={`R ${totals.sdl.toFixed(2)}`} />
+              <StatCard title="Net Pay" value={`R ${totals.net.toFixed(2)}`} />
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setStep(3)}>Back</Button>
+              <Button className="bg-gradient-primary" onClick={() => setStep(5)}>Next</Button>
+            </div>
+          </div>
+        )}
+        {step === 5 && (
+          <div className="space-y-4">
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={downloadAll}>Download PDF</Button>
+              <Button variant="outline" onClick={() => toast({ title: 'Email', description: 'Compose emails via payslips list' })}>Email Payslips</Button>
+              <Button className="bg-gradient-primary" onClick={finalizePosting}>Post to General Ledger</Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [form, setForm] = useState({
+    first_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+    address: "",
+    id_number: "",
+    start_date: "",
+    position: "",
+    department: "",
+    payroll_number: "",
+    tax_number: "",
+    salary_type: "monthly",
+    salary_amount: "",
+    bank_name: "",
+    bank_branch_code: "",
+    bank_account_number: "",
+    bank_account_type: "checking",
+    paye_registered: false,
+    uif_registered: false,
+  });
+  const [editOpen, setEditOpen] = useState(false);
+  const [editEmp, setEditEmp] = useState<Employee | null>(null);
+  const [editRate, setEditRate] = useState<string>("");
+  useEffect(() => {
+    const load = async () => {
+      const { data } = await supabase.from("employees" as any).select("*").eq("company_id", companyId).order("first_name", { ascending: true });
+      setEmployees((data || []) as any); setLoading(false);
+    };
+    if (companyId) load();
+  }, [companyId]);
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    let emp: any = null;
+    try {
+      const res = await supabase.from("employees" as any).insert({
+        company_id: companyId,
+        first_name: form.first_name,
+        last_name: form.last_name,
+        email: form.email || null,
+        phone: form.phone || null,
+        address: form.address || null,
+        id_number: form.id_number || null,
+        start_date: form.start_date || null,
+        position: form.position || null,
+        department: form.department || null,
+        payroll_number: form.payroll_number || null,
+        tax_number: form.tax_number || null,
+        salary_type: form.salary_type,
+        bank_name: form.bank_name || null,
+        bank_branch_code: form.bank_branch_code || null,
+        bank_account_number: form.bank_account_number || null,
+        bank_account_type: form.bank_account_type || null,
+        paye_registered: form.paye_registered,
+        uif_registered: form.uif_registered,
+        active: true,
+      } as any).select("id").single();
+      if (res.error) throw res.error;
+      emp = res.data;
+    } catch (err: any) {
+      const msg = String(err?.message || "").toLowerCase();
+      const retry = msg.includes("column") && msg.includes("does not exist");
+      if (!retry) { toast({ title: "Error", description: err.message, variant: "destructive" }); return; }
+      const res2 = await supabase.from("employees" as any).insert({
+        company_id: companyId,
+        first_name: form.first_name,
+        last_name: form.last_name,
+        id_number: form.id_number || null,
+        salary_type: form.salary_type,
+        active: true,
+      } as any).select("id").single();
+      if (res2.error) { toast({ title: "Error", description: res2.error.message, variant: "destructive" }); return; }
+      emp = res2.data;
+    }
+    const { data: basicItem } = await supabase.from("pay_items" as any).select("id").eq("company_id", companyId).eq("name", "Basic Salary").maybeSingle();
+    let basicId = (basicItem as any)?.id;
+    if (!basicId) { const { data } = await supabase.from("pay_items" as any).insert({ company_id: companyId, code: "BASIC_SALARY", name: "Basic Salary", type: "earning", taxable: true } as any).select("id").single(); basicId = (data as any)?.id; }
+    if (basicId) await supabase.from("employee_pay_items" as any).insert({ employee_id: (emp as any).id, pay_item_id: basicId, amount: parseFloat(form.salary_amount || "0"), rate: null, unit: null } as any);
+    toast({ title: "Success", description: "Employee added" });
+    setDialogOpen(false);
+    setForm({ first_name: "", last_name: "", email: "", phone: "", address: "", id_number: "", start_date: "", position: "", department: "", payroll_number: "", tax_number: "", salary_type: "monthly", salary_amount: "", bank_name: "", bank_branch_code: "", bank_account_number: "", bank_account_type: "checking", paye_registered: false, uif_registered: false });
+    const { data } = await supabase.from("employees" as any).select("*").eq("company_id", companyId);
+    setEmployees((data || []) as any);
+  };
+  const importCSV = async (file: File) => {
+    const text = await file.text();
+    const rows = text.split(/\r?\n/).filter(Boolean);
+    rows.shift();
+    for (const row of rows) {
+      const cols = row.split(",");
+      const [first_name, last_name, id_number, salary_type, salary_amount] = cols;
+      const { data: emp } = await supabase.from("employees" as any).insert({ company_id: companyId, first_name, last_name, id_number, salary_type, active: true } as any).select("id").single();
+      const { data: basicItem } = await supabase.from("pay_items" as any).select("id").eq("company_id", companyId).eq("name", "Basic Salary").maybeSingle();
+      const basicId = (basicItem as any)?.id;
+      if (basicId && (emp as any)?.id) await supabase.from("employee_pay_items" as any).insert({ employee_id: (emp as any).id, pay_item_id: basicId, amount: parseFloat(salary_amount || "0"), rate: null, unit: null } as any);
+    }
+    const { data } = await supabase.from("employees" as any).select("*").eq("company_id", companyId);
+    setEmployees((data || []) as any);
+    toast({ title: "Imported", description: "CSV imported" });
+  };
+  const openEdit = async (emp: Employee) => {
+    setEditEmp(emp);
+    const { data: basicItem } = await supabase.from("pay_items" as any).select("id").eq("company_id", companyId).eq("name", "Basic Salary").maybeSingle();
+    const basicId = (basicItem as any)?.id;
+    if (!basicId) { setEditRate("0"); setEditOpen(true); return; }
+    const { data: ep } = await supabase.from("employee_pay_items" as any).select("amount").eq("employee_id", emp.id).eq("pay_item_id", basicId).maybeSingle();
+    const amt = ep ? Number((ep as any).amount || 0) : 0;
+    setEditRate(String(amt));
+    setEditOpen(true);
+  };
+  const saveEdit = async () => {
+    if (!editEmp) return;
+    const { data: basicItem } = await supabase.from("pay_items" as any).select("id").eq("company_id", companyId).eq("name", "Basic Salary").maybeSingle();
+    const basicId = (basicItem as any)?.id;
+    if (!basicId) {
+      const { data } = await supabase.from("pay_items" as any).insert({ company_id: companyId, code: "BASIC_SALARY", name: "Basic Salary", type: "earning", taxable: true } as any).select("id").single();
+      const newId = (data as any)?.id;
+      if (!newId) { setEditOpen(false); return; }
+      await supabase.from("employee_pay_items" as any).insert({ employee_id: editEmp.id, pay_item_id: newId, amount: parseFloat(editRate || "0"), rate: null, unit: null } as any);
+    } else {
+      const { data: ep } = await supabase.from("employee_pay_items" as any).select("id").eq("employee_id", editEmp.id).eq("pay_item_id", basicId).maybeSingle();
+      if (ep) {
+        await supabase.from("employee_pay_items" as any).update({ amount: parseFloat(editRate || "0") } as any).eq("id", (ep as any).id);
+      } else {
+        await supabase.from("employee_pay_items" as any).insert({ employee_id: editEmp.id, pay_item_id: basicId, amount: parseFloat(editRate || "0"), rate: null, unit: null } as any);
+      }
+    }
+    setEditOpen(false);
+    toast({ title: "Saved", description: "Employee rate updated" });
+  };
+  return (
+    <>
+      <Card>
+        <CardHeader className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2"><Users className="h-5 w-5 text-primary" />Employees</CardTitle>
+          <div className="flex gap-2">
+            {canEdit && <Button onClick={() => setDialogOpen(true)} className="bg-gradient-primary"><Plus className="h-4 w-4 mr-2" />Add Employee</Button>}
+            {canEdit && <Button variant="outline" onClick={() => document.getElementById('empCsvInput')?.click()}>CSV Import</Button>}
+            <input id="empCsvInput" type="file" accept=".csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) importCSV(f); }} />
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loading ? (<div className="py-8 text-center text-muted-foreground">Loading…</div>) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Position</TableHead>
+                  <TableHead>ID</TableHead>
+                  <TableHead>Salary Type</TableHead>
+                  <TableHead>Rate</TableHead>
+                  <TableHead>PAYE registered?</TableHead>
+                  <TableHead>UIF registered?</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {employees.map(e => (
+                  <TableRow key={e.id}>
+                    <TableCell>{e.first_name} {e.last_name}</TableCell>
+                    <TableCell>{(e as any).position || '-'}</TableCell>
+                    <TableCell>{e.id_number || '-'}</TableCell>
+                    <TableCell>{e.salary_type || '-'}</TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell>{(e as any).paye_registered ? 'Yes' : 'No'}</TableCell>
+                    <TableCell>{(e as any).uif_registered ? 'Yes' : 'No'}</TableCell>
+                    <TableCell><Button size="sm" variant="outline" onClick={() => openEdit(e)}>Edit</Button></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Employee</DialogTitle></DialogHeader>
+          <form onSubmit={create} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>First Name</Label><Input value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} required /></div>
+              <div><Label>Last Name</Label><Input value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} required /></div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div><Label>Email</Label><Input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
+              <div><Label>Phone</Label><Input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
+              <div><Label>Address</Label><Input value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></div>
+            </div>
+            <div className="grid grid-cols-4 gap-3">
+              <div><Label>ID Number</Label><Input value={form.id_number} onChange={e => setForm({ ...form, id_number: e.target.value })} /></div>
+              <div><Label>Start Date</Label><Input type="date" value={form.start_date} onChange={e => setForm({ ...form, start_date: e.target.value })} /></div>
+              <div><Label>Position</Label><Input value={form.position} onChange={e => setForm({ ...form, position: e.target.value })} /></div>
+              <div><Label>Department</Label><Input value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} /></div>
+            </div>
+            <div className="grid grid-cols-4 gap-3">
+              <div><Label>Payroll #</Label><Input value={form.payroll_number} onChange={e => setForm({ ...form, payroll_number: e.target.value })} /></div>
+              <div><Label>Tax Number</Label><Input value={form.tax_number} onChange={e => setForm({ ...form, tax_number: e.target.value })} /></div>
+              <div><Label>Salary Type</Label>
+                <Select value={form.salary_type} onValueChange={(v: any) => setForm({ ...form, salary_type: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                    <SelectItem value="hourly">Hourly</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label>Rate</Label><Input type="number" step="0.01" value={form.salary_amount} onChange={e => setForm({ ...form, salary_amount: e.target.value })} /></div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>PAYE Registered?</Label>
+                <Button type="button" variant="outline" onClick={() => setForm({ ...form, paye_registered: !form.paye_registered })}>{form.paye_registered ? 'Yes' : 'No'}</Button>
+              </div>
+              <div>
+                <Label>UIF Registered?</Label>
+                <Button type="button" variant="outline" onClick={() => setForm({ ...form, uif_registered: !form.uif_registered })}>{form.uif_registered ? 'Yes' : 'No'}</Button>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Bank Name</Label>
+                <Select value={form.bank_name} onValueChange={(v: any) => setForm({ ...form, bank_name: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ABSA">ABSA Bank</SelectItem>
+                    <SelectItem value="FNB">FNB (First National Bank)</SelectItem>
+                    <SelectItem value="Standard Bank">Standard Bank</SelectItem>
+                    <SelectItem value="Nedbank">Nedbank</SelectItem>
+                    <SelectItem value="Capitec">Capitec Bank</SelectItem>
+                    <SelectItem value="Investec">Investec Bank</SelectItem>
+                    <SelectItem value="TymeBank">TymeBank</SelectItem>
+                    <SelectItem value="Bidvest">Bidvest Bank</SelectItem>
+                    <SelectItem value="Discovery">Discovery Bank</SelectItem>
+                    <SelectItem value="African Bank">African Bank</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div><Label>Branch Code</Label><Input value={form.bank_branch_code} onChange={e => setForm({ ...form, bank_branch_code: e.target.value })} /></div>
+              <div><Label>Account Number</Label><Input value={form.bank_account_number} onChange={e => setForm({ ...form, bank_account_number: e.target.value })} /></div>
+            </div>
+            <div>
+              <Label>Account Type</Label>
+              <Select value={form.bank_account_type} onValueChange={(v: any) => setForm({ ...form, bank_account_type: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="checking">Checking</SelectItem>
+                  <SelectItem value="savings">Savings</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" className="bg-gradient-primary">Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Rate</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <Label>Basic Salary</Label>
+            <Input type="number" step="0.01" value={editRate} onChange={e => setEditRate(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button onClick={saveEdit}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function PayItemsSimple({ companyId, canEdit }: { companyId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [earnings, setEarnings] = useState<PayItem[]>([]);
+  const [deductions, setDeductions] = useState<PayItem[]>([]);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [form, setForm] = useState<{ name: string; type: "earning" | "deduction"; taxable: boolean }>({ name: "", type: "earning", taxable: true });
+  const load = async () => {
+    const { data } = await supabase.from("pay_items" as any).select("id,code,name,type,taxable").eq("company_id", companyId).order("name", { ascending: true });
+    const list = (data || []) as any[];
+    setEarnings(list.filter(i => i.type === 'earning'));
+    setDeductions(list.filter(i => i.type === 'deduction'));
+  };
+  useEffect(() => { if (companyId) load(); }, [companyId]);
+  const ensureDefaults = async () => {
+    const defaults = [
+      { code: 'SALARY', name: 'Salary', type: 'earning', taxable: true },
+      { code: 'OVERTIME', name: 'Overtime', type: 'earning', taxable: true },
+      { code: 'BONUS', name: 'Bonus', type: 'earning', taxable: true },
+      { code: 'ALLOWANCE', name: 'Allowances', type: 'earning', taxable: true },
+      { code: 'PAYE', name: 'PAYE', type: 'deduction', taxable: false },
+      { code: 'UIF', name: 'UIF', type: 'deduction', taxable: false },
+      { code: 'SDL', name: 'SDL', type: 'deduction', taxable: false },
+      { code: 'GARNISHEE', name: 'Garnishees', type: 'deduction', taxable: false },
+    ];
+    const { data: existing } = await supabase.from("pay_items" as any).select("name").eq("company_id", companyId);
+    const names = new Set((existing || []).map((x: any) => String(x.name).toLowerCase()));
+    const toInsert = defaults.filter(d => !names.has(d.name.toLowerCase())).map(d => ({ company_id: companyId, code: d.code, name: d.name, type: d.type, taxable: d.taxable }));
+    if (toInsert.length) await supabase.from("pay_items" as any).insert(toInsert as any);
+    await load();
+    toast({ title: 'Ready', description: 'Default items ensured' });
+  };
+  const create = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const code = form.name.replace(/\s+/g, '_').toUpperCase();
+    const { error } = await supabase.from("pay_items" as any).insert({ company_id: companyId, code, name: form.name, type: form.type, taxable: form.taxable } as any);
+    if (error) { toast({ title: 'Error', description: error.message, variant: 'destructive' }); return; }
+    setDialogOpen(false); setForm({ name: '', type: 'earning', taxable: true });
+    await load();
+    toast({ title: 'Created', description: 'Custom pay item added' });
+  };
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <Card className="lg:col-span-2">
+        <CardHeader><CardTitle>Earnings</CardTitle></CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Taxable</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {earnings.map(e => (<TableRow key={e.id}><TableCell>{e.name}</TableCell><TableCell>{e.taxable ? 'Yes' : 'No'}</TableCell></TableRow>))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle>Deductions</CardTitle></CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Taxable</TableHead></TableRow></TableHeader>
+            <TableBody>
+              {deductions.map(d => (<TableRow key={d.id}><TableCell>{d.name}</TableCell><TableCell>{d.taxable ? 'Yes' : 'No'}</TableCell></TableRow>))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+      <Card className="lg:col-span-3">
+        <CardHeader className="flex items-center justify-between"><CardTitle>Manage</CardTitle>{canEdit && <div className="flex gap-2"><Button onClick={ensureDefaults}>Ensure Defaults</Button><Button variant="outline" onClick={() => setDialogOpen(true)}><Plus className="h-4 w-4 mr-2" />Add Custom Pay Item</Button></div>}</CardHeader>
+        <CardContent></CardContent>
+      </Card>
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>New Pay Item</DialogTitle></DialogHeader>
+          <form onSubmit={create} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Name</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required /></div>
+              <div><Label>Type</Label>
+                <Select value={form.type} onValueChange={(v: any) => setForm({ ...form, type: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="earning">Earning</SelectItem>
+                    <SelectItem value="deduction">Deduction</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div><Label>Taxable</Label><Button type="button" variant="outline" onClick={() => setForm({ ...form, taxable: !form.taxable })}>{form.taxable ? 'Yes' : 'No'}</Button></div>
+            <DialogFooter>
+              <Button variant="outline" type="button" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button type="submit">Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function PayrollHistory({ companyId }: { companyId: string }) {
+  const [runs, setRuns] = useState<PayRun[]>([]);
+  const [viewRun, setViewRun] = useState<PayRun | null>(null);
+  const [runLines, setRunLines] = useState<any[]>([]);
+  useEffect(() => { const load = async () => { const { data } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false }); setRuns((data || []) as any); }; if (companyId) load(); }, [companyId]);
+  const openView = async (r: PayRun) => { setViewRun(r); const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", r.id); setRunLines((data || []) as any); };
+  const totals = useMemo(() => ({ count: runLines.length, net: runLines.reduce((s, l: any) => s + (l.net || 0), 0) }), [runLines]);
+  return (
+    <div>
+      <Table>
+        <TableHeader><TableRow><TableHead>Period</TableHead><TableHead>Employees</TableHead><TableHead>Status</TableHead><TableHead>Total Net Pay</TableHead><TableHead></TableHead></TableRow></TableHeader>
+        <TableBody>
+          {runs.map(r => (
+            <TableRow key={r.id}>
+              <TableCell>{new Date(r.period_start).toLocaleDateString()} - {new Date(r.period_end).toLocaleDateString()}</TableCell>
+              <TableCell>-</TableCell>
+              <TableCell className="capitalize">{r.status}</TableCell>
+              <TableCell>-</TableCell>
+              <TableCell><Button size="sm" variant="outline" onClick={() => openView(r)}>View</Button></TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <Dialog open={!!viewRun} onOpenChange={(o) => { if (!o) { setViewRun(null); setRunLines([]); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Payroll Summary</DialogTitle></DialogHeader>
+          {viewRun && (
+            <div className="space-y-4">
+              <div>{new Date(viewRun.period_start).toLocaleDateString()} - {new Date(viewRun.period_end).toLocaleDateString()}</div>
+              <div className="grid grid-cols-3 gap-3">
+                <StatCard title="Employees" value={`${totals.count}`} />
+                <StatCard title="Net Pay" value={`R ${totals.net.toFixed(2)}`} />
+              </div>
+              <Table>
+                <TableHeader><TableRow><TableHead>Employee</TableHead><TableHead className="text-right">Net</TableHead><TableHead></TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {runLines.map(l => (
+                    <TableRow key={l.id}>
+                      <TableCell>{l.employee_id}</TableCell>
+                      <TableCell className="text-right">R {Number(l.net || 0).toFixed(2)}</TableCell>
+                      <TableCell><Button size="sm" variant="outline">Payslip</Button></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

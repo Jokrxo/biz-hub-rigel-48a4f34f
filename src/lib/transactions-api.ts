@@ -96,7 +96,7 @@ export const transactionsApi = {
 
     const arId = findBy('asset', ['1200'], ['receiv', 'accounts receiv']);
     const revId = findBy('income', ['4000'], ['revenue', 'sales']);
-    const vatOutId = findBy('liability', ['2100'], ['vat output', 'vat payable', 'output tax']);
+    let vatOutId = findBy('liability', ['2100'], ['vat output', 'vat payable', 'output tax']);
     let cogsId = findBy('expense', ['5000'], ['cost of sales', 'cost of goods', 'cogs']);
     let inventoryId = findBy('asset', ['1300'], ['inventory', 'stock']);
 
@@ -120,6 +120,18 @@ export const transactionsApi = {
       .select('id')
       .single();
     if (txErr) throw txErr;
+
+    // Ensure VAT Output account exists if taxAmount > 0
+    if (!vatOutId && taxAmount > 0) {
+      try {
+        const { data: created } = await supabase
+          .from('chart_of_accounts')
+          .insert({ company_id: companyId, account_code: '2100', account_name: 'VAT Output (15%)', account_type: 'liability', is_active: true })
+          .select('id')
+          .single();
+        vatOutId = (created as any)?.id || vatOutId;
+      } catch {}
+    }
 
     const rows: Array<{ transaction_id: string; account_id: string; debit: number; credit: number; description: string; status: string }> = [
       { transaction_id: tx.id, account_id: arId, debit: total, credit: 0, description: 'Invoice issued', status: 'approved' },
@@ -474,9 +486,7 @@ export const transactionsApi = {
     };
     const inventoryId = pick('asset', ['1300'], ['inventory','stock']);
     const apId = pick('liability', ['2000'], ['accounts payable','payable']);
-    const vatInLiabilityId = pick('liability', ['2110'], ['vat input','vat receivable','input tax']);
-    const vatInAssetId = pick('asset', ['1210'], ['vat input','vat receivable','input tax']);
-    const vatInId = vatInLiabilityId || vatInAssetId;
+    let vatInId = pick('liability', ['2110'], ['vat input','vat receivable','input tax']);
     if (!inventoryId || !apId) throw new Error('Inventory or Accounts Payable account missing');
     const { data: tx, error: txErr } = await supabase
       .from('transactions')
@@ -496,6 +506,18 @@ export const transactionsApi = {
       .select('id')
       .single();
     if (txErr) throw txErr;
+    // Ensure VAT Input account exists if taxAmount > 0
+    if (!vatInId && taxAmount > 0) {
+      try {
+        const { data: created } = await supabase
+          .from('chart_of_accounts')
+          .insert({ company_id: companyId, account_code: '2110', account_name: 'VAT Input', account_type: 'liability', is_active: true })
+          .select('id')
+          .single();
+        vatInId = (created as any)?.id || vatInId;
+      } catch {}
+    }
+
     const rows: Array<{ transaction_id: string; account_id: string; debit: number; credit: number; description: string; status: string }> = [
       { transaction_id: tx.id, account_id: inventoryId, debit: Math.max(0, subtotal), credit: 0, description: 'Inventory', status: 'approved' },
       { transaction_id: tx.id, account_id: apId, debit: 0, credit: Math.max(0, total), description: 'Accounts Payable', status: 'approved' },
@@ -573,7 +595,9 @@ export const transactionsApi = {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
     const postDate = postDateStr || bill.bill_date || new Date().toISOString().slice(0, 10);
-    const total = Number(bill.total_amount || 0);
+    const subtotal = Number(bill.subtotal ?? bill.total_before_tax ?? 0);
+    const taxAmount = Number(bill.tax_amount ?? bill.tax ?? 0);
+    const total = Number(bill.total_amount ?? bill.total ?? (subtotal + taxAmount));
     const { data: accounts } = await supabase
       .from('chart_of_accounts')
       .select('id, account_name, account_type, account_code, is_active')
@@ -590,17 +614,33 @@ export const transactionsApi = {
     };
     const expenseId = pick('expense', ['6000'], ['uncategorized expense','expense']);
     const apId = pick('liability', ['2000'], ['accounts payable','payable']);
+    let vatInId = pick('liability', ['2110'], ['vat input','vat receivable','input tax']);
     if (!expenseId || !apId) throw new Error('Expense or Accounts Payable account missing');
     const { data: tx, error: txErr } = await supabase
       .from('transactions')
-      .insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Bill ${bill.bill_number || bill.id} recorded`, reference_number: bill.bill_number || null, total_amount: total, transaction_type: 'bill', status: 'pending' })
+      .insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Bill ${bill.bill_number || bill.id} recorded`, reference_number: bill.bill_number || null, total_amount: total, transaction_type: 'bill', status: 'pending', vat_rate: (subtotal > 0 && taxAmount > 0) ? Number(((taxAmount / subtotal) * 100).toFixed(2)) : null, vat_amount: taxAmount > 0 ? taxAmount : null, vat_inclusive: false })
       .select('id')
       .single();
     if (txErr) throw txErr;
+    // Ensure VAT Input account exists if taxAmount > 0
+    if (!vatInId && taxAmount > 0) {
+      try {
+        const { data: created } = await supabase
+          .from('chart_of_accounts')
+          .insert({ company_id: companyId, account_code: '2110', account_name: 'VAT Input', account_type: 'liability', is_active: true })
+          .select('id')
+          .single();
+        vatInId = (created as any)?.id || vatInId;
+      } catch {}
+    }
+
     const rows = [
-      { transaction_id: tx.id, account_id: expenseId, debit: total, credit: 0, description: 'Supplier bill', status: 'approved' },
-      { transaction_id: tx.id, account_id: apId, debit: 0, credit: total, description: 'Accounts Payable', status: 'approved' },
+      { transaction_id: tx.id, account_id: expenseId, debit: Math.max(0, subtotal), credit: 0, description: 'Supplier bill', status: 'approved' },
+      { transaction_id: tx.id, account_id: apId, debit: 0, credit: Math.max(0, total), description: 'Accounts Payable', status: 'approved' },
     ];
+    if (vatInId && taxAmount > 0) {
+      rows.push({ transaction_id: tx.id, account_id: vatInId, debit: taxAmount, credit: 0, description: 'VAT Input', status: 'approved' });
+    }
     const { error: teErr } = await supabase.from('transaction_entries').insert(rows);
     if (teErr) throw teErr;
     const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: tx.id, description: r.description }));
