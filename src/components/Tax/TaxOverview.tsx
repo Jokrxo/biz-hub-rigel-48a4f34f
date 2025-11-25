@@ -29,7 +29,7 @@ export const TaxOverview = () => {
           chart_of_accounts!inner(account_name, account_type)
         `)
         .eq('transactions.company_id', profile.company_id)
-        .eq('transactions.status', 'posted');
+        .in('transactions.status', ['pending','approved','posted']);
       if (error) return;
 
       let output = 0;
@@ -58,7 +58,7 @@ export const TaxOverview = () => {
           .from('transactions')
           .select('transaction_date, company_id, vat_rate, vat_amount, status, transaction_type')
           .eq('company_id', profile.company_id)
-          .eq('status', 'posted');
+          .in('status', ['pending','approved','posted']);
         for (const t of (txs || []) as any[]) {
           const rate = Number(t.vat_rate || 0);
           const vat = Number(t.vat_amount || 0);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -58,6 +58,7 @@ export const DashboardOverview = () => {
   const [userName, setUserName] = useState<string>("");
   const [companyId, setCompanyId] = useState<string>("");
   const [onboardingOpen, setOnboardingOpen] = useState<boolean>(false);
+  const loadingRef = useRef(false);
   
   // Date filter state
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
@@ -118,7 +119,7 @@ export const DashboardOverview = () => {
             filter: `company_id=eq.${companyId}` 
           }, () => {
             console.log('Transaction changed - updating dashboard...');
-            loadDashboardData();
+            if (!loadingRef.current) loadDashboardData();
           })
           .on('postgres_changes', { 
             event: '*', 
@@ -129,7 +130,7 @@ export const DashboardOverview = () => {
             // This is not ideal, but a constraint of the current schema.
           }, () => {
             console.log('Transaction entry changed - updating dashboard...');
-            loadDashboardData();
+            if (!loadingRef.current) loadDashboardData();
           })
           .on('postgres_changes', { 
             event: '*', 
@@ -138,7 +139,7 @@ export const DashboardOverview = () => {
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Bank account changed - updating dashboard...');
-            loadDashboardData();
+            if (!loadingRef.current) loadDashboardData();
           })
           .on('postgres_changes', { 
             event: '*', 
@@ -147,7 +148,7 @@ export const DashboardOverview = () => {
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Invoice changed - updating dashboard...');
-            loadDashboardData();
+            if (!loadingRef.current) loadDashboardData();
           })
           .on('postgres_changes', { 
             event: '*', 
@@ -156,7 +157,7 @@ export const DashboardOverview = () => {
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Fixed asset changed - updating dashboard...');
-            loadDashboardData();
+            if (!loadingRef.current) loadDashboardData();
           })
           .on('postgres_changes', { 
             event: '*', 
@@ -165,7 +166,7 @@ export const DashboardOverview = () => {
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Purchase order changed - updating dashboard...');
-            loadDashboardData();
+            if (!loadingRef.current) loadDashboardData();
           })
           .on('postgres_changes', { 
             event: '*', 
@@ -174,7 +175,7 @@ export const DashboardOverview = () => {
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Quote changed - updating dashboard...');
-            loadDashboardData();
+            if (!loadingRef.current) loadDashboardData();
           })
           .on('postgres_changes', { 
             event: '*', 
@@ -183,7 +184,7 @@ export const DashboardOverview = () => {
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Sale changed - updating dashboard...');
-            loadDashboardData();
+            if (!loadingRef.current) loadDashboardData();
           })
           .subscribe((status) => {
             console.log('Dashboard real-time subscription status:', status);
@@ -344,7 +345,9 @@ const calculateTotalInventoryValue = async (companyId: string) => {
 
   const loadDashboardData = async () => {
     try {
+      if (loadingRef.current) return;
       setLoading(true);
+      loadingRef.current = true;
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       if (authError || !user) {
         console.warn('Dashboard: User not authenticated or auth error:', authError);
@@ -375,10 +378,28 @@ const calculateTotalInventoryValue = async (companyId: string) => {
 
       // Load transactions filtered by selected month/year
       const rangeStart = new Date(selectedYear, selectedMonth - 6, 1);
+      const cacheKey = `db-cache-${String(profile.company_id)}-${selectedYear}-${selectedMonth}`;
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const c = JSON.parse(cached);
+          if (c?.metrics) setMetrics(c.metrics);
+          if (c?.recentTransactions) setRecentTransactions(c.recentTransactions);
+          if (c?.chartData) setChartData(c.chartData);
+          if (c?.netProfitTrend) setNetProfitTrend(c.netProfitTrend);
+          if (c?.plTrend) setPlTrend(c.plTrend);
+        }
+      } catch {}
       const { data: transactions, error: txError } = await supabase
         .from("transactions")
         .select(`
-          *,
+          id,
+          reference_number,
+          description,
+          total_amount,
+          transaction_date,
+          transaction_type,
+          status,
           entries:transaction_entries(
             id,
             debit,
@@ -389,7 +410,8 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         .eq("company_id", profile.company_id)
         .gte("transaction_date", rangeStart.toISOString())
         .lte("transaction_date", endDate.toISOString())
-        .order("transaction_date", { ascending: false });
+        .order("transaction_date", { ascending: false })
+        .limit(1000);
 
       if (txError) throw txError;
 
@@ -407,11 +429,15 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       transactions?.forEach(tx => {
         tx.entries?.forEach((entry: any) => {
           const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
+          const nameLower = String(entry.chart_of_accounts?.account_name || '').toLowerCase();
+          const isVat = nameLower.includes('vat');
           const netAmount = entry.debit - entry.credit;
           const dtKey = new Date(tx.transaction_date).toISOString().slice(0,7);
           const agg = monthlyMap.get(dtKey) || { income: 0, expenses: 0 };
-          if (type.includes("income") || type.includes("revenue")) agg.income += Math.abs(netAmount);
-          else if (type.includes("expense")) agg.expenses += Math.abs(netAmount);
+          if (!isVat) {
+            if (type.includes("income") || type.includes("revenue")) agg.income += Math.abs(netAmount);
+            else if (type.includes("expense")) agg.expenses += Math.abs(netAmount);
+          }
           monthlyMap.set(dtKey, agg);
           if (type.includes("asset")) {
             const a = assetsMap.get(dtKey) || 0;
@@ -422,41 +448,47 @@ const calculateTotalInventoryValue = async (companyId: string) => {
             if (type.includes("asset")) assets += netAmount;
             else if (type.includes("liability")) liabilities += Math.abs(netAmount);
             else if (type.includes("equity")) equity += Math.abs(netAmount);
-            else if (type.includes("income") || type.includes("revenue")) income += Math.abs(netAmount);
-            else if (type.includes("expense")) expenses += Math.abs(netAmount);
+            else if (!isVat && (type.includes("income") || type.includes("revenue"))) income += Math.abs(netAmount);
+            else if (!isVat && type.includes("expense")) expenses += Math.abs(netAmount);
           }
         });
       });
 
-      // First-run checks (minimal, clean system)
-      const { count: coaCount } = await supabase
-        .from('chart_of_accounts')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', profile.company_id)
-        .eq('is_active', true);
-
-      const { data: banksList } = await supabase
-        .from("bank_accounts")
-        .select("current_balance")
-        .eq("company_id", profile.company_id);
-
-      const { count: productsCount } = await supabase
-        .from('items')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', profile.company_id)
-        .eq('item_type', 'product');
-      const { count: customersCount } = await supabase
-        .from('customers')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', profile.company_id);
-      const { count: suppliersCount } = await supabase
-        .from('suppliers')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', profile.company_id);
-      const { count: employeesCount } = await supabase
-        .from('employees')
-        .select('id', { count: 'exact', head: true })
-        .eq('company_id', profile.company_id);
+      const [
+        { count: coaCount },
+        { data: banksList },
+        { count: productsCount },
+        { count: customersCount },
+        { count: suppliersCount },
+        { count: employeesCount }
+      ] = await Promise.all([
+        supabase
+          .from('chart_of_accounts')
+          .select('id', { count: 'exact', head: true })
+          .eq('company_id', profile.company_id)
+          .eq('is_active', true),
+        supabase
+          .from('bank_accounts')
+          .select('current_balance')
+          .eq('company_id', profile.company_id),
+        supabase
+          .from('items')
+          .select('id', { count: 'exact', head: true })
+          .eq('company_id', profile.company_id)
+          .eq('item_type', 'product'),
+        supabase
+          .from('customers')
+          .select('id', { count: 'exact', head: true })
+          .eq('company_id', profile.company_id),
+        supabase
+          .from('suppliers')
+          .select('id', { count: 'exact', head: true })
+          .eq('company_id', profile.company_id),
+        supabase
+          .from('employees')
+          .select('id', { count: 'exact', head: true })
+          .eq('company_id', profile.company_id),
+      ]);
 
       const hasCoa = (coaCount || 0) > 0;
       const hasBank = (banksList || []).length > 0;
@@ -506,37 +538,17 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         expenses: monthlyMap.get(m.key)?.expenses || 0,
       }));
       setChartData(incomeExpenseData);
-      const netData = await Promise.all(monthsSeq.map(async m => {
-        const [yy, mm] = m.key.split('-');
-        const s = `${yy}-${mm}-01`;
-        const eDate = new Date(Number(yy), Number(mm), 0);
-        const e = `${eDate.getFullYear()}-${String(eDate.getMonth() + 1).padStart(2,'0')}-${String(eDate.getDate()).padStart(2,'0')}`;
-        try {
-          const tb = await fetchTrialBalanceForPeriod(String(profile.company_id), s, e);
-          const np = netProfitFromTrialBalance(tb);
-          return { month: m.label, netProfit: np };
-        } catch (_err) {
-          const fallback = (monthlyMap.get(m.key)?.income || 0) - (monthlyMap.get(m.key)?.expenses || 0);
-          return { month: m.label, netProfit: fallback };
-        }
-      }));
+      const netData = monthsSeq.map(m => {
+        const fallback = (monthlyMap.get(m.key)?.income || 0) - (monthlyMap.get(m.key)?.expenses || 0);
+        return { month: m.label, netProfit: fallback };
+      });
       setNetProfitTrend(netData);
 
-      const plData = await Promise.all(monthsSeq.map(async m => {
-        const [yy, mm] = m.key.split('-');
-        const s = `${yy}-${mm}-01`;
-        const eDate = new Date(Number(yy), Number(mm), 0);
-        const e = `${eDate.getFullYear()}-${String(eDate.getMonth() + 1).padStart(2,'0')}-${String(eDate.getDate()).padStart(2,'0')}`;
-        try {
-          const tb = await fetchTrialBalanceForPeriod(String(profile.company_id), s, e);
-          const { income, expenses } = totalsFromTrialBalance(tb);
-          return { month: m.label, income, expenses };
-        } catch (_err) {
-          const inc = monthlyMap.get(m.key)?.income || 0;
-          const exp = monthlyMap.get(m.key)?.expenses || 0;
-          return { month: m.label, income: inc, expenses: exp };
-        }
-      }));
+      const plData = monthsSeq.map(m => {
+        const inc = monthlyMap.get(m.key)?.income || 0;
+        const exp = monthlyMap.get(m.key)?.expenses || 0;
+        return { month: m.label, income: inc, expenses: exp };
+      });
       setPlTrend(plData);
 
       const incTotals = new Map<string, number>();
@@ -544,8 +556,10 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         if (!withinSelected(tx.transaction_date)) return;
         tx.entries?.forEach((entry: any) => {
           const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
-          if (!type.includes('income') && !type.includes('revenue')) return;
           const name = entry.chart_of_accounts?.account_name || 'Income';
+          const isVat = String(name).toLowerCase().includes('vat');
+          if (isVat) return;
+          if (!type.includes('income') && !type.includes('revenue')) return;
           const amt = Math.abs((entry.debit || 0) - (entry.credit || 0));
           incTotals.set(name, (incTotals.get(name) || 0) + amt);
         });
@@ -565,8 +579,10 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         if (!withinSelected(tx.transaction_date)) return;
         tx.entries?.forEach((entry: any) => {
           const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
-          if (!type.includes('expense')) return;
           const name = entry.chart_of_accounts?.account_name || 'Expense';
+          const isVat = String(name).toLowerCase().includes('vat');
+          if (!type.includes('expense')) return;
+          if (isVat) return;
           const amt = Math.abs((entry.debit || 0) - (entry.credit || 0));
           expTotals.set(name, (expTotals.get(name) || 0) + amt);
         });
@@ -598,14 +614,27 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       setAssetTrend(faData);
 
       // Load AR unpaid invoices (sent/overdue/draft – exclude paid/cancelled)
-      const { data: arData, error: arErr } = await supabase
-        .from('invoices')
-        .select('id, customer_name, invoice_date, due_date, total_amount, status')
-        .eq('company_id', profile.company_id)
-        .not('status', 'in', ['("paid")','("cancelled")'])
-        .gte('invoice_date', startDate.toISOString().split('T')[0])
-        .lte('invoice_date', endDate.toISOString().split('T')[0])
-        .order('invoice_date', { ascending: false });
+      const [arRes, apBillsRes, apPOsRes] = await Promise.all([
+        supabase
+          .from('invoices')
+          .select('id, customer_name, invoice_date, due_date, total_amount, status')
+          .eq('company_id', profile.company_id)
+          .not('status', 'in', ['("paid")','("cancelled")'])
+          .gte('invoice_date', startDate.toISOString().split('T')[0])
+          .lte('invoice_date', endDate.toISOString().split('T')[0])
+          .order('invoice_date', { ascending: false }),
+        supabase
+          .from('bills')
+          .select('id, supplier_id, bill_date, due_date, total_amount, status')
+          .eq('company_id', profile.company_id)
+          .order('bill_date', { ascending: false }),
+        supabase
+          .from('purchase_orders')
+          .select('id, supplier_id, po_number, po_date, total_amount, status')
+          .eq('company_id', profile.company_id)
+          .order('po_date', { ascending: false })
+      ]);
+      const { data: arData, error: arErr } = arRes as any;
       if (arErr) throw arErr;
       const rows = (arData || []).map((r: any) => ({
         id: r.id,
@@ -634,20 +663,16 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       setArDonut(donut);
 
       // Load AP from Bills
-      const { data: apBills, error: apErr } = await supabase
-        .from('bills')
-        .select('id, supplier_id, bill_date, due_date, total_amount, status')
-        .eq('company_id', profile.company_id)
-        .order('bill_date', { ascending: false });
+      const { data: apBills, error: apErr } = apBillsRes as any;
       let apRowsLocal: Array<{ id: string; supplier_name: string; total_amount: number; status: string; bill_date?: string; due_date?: string | null; source?: string }> = [];
       if (!apErr) {
-        const supplierIds = Array.from(new Set((apBills || []).map((b: any) => b.supplier_id).filter(Boolean)));
+        const supplierIds: string[] = Array.from(new Set((apBills || []).map((b: any) => String(b.supplier_id || '')).filter(Boolean)));
         let nameMap: Record<string, string> = {};
         if (supplierIds.length > 0) {
           const { data: supps } = await supabase
             .from('suppliers')
             .select('id, name')
-            .in('id', supplierIds);
+            .in('id', supplierIds as readonly string[]);
           (supps || []).forEach((s: any) => { nameMap[s.id] = s.name; });
         }
         apRowsLocal = (apBills || []).filter((r: any) => !['paid','cancelled'].includes(String(r.status))).map((r: any) => ({
@@ -662,20 +687,16 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       }
 
       // Load AP from Purchase Orders and compute outstanding
-      const { data: apPOs } = await supabase
-        .from('purchase_orders')
-        .select('id, supplier_id, po_number, po_date, total_amount, status')
-        .eq('company_id', profile.company_id)
-        .order('po_date', { ascending: false });
+      const { data: apPOs } = apPOsRes as any;
       let poRowsLocal: Array<{ id: string; supplier_name: string; total_amount: number; status: string; due_date?: string | null; bill_date?: string; source?: string }> = [];
       if (apPOs && apPOs.length > 0) {
-        const supplierIdsPO = Array.from(new Set((apPOs || []).map((p: any) => p.supplier_id).filter(Boolean)));
+        const supplierIdsPO: string[] = Array.from(new Set((apPOs || []).map((p: any) => String(p.supplier_id || '')).filter(Boolean)));
         let nameMapPO: Record<string, string> = {};
         if (supplierIdsPO.length > 0) {
           const { data: suppsPO } = await supabase
             .from('suppliers')
             .select('id, name')
-            .in('id', supplierIdsPO);
+            .in('id', supplierIdsPO as readonly string[]);
           (suppsPO || []).forEach((s: any) => { nameMapPO[s.id] = s.name; });
         }
         const poNumbers = (apPOs || []).map((p: any) => p.po_number).filter(Boolean);
@@ -808,10 +829,29 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         overdue90Total: ap90.reduce((s, r) => s + (r.total_amount || 0), 0),
       });
 
+      try {
+        const cachePayload = {
+          metrics: {
+            totalAssets: assets,
+            totalLiabilities: liabilities,
+            totalEquity: equity,
+            totalIncome: income,
+            totalExpenses: expenses,
+            bankBalance
+          },
+          recentTransactions: formatted,
+          chartData: incomeExpenseData,
+          netProfitTrend: netData,
+          plTrend: plData
+        };
+        localStorage.setItem(cacheKey, JSON.stringify(cachePayload));
+      } catch {}
+
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
+      loadingRef.current = false;
     }
   };
 

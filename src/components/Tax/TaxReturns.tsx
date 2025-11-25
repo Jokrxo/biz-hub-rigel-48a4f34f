@@ -127,7 +127,7 @@ export const TaxReturns = () => {
           .eq("transactions.company_id", companyId)
           .gte("transactions.transaction_date", start)
           .lte("transactions.transaction_date", end)
-          .in("transactions.status", ["approved","posted"]);
+          .in("transactions.status", ["pending","approved","posted"]);
         let output = 0, input = 0;
         (entries || []).forEach((e: any) => {
           const name = String(e.chart_of_accounts?.account_name || "").toLowerCase();

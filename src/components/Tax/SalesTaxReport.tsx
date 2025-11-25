@@ -48,84 +48,44 @@ export const SalesTaxReport = () => {
           .single();
         if (!profile?.company_id) return;
 
-        // Get last 6 months
-        const fromDate = new Date();
-        fromDate.setMonth(fromDate.getMonth() - 6);
-        const from = fromDate.toISOString().slice(0, 10);
+        // Remove strict date filter to include all historical sales VAT
 
-        const { data, error } = await supabase
-          .from("transaction_entries")
-          .select(`
-            debit, credit,
-            transactions!inner(transaction_date, company_id, vat_rate, vat_inclusive, total_amount, description, status, transaction_type),
-            chart_of_accounts!inner(account_name, account_type, account_code)
-          `)
-          .eq('transactions.company_id', profile.company_id)
-          .gte('transactions.transaction_date', from)
-          .eq('transactions.status', 'posted')
-          .order('transactions.transaction_date', { ascending: false });
+        const { data: txs, error } = await supabase
+          .from('transactions')
+          .select('id, transaction_date, company_id, vat_rate, vat_inclusive, total_amount, description, status, transaction_type, vat_amount, base_amount')
+          .eq('company_id', profile.company_id)
+          .in('status', ['approved','posted','pending'])
+          .order('transaction_date', { ascending: false });
 
         if (error) throw error;
 
-        const filtered = (data || []);
-
         const byMonth: Record<string, { vatCollected: number; salesExclVat: number; rate: number }> = {};
         const detail: DetailRow[] = [];
-        for (const e of filtered as any[]) {
-          const accName = (e.chart_of_accounts?.account_name || '').toLowerCase();
-          const accCode = String(e.chart_of_accounts?.account_code || '');
-          const isVatOutput = accName.includes('vat output') || accName.includes('vat payable') || accCode === '2100' || accName.includes('vat');
-          const isIncomeTx = String(e.transactions?.transaction_type || '').toLowerCase() === 'income' || String(e.transactions?.transaction_type || '').toLowerCase() === 'sales';
-          const credit = Number(e.credit || 0);
-          const debit = Number(e.debit || 0);
-          const txDate = e.transactions?.transaction_date || e.created_at?.slice(0, 10);
-          const ym = (txDate || '').slice(0, 7);
-          const rate = Number(e.transactions?.vat_rate || 0);
+        for (const t of (txs || []) as any[]) {
+          const type = String(t.transaction_type || '').toLowerCase();
+          const isIncome = type === 'income' || type === 'sales' || type === 'receipt';
+          if (!isIncome) continue;
+          const rate = Number(t.vat_rate || 0);
+          const total = Number(t.total_amount || 0);
+          const base = Number(t.base_amount || 0);
+          const inclusive = Boolean(t.vat_inclusive);
+          let vat = Number(t.vat_amount || 0);
+          let net = base > 0 ? base : 0;
+          if (net === 0) {
+            if (inclusive && rate > 0) {
+              net = total / (1 + rate / 100);
+              vat = total - net;
+            } else if (rate > 0 && vat > 0) {
+              net = total - vat;
+            } else {
+              net = base > 0 ? base : total;
+            }
+          }
+          const ym = String(t.transaction_date || '').slice(0, 7);
           if (!byMonth[ym]) byMonth[ym] = { vatCollected: 0, salesExclVat: 0, rate };
-          if (isVatOutput && credit > debit && rate > 0) {
-            const vat = credit - debit;
-            byMonth[ym].vatCollected += vat;
-            const inclusive = Boolean(e.transactions?.vat_inclusive);
-            const total = Number(e.transactions?.total_amount || 0);
-            const base = Number(e.transactions?.base_amount || 0);
-            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vat);
-            byMonth[ym].salesExclVat += Math.max(0, net);
-            detail.push({ date: txDate || '', description: e.transactions?.description || '', net: Math.max(0, net), vat, total });
-          } else if (isIncomeTx && rate > 0 && Number(e.transactions?.vat_amount || 0) > 0) {
-            const inclusive = Boolean(e.transactions?.vat_inclusive);
-            const total = Number(e.transactions?.total_amount || 0);
-            const base = Number(e.transactions?.base_amount || 0);
-            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - Number(e.transactions?.vat_amount || 0));
-            const vat = Number(e.transactions?.vat_amount || 0);
-            byMonth[ym].vatCollected += Math.max(0, vat);
-            byMonth[ym].salesExclVat += Math.max(0, net);
-            detail.push({ date: txDate || '', description: e.transactions?.description || '', net, vat, total });
-          }
-        }
-
-        if (filtered.length === 0) {
-          const { data: txs } = await supabase
-            .from('transactions')
-            .select('transaction_date, company_id, vat_rate, vat_inclusive, total_amount, description, status, transaction_type, vat_amount, base_amount')
-            .eq('company_id', profile.company_id)
-            .gte('transaction_date', from)
-            .eq('status', 'posted');
-          for (const t of (txs || []) as any[]) {
-            const type = String(t.transaction_type || '').toLowerCase();
-            const isIncome = type === 'income' || type === 'sales' || type === 'receipt';
-            const rate = Number(t.vat_rate || 0);
-            const vat = Number(t.vat_amount || 0);
-            if (!isIncome || rate <= 0 || vat <= 0) continue;
-            const ym = String(t.transaction_date || '').slice(0, 7);
-            if (!byMonth[ym]) byMonth[ym] = { vatCollected: 0, salesExclVat: 0, rate };
-            const total = Number(t.total_amount || 0);
-            const base = Number(t.base_amount || 0);
-            const inclusive = Boolean(t.vat_inclusive);
-            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vat);
-            byMonth[ym].vatCollected += vat;
-            byMonth[ym].salesExclVat += Math.max(0, net);
-            detail.push({ date: String(t.transaction_date || ''), description: t.description || '', net, vat, total });
-          }
+          byMonth[ym].vatCollected += Math.max(0, vat);
+          byMonth[ym].salesExclVat += Math.max(0, net);
+          detail.push({ date: String(t.transaction_date || ''), description: t.description || '', net, vat: Math.max(0, vat), total });
         }
 
         const result: VatRow[] = Object.keys(byMonth)

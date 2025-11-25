@@ -96,7 +96,7 @@ export const transactionsApi = {
 
     const arId = findBy('asset', ['1200'], ['receiv', 'accounts receiv']);
     const revId = findBy('income', ['4000'], ['revenue', 'sales']);
-    let vatOutId = findBy('liability', ['2100'], ['vat output', 'vat payable', 'output tax']);
+    let vatOutId = findBy('liability', ['2200','2100'], ['vat output', 'vat payable', 'output tax']);
     let cogsId = findBy('expense', ['5000'], ['cost of sales', 'cost of goods', 'cogs']);
     let inventoryId = findBy('asset', ['1300'], ['inventory', 'stock']);
 
@@ -126,7 +126,7 @@ export const transactionsApi = {
       try {
         const { data: created } = await supabase
           .from('chart_of_accounts')
-          .insert({ company_id: companyId, account_code: '2100', account_name: 'VAT Output (15%)', account_type: 'liability', is_active: true })
+          .insert({ company_id: companyId, account_code: '2200', account_name: 'VAT Output', account_type: 'liability', is_active: true })
           .select('id')
           .single();
         vatOutId = (created as any)?.id || vatOutId;
@@ -486,7 +486,7 @@ export const transactionsApi = {
     };
     const inventoryId = pick('asset', ['1300'], ['inventory','stock']);
     const apId = pick('liability', ['2000'], ['accounts payable','payable']);
-    let vatInId = pick('liability', ['2110'], ['vat input','vat receivable','input tax']);
+    let vatInId = pick('liability', ['2110','2210'], ['vat input','vat receivable','input tax']);
     if (!inventoryId || !apId) throw new Error('Inventory or Accounts Payable account missing');
     const { data: tx, error: txErr } = await supabase
       .from('transactions')

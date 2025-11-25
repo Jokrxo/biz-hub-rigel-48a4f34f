@@ -6,6 +6,7 @@ import { TaxOverview } from "@/components/Tax/TaxOverview";
 import { TaxRates } from "@/components/Tax/TaxRates";
 import { SalesTaxReport } from "@/components/Tax/SalesTaxReport";
 import { TaxReturns } from "@/components/Tax/TaxReturns";
+import { VAT201 } from "@/components/Tax/VAT201";
 import { PurchaseTaxReport } from "@/components/Tax/PurchaseTaxReport";
 
 export default function TaxPage() {
@@ -28,6 +29,7 @@ export default function TaxPage() {
               <TabsTrigger value="sales-tax">Sales Tax Report</TabsTrigger>
               <TabsTrigger value="tax-expense">Tax on Expense (Purchases)</TabsTrigger>
               <TabsTrigger value="returns">Tax Returns</TabsTrigger>
+              <TabsTrigger value="vat201">VAT201 Calculation</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview">
@@ -48,6 +50,10 @@ export default function TaxPage() {
 
             <TabsContent value="returns">
               <TaxReturns />
+            </TabsContent>
+
+            <TabsContent value="vat201">
+              <VAT201 />
             </TabsContent>
           </Tabs>
         </div>

@@ -40,6 +40,7 @@ export const EnhancedFinancialReports = () => {
     trialBalance: any[];
   }>({ profitLoss: [], balanceSheet: [], cashFlow: [], trialBalance: [] });
   const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
+  const [vatNet, setVatNet] = useState<number>(0);
   
   const [drilldownAccount, setDrilldownAccount] = useState<{
     id: string;
@@ -96,7 +97,7 @@ export const EnhancedFinancialReports = () => {
       }
 
       // Build trial balance for the selected period from ledger entries
-      const trialBalance = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
+    const trialBalance = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
 
       const cogsFallback = await calculateCOGSFromInvoices(profile.company_id, periodStart, periodEnd);
       setFallbackCOGS(cogsFallback);
@@ -395,10 +396,14 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     // Current Assets
     data.push({ type: 'subheader', account: 'Current Assets', amount: 0, accountId: null });
     const currentAssets = trialBalance.filter(a => 
-      (a.account_type.toLowerCase() === 'asset' || (String(a.account_name || '').toLowerCase().includes('vat input') || String(a.account_name || '').toLowerCase().includes('vat receivable'))) && 
-      parseInt(a.account_code || '0') < 1500
+      a.account_type.toLowerCase() === 'asset' && 
+      parseInt(a.account_code || '0') < 1500 &&
+      !String(a.account_name || '').toLowerCase().includes('vat') &&
+      !['1210','2110','2210'].includes(String(a.account_code || ''))
     );
     
+    const vatPayable = Math.max(0, vatNet);
+    const vatReceivable = Math.max(0, -vatNet);
     let totalCurrentAssets = 0;
     const bankPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1100');
     const arPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1200');
@@ -421,6 +426,10 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         totalCurrentAssets += total;
       }
     });
+    if (vatReceivable >= 0) {
+      data.push({ type: 'asset', account: 'VAT Receivable', amount: vatReceivable, accountId: null, accountCode: '1210' });
+      totalCurrentAssets += vatReceivable;
+    }
     data.push({ type: 'subtotal', account: 'Total Current Assets', amount: totalCurrentAssets, accountId: null });
 
     // Fixed Assets
@@ -452,7 +461,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
     data.push({ type: 'header', account: 'LIABILITIES', amount: 0, accountId: null });
     
-    const liabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability' && !(String(a.account_name || '').toLowerCase().includes('vat input') || String(a.account_name || '').toLowerCase().includes('vat receivable')));
+    const liabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability' && !(String(a.account_name || '').toLowerCase().includes('vat') || ['2100','2200'].includes(String(a.account_code || ''))));
     let totalLiabilities = 0;
     liabilities.forEach(acc => {
       // Use balance from trial balance directly
@@ -468,6 +477,8 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         totalLiabilities += total;
       }
     });
+    data.push({ type: 'liability', account: 'VAT Payable', amount: vatPayable, accountId: null, accountCode: '2200' });
+    totalLiabilities += vatPayable;
     data.push({ type: 'subtotal', account: 'Total Liabilities', amount: totalLiabilities, accountId: null });
 
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
@@ -840,3 +851,33 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     </div>
   );
 };
+      const { data: vatTx } = await supabase
+        .from('transactions')
+        .select('transaction_date, transaction_type, vat_rate, vat_inclusive, total_amount, vat_amount, base_amount')
+        .eq('company_id', profile.company_id)
+        .gte('transaction_date', periodStart)
+        .lte('transaction_date', periodEnd)
+        .in('status', ['approved','posted','pending']);
+      let out = 0;
+      let inn = 0;
+      (vatTx || []).forEach((t: any) => {
+        const type = String(t.transaction_type || '').toLowerCase();
+        const isIncome = ['income','sales','receipt'].includes(type);
+        const isPurchase = ['expense','purchase','bill','product_purchase'].includes(type);
+        const rate = Number(t.vat_rate || 0);
+        const total = Number(t.total_amount || 0);
+        const base = Number(t.base_amount || 0);
+        const inclusive = Boolean(t.vat_inclusive);
+        let vat = Number(t.vat_amount || 0);
+        if (vat === 0 && rate > 0) {
+          if (inclusive) {
+            const net = base > 0 ? base : total / (1 + rate / 100);
+            vat = total - net;
+          } else {
+            vat = total - (base > 0 ? base : total);
+          }
+        }
+        if (isIncome) out += Math.max(0, vat);
+        if (isPurchase) inn += Math.max(0, vat);
+      });
+      setVatNet(out - inn);

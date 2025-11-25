@@ -69,6 +69,7 @@ export const GAAPFinancialStatements = () => {
   } | null>(null);
   const [ppeBookValue, setPpeBookValue] = useState<number>(0);
   const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
+  const [vatNet, setVatNet] = useState<number>(0);
 
   useEffect(() => {
     loadFinancialData();
@@ -137,6 +138,37 @@ export const GAAPFinancialStatements = () => {
         .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
         .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
       setPpeBookValue(ppeSum);
+
+      const { data: profileVatTx } = await supabase
+        .from('transactions')
+        .select('transaction_date, transaction_type, vat_rate, vat_inclusive, total_amount, vat_amount, base_amount')
+        .eq('company_id', companyProfile.company_id)
+        .gte('transaction_date', periodStart)
+        .lte('transaction_date', periodEnd)
+        .in('status', ['approved','posted','pending']);
+      let out = 0;
+      let inn = 0;
+      (profileVatTx || []).forEach((t: any) => {
+        const type = String(t.transaction_type || '').toLowerCase();
+        const isIncome = ['income','sales','receipt'].includes(type);
+        const isPurchase = ['expense','purchase','bill','product_purchase'].includes(type);
+        const rate = Number(t.vat_rate || 0);
+        const total = Number(t.total_amount || 0);
+        const base = Number(t.base_amount || 0);
+        const inclusive = Boolean(t.vat_inclusive);
+        let vat = Number(t.vat_amount || 0);
+        if (vat === 0 && rate > 0) {
+          if (inclusive) {
+            const net = base > 0 ? base : total / (1 + rate / 100);
+            vat = total - net;
+          } else {
+            vat = total - (base > 0 ? base : total);
+          }
+        }
+        if (isIncome) out += Math.max(0, vat);
+        if (isPurchase) inn += Math.max(0, vat);
+      });
+      setVatNet(out - inn);
 
       // Validate accounting equation
       const { data: equation, error: eqError } = await supabase
@@ -235,16 +267,12 @@ export const GAAPFinancialStatements = () => {
           const accTotal = related.reduce((sum: number, r: any) => sum + r.balance, 0);
           return assetRow.balance - accTotal;
         };
-        const currentLiabilities = trialBalance.filter(r =>
-          r.account_type.toLowerCase() === 'liability' &&
-          (r.account_name.toLowerCase().includes('payable') ||
-           r.account_name.toLowerCase().includes('sars') ||
-           r.account_name.toLowerCase().includes('vat')) &&
-          !(
-            r.account_name.toLowerCase().includes('vat input') ||
-            r.account_name.toLowerCase().includes('vat receivable')
-          )
-        );
+    const currentLiabilities = trialBalance.filter(r =>
+      r.account_type.toLowerCase() === 'liability' &&
+      (r.account_name.toLowerCase().includes('payable') ||
+       r.account_name.toLowerCase().includes('sars')) &&
+      !r.account_name.toLowerCase().includes('vat')
+    );
         const vatInputAsAssets = trialBalance.filter(r =>
           (r.account_name.toLowerCase().includes('vat input') || r.account_name.toLowerCase().includes('vat receivable'))
         );
@@ -490,7 +518,9 @@ export const GAAPFinancialStatements = () => {
        r.account_name.toLowerCase().includes('bank') ||
        r.account_name.toLowerCase().includes('receivable') ||
        r.account_name.toLowerCase().includes('inventory') ||
-       parseInt(r.account_code) < 1500)
+       parseInt(r.account_code) < 1500) &&
+      !String(r.account_name || '').toLowerCase().includes('vat') &&
+      !['1210','2110','2210'].includes(String(r.account_code || ''))
     );
     
     const nonCurrentAssetsAll = trialBalance.filter(r =>
@@ -517,17 +547,17 @@ export const GAAPFinancialStatements = () => {
       return assetRow.balance - accTotal;
     };
     
-    const currentLiabilities = trialBalance.filter(r =>
+    const liabilitiesExVat = trialBalance.filter(r =>
       r.account_type.toLowerCase() === 'liability' &&
-      (r.account_name.toLowerCase().includes('payable') ||
-       r.account_name.toLowerCase().includes('sars') ||
-       r.account_name.toLowerCase().includes('vat') ||
-       parseInt(r.account_code) < 2300)
+      !String(r.account_name || '').toLowerCase().includes('vat') &&
+      !['2100','2200'].includes(String(r.account_code || ''))
     );
-    
-    const nonCurrentLiabilities = trialBalance.filter(r =>
-      r.account_type.toLowerCase() === 'liability' && !currentLiabilities.includes(r)
+    const currentLiabilities = liabilitiesExVat.filter(r =>
+      r.account_name.toLowerCase().includes('payable') ||
+      r.account_name.toLowerCase().includes('sars') ||
+      parseInt(String(r.account_code || '0')) < 2300
     );
+    const nonCurrentLiabilities = liabilitiesExVat.filter(r => !currentLiabilities.includes(r));
     
     const equity = trialBalance.filter(r => r.account_type.toLowerCase() === 'equity');
 
@@ -559,13 +589,15 @@ export const GAAPFinancialStatements = () => {
       equityDisplay.push(syntheticRetained);
     }
 
-    const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0);
+    const vatPayable = Math.max(0, vatNet);
+    const vatReceivable = Math.max(0, -vatNet);
+    const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0) + vatReceivable;
     const totalNonCurrentAssets = ppeBookValue;
-    const totalAssets = totalCurrentAssets + ppeBookValue;
+    const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
     
     const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0);
     const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
-    const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
+    const totalLiabilities = totalCurrentLiabilities + vatPayable + totalNonCurrentLiabilities;
     
     const totalEquity = equityDisplay.reduce((sum, r) => sum + r.balance, 0);
 
@@ -601,6 +633,10 @@ export const GAAPFinancialStatements = () => {
                 <span className="font-mono">R {row.balance.toLocaleString()}</span>
               </div>
             ))}
+            <div className="flex justify-between py-1 px-2">
+              <span>VAT Receivable</span>
+              <span className="font-mono">R {vatReceivable.toLocaleString()}</span>
+            </div>
             <div className="flex justify-between py-2 font-semibold border-t mt-2">
               <span>Total Current Assets</span>
               <span className="font-mono">R {totalCurrentAssets.toLocaleString()}</span>
@@ -638,9 +674,13 @@ export const GAAPFinancialStatements = () => {
                 <span className="font-mono">R {row.balance.toLocaleString()}</span>
               </div>
             ))}
+            <div className="flex justify-between py-1 px-2">
+              <span>VAT Payable</span>
+              <span className="font-mono">R {vatPayable.toLocaleString()}</span>
+            </div>
             <div className="flex justify-between py-2 font-semibold border-t mt-2">
               <span>Total Current Liabilities</span>
-              <span className="font-mono">R {totalCurrentLiabilities.toLocaleString()}</span>
+              <span className="font-mono">R {(totalCurrentLiabilities + vatPayable).toLocaleString()}</span>
             </div>
           </div>
 

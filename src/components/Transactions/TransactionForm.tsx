@@ -480,7 +480,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         return;
       }
 
-      const vatAmount = amount * (parseFloat(form.vatRate) / 100);
+      const ratePct = parseFloat(form.vatRate) || 0;
+      const vatAmount = amount * (ratePct / 100);
       const totalAmount = amount + vatAmount;
 
       const { data: { user } } = await supabase.auth.getUser();
@@ -519,7 +520,6 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       let txError;
       if (editData?.id) {
         const existingTotal = Number(editData.total_amount || totalAmount || 0);
-        const ratePct = parseFloat(form.vatRate) || 0;
         const baseFromInclusive = ratePct > 0 ? existingTotal / (1 + ratePct / 100) : existingTotal;
         const vatFromInclusive = ratePct > 0 ? existingTotal - baseFromInclusive : 0;
         const { data: updated, error: updErr } = await supabase
@@ -651,10 +651,51 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         }
       }
 
-      const entries = [
-        { account_id: form.debitAccount, debit: totalAmount, credit: 0, description: form.description.trim() },
-        { account_id: form.creditAccount, debit: 0, credit: totalAmount, description: form.description.trim() }
-      ];
+      const isIncomeTx = ['income','sales','receipt'].includes(String(form.transactionType).toLowerCase());
+      const isPurchaseTx = ['expense','purchase','bill','product_purchase'].includes(String(form.transactionType).toLowerCase());
+      let vatOutputAcc = accounts.find(a => a.account_code === '2100' || (a.account_name || '').toLowerCase().includes('vat output') || (a.account_name || '').toLowerCase().includes('vat payable'));
+      let vatInputAcc = accounts.find(a => a.account_code === '2110' || (a.account_name || '').toLowerCase().includes('vat input') || (a.account_name || '').toLowerCase().includes('vat receivable'));
+
+      try {
+        if (ratePct > 0 && isIncomeTx && !vatOutputAcc) {
+          const { data: created } = await supabase
+            .from('chart_of_accounts')
+            .insert({ company_id: profile.company_id, account_code: '2100', account_name: 'VAT Output (15%)', account_type: 'liability', is_active: true })
+            .select('*')
+            .single();
+          if (created) {
+            vatOutputAcc = created as any;
+            accounts.push(created as any);
+          }
+        }
+        if (ratePct > 0 && isPurchaseTx && !vatInputAcc) {
+          const { data: created } = await supabase
+            .from('chart_of_accounts')
+            .insert({ company_id: profile.company_id, account_code: '2110', account_name: 'VAT Input', account_type: 'liability', is_active: true })
+            .select('*')
+            .single();
+          if (created) {
+            vatInputAcc = created as any;
+            accounts.push(created as any);
+          }
+        }
+      } catch {}
+
+      const entries: Array<{ account_id: string; debit: number; credit: number; description: string }> = [];
+      if (ratePct > 0 && (isIncomeTx || isPurchaseTx) && (vatOutputAcc || vatInputAcc)) {
+        if (isIncomeTx) {
+          entries.push({ account_id: form.debitAccount, debit: totalAmount, credit: 0, description: form.description.trim() });
+          entries.push({ account_id: form.creditAccount, debit: 0, credit: amount, description: form.description.trim() });
+          if (vatOutputAcc) entries.push({ account_id: vatOutputAcc.id, debit: 0, credit: vatAmount, description: `VAT Output ${ratePct}%` });
+        } else if (isPurchaseTx) {
+          entries.push({ account_id: form.debitAccount, debit: amount, credit: 0, description: form.description.trim() });
+          if (vatInputAcc) entries.push({ account_id: vatInputAcc.id, debit: vatAmount, credit: 0, description: `VAT Input ${ratePct}%` });
+          entries.push({ account_id: form.creditAccount, debit: 0, credit: totalAmount, description: form.description.trim() });
+        }
+      } else {
+        entries.push({ account_id: form.debitAccount, debit: totalAmount, credit: 0, description: form.description.trim() });
+        entries.push({ account_id: form.creditAccount, debit: 0, credit: totalAmount, description: form.description.trim() });
+      }
 
       
       const invalidEntries = entries.filter(entry => {
