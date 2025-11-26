@@ -36,26 +36,28 @@ export default defineConfig({
         ]
       },
       manifest: {
+        id: '/',
         name: 'Rigel Business - Accounting Management System',
         short_name: 'Rigel Business',
         description: 'Rigel Business: accounting and financial management with VAT, loans, and reports',
         start_url: '/',
+        scope: '/',
         display: 'standalone',
         background_color: '#ffffff',
         theme_color: '#2563eb',
         orientation: 'portrait-primary',
         icons: [
           {
-            src: 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22192%22 height=%22192%22><rect width=%22192%22 height=%22192%22 rx=%2224%22 fill=%22%232563eb%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Arial%22 font-size=%2272%22>R</text></svg>',
+            src: '/icons/icon-192x192.png',
             sizes: '192x192',
-            type: 'image/svg+xml',
-            purpose: 'any'
+            type: 'image/png',
+            purpose: 'any maskable'
           },
           {
-            src: 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22512%22 height=%22512%22><rect width=%22512%22 height=%22512%22 rx=%2240%22 fill=%22%232563eb%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22white%22 font-family=%22Arial%22 font-size=%22200%22>R</text></svg>',
+            src: '/icons/icon-512x512.png',
             sizes: '512x512',
-            type: 'image/svg+xml',
-            purpose: 'any'
+            type: 'image/png',
+            purpose: 'any maskable'
           }
         ],
         categories: ['finance', 'business', 'productivity'],
@@ -65,14 +67,14 @@ export default defineConfig({
             short_name: 'Transaction',
             description: 'Quickly add a new transaction',
             url: '/transactions/new',
-            icons: [{ src: '/icons/transaction.png', sizes: '192x192' }]
+            icons: [{ src: '/icons/icon-192x192.png', sizes: '192x192' }]
           },
           {
             name: 'View Reports',
             short_name: 'Reports',
             description: 'View financial reports',
             url: '/reports',
-            icons: [{ src: '/icons/reports.png', sizes: '192x192' }]
+            icons: [{ src: '/icons/icon-192x192.png', sizes: '192x192' }]
           }
         ]
       },

@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useNavigate } from "react-router-dom";
 import { Sparkles, Activity, Link as LinkIcon, ShieldCheck } from "lucide-react";
+import { systemOverview, accountingPrimer } from "./knowledge";
 
 interface FeedItem { id: string; title: string; description: string; ts: string }
 interface ChatMsg { role: 'bot' | 'user'; text: string; ts: string }
@@ -140,7 +141,19 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
     }
     if (!answer && aiEnabled && openaiKey) {
       try {
-        const sys = "You are Stella, an assistant for a finance manager web app. Answer clearly and concisely.";
+        const context = [
+          `CompanyId: ${companyId}`,
+          `Metrics: tx=${metrics.tx}, inv=${metrics.inv}, po=${metrics.po}, bills=${metrics.bills}, budgets=${metrics.budgets}, bank=${metrics.bank}, customers=${metrics.customers}, items=${metrics.items}`
+        ].join(" | ");
+        const sys = [
+          "You are Stella, an assistant for a finance manager web app.",
+          "Use clear, concise answers. Include short calculations when helpful.",
+          "If the user asks about VAT, respect exclusive vs inclusive rules.",
+          "If the user asks about system behavior, use the provided overview.",
+          `Context: ${context}`,
+          systemOverview,
+          accountingPrimer
+        ].join("\n\n");
         const history = messages.map(m => ({ role: m.role === 'bot' ? 'assistant' as const : 'user' as const, content: m.text }));
         const body = { model, messages: [{ role: 'system', content: sys }, ...history, { role: 'user', content: q }], temperature: 0.3 };
         const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -270,29 +283,32 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
               <div className="space-y-2">
                 <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><span className="text-sm">Company-scoped realtime enabled</span></div>
                 <div className="text-xs text-muted-foreground">Live updates bound to your company only.</div>
-                <div className="mt-4 p-3 border rounded-md space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Switch checked={aiEnabled} onCheckedChange={(v) => { setAiEnabled(v); localStorage.setItem('stella_ai_enabled', v ? 'true' : 'false'); }} />
-                    <span className="text-sm">Enable OpenAI</span>
+              <div className="mt-4 p-3 border rounded-md space-y-3">
+                <div className="flex items-center gap-2">
+                  <Switch checked={aiEnabled} onCheckedChange={(v) => { setAiEnabled(v); localStorage.setItem('stella_ai_enabled', v ? 'true' : 'false'); }} />
+                  <span className="text-sm">Enable OpenAI</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Input type="password" placeholder="OpenAI API Key" value={openaiKey} onChange={(e) => { setOpenaiKey(e.target.value); localStorage.setItem('stella_openai_key', e.target.value); }} />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Input type="password" placeholder="OpenAI API Key" value={openaiKey} onChange={(e) => { setOpenaiKey(e.target.value); localStorage.setItem('stella_openai_key', e.target.value); }} />
-                    </div>
-                    <div>
-                      <Select value={model} onValueChange={(v) => { setModel(v); localStorage.setItem('stella_openai_model', v); }}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="gpt-4o-mini">gpt-4o-mini</SelectItem>
-                          <SelectItem value="gpt-4o">gpt-4o</SelectItem>
-                          <SelectItem value="gpt-3.5-turbo">gpt-3.5-turbo</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <div>
+                    <Select value={model} onValueChange={(v) => { setModel(v); localStorage.setItem('stella_openai_model', v); }}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gpt-4o-mini">gpt-4o-mini</SelectItem>
+                        <SelectItem value="gpt-4o">gpt-4o</SelectItem>
+                        <SelectItem value="gpt-3.5-turbo">gpt-3.5-turbo</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
+                <div className="text-xs text-muted-foreground">
+                  Your key is stored locally. The assistant uses system context and accounting rules to answer.
+                </div>
               </div>
-            </TabsContent>
+            </div>
+          </TabsContent>
           </Tabs>
         </div>
       </DialogContent>

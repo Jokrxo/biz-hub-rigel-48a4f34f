@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,6 +30,7 @@ interface FixedAsset {
 }
 
 export default function FixedAssetsPage() {
+  const navigate = useNavigate();
   const [assets, setAssets] = useState<FixedAsset[]>([]);
   const [assetAccounts, setAssetAccounts] = useState<Array<{ id: string; account_code: string; account_name: string }>>([]);
   const [loanAccounts, setLoanAccounts] = useState<Array<{ id: string; account_code: string; account_name: string }>>([]);
@@ -74,6 +76,23 @@ export default function FixedAssetsPage() {
       localStorage.setItem(key, "true");
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!selectedAsset) return;
+    const norm = String(selectedAsset.description || '').split('[')[0].trim().toLowerCase();
+    const byName = assetAccounts.find(a => a.account_name.toLowerCase().includes(norm));
+    const byToken = assetAccounts.find(a => {
+      const n = a.account_name.toLowerCase();
+      return ['fixed asset','equipment','vehicle','machinery','property','computer','office'].some(t => n.includes(t));
+    });
+    const byCode = assetAccounts.find(a => String(a.account_code || '').startsWith('15'));
+    const bankCandidate = assetAccounts.find(a => a.account_name.toLowerCase().includes('bank'));
+    setDisposalData(prev => ({
+      ...prev,
+      asset_account_id: (byName?.id || byToken?.id || byCode?.id || prev.asset_account_id || ''),
+      bank_account_id: (bankCandidate?.id || prev.bank_account_id || '')
+    }));
+  }, [selectedAsset, assetAccounts]);
 
   const loadAssets = async () => {
     try {
@@ -229,142 +248,31 @@ export default function FixedAssetsPage() {
   const handleDispose = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAsset) return;
-
-    try {
-      const nbv = calculateNetBookValue(selectedAsset);
-      const disposalAmount = parseFloat(disposalData.disposal_amount);
-      
-      if (disposalAmount > nbv) {
-        if (!confirm(`Disposal amount (R ${disposalAmount.toLocaleString()}) exceeds Net Book Value (R ${nbv.toLocaleString()}). This will result in a gain. Continue?`)) {
-          return;
-        }
+    const nbv = calculateNetBookValue(selectedAsset);
+    const disposalAmount = parseFloat(disposalData.disposal_amount);
+    if (disposalAmount > nbv) {
+      if (!confirm(`Disposal amount (R ${disposalAmount.toLocaleString()}) exceeds Net Book Value (R ${nbv.toLocaleString()}). This will result in a gain. Continue?`)) {
+        return;
       }
-
-      const { error } = await supabase
-        .from("fixed_assets")
-        .update({
-          status: "disposed",
-          disposal_date: disposalData.disposal_date,
-        })
-        .eq("id", selectedAsset.id);
-
-      if (error) throw error;
-
-      try {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("company_id")
-          .eq("user_id", user?.id)
-          .single();
-
-        const companyId = profile!.company_id;
-
-        const { data: accounts } = await supabase
-          .from("chart_of_accounts")
-          .select("id, account_code, account_name, account_type")
-          .eq("company_id", companyId)
-          .eq("is_active", true)
-          .order("account_code");
-
-        const findBy = (type: string, names: string[], codes?: string[]) => {
-          const lower = (accounts || []).map(a => ({
-            id: String(a.id),
-            account_code: String((a as any).account_code || ''),
-            account_name: String((a as any).account_name || '').toLowerCase(),
-            account_type: String((a as any).account_type || '').toLowerCase(),
-          }));
-          if (codes && codes.length) {
-            const byCode = lower.find(a => a.account_type === type && codes.includes(a.account_code));
-            if (byCode) return byCode.id;
-          }
-          const byName = lower.find(a => a.account_type === type && names.some(n => a.account_name.includes(n)));
-          if (byName) return byName.id;
-          const byType = lower.find(a => a.account_type === type);
-          return byType?.id || "";
-        };
-
-        const assetAccountId = disposalData.asset_account_id || findBy('asset', ['fixed asset','equipment','vehicle','machinery','property'], ['1500']);
-        const accDepAccountId = findBy('asset', ['accumulated','depreciation']);
-        const bankId = disposalData.bank_account_id || "";
-        const disposalIncomeId = findBy('income', ['disposal','asset disposal','other income']);
-        const disposalExpenseId = findBy('expense', ['disposal','asset disposal','other expense']);
-
-        const cost = Number(selectedAsset.cost || 0);
-        const accum = Number(selectedAsset.accumulated_depreciation || 0);
-        const proceeds = isNaN(disposalAmount) ? 0 : disposalAmount;
-        const bookValue = Math.max(0, cost - accum);
-        const nbv = bookValue;
-
-        const description = `Asset Disposal - ${selectedAsset.description}`;
-
-        const basePayload: any = {
-          company_id: companyId,
-          user_id: user!.id,
-          transaction_date: disposalData.disposal_date,
-          description,
-          reference_number: null,
-          total_amount: proceeds,
-          bank_account_id: bankId || null,
-          status: "approved"
-        };
-        let txId: string | null = null;
-        try {
-          const { data: tx } = await supabase
-            .from("transactions" as any)
-            .insert({ ...basePayload, transaction_type: "asset_disposal" } as any)
-            .select("id")
-            .single();
-          txId = tx?.id || null;
-        } catch (err: any) {
-          const msg = String(err?.message || '').toLowerCase();
-          const retry = msg.includes('column') && msg.includes('does not exist');
-          if (!retry) throw err;
-          const { data: tx2 } = await supabase
-            .from("transactions" as any)
-            .insert(basePayload as any)
-            .select("id")
-            .single();
-          txId = tx2?.id || null;
-        }
-
-        if (txId) {
-          const entries: any[] = [];
-          if (proceeds > 0 && bankId) {
-            entries.push({ transaction_id: txId, account_id: bankId, debit: proceeds, credit: 0, description: 'Proceeds from Disposal', status: 'approved' });
-          }
-          if (disposalIncomeId && proceeds > 0) {
-            entries.push({ transaction_id: txId, account_id: disposalIncomeId, debit: 0, credit: proceeds, description: 'Disposal Income (Proceeds)', status: 'approved' });
-          }
-          if (accDepAccountId && accum > 0) {
-            entries.push({ transaction_id: txId, account_id: accDepAccountId, debit: accum, credit: 0, description: 'Derecognize Accumulated Depreciation', status: 'approved' });
-          }
-          if (disposalExpenseId && nbv > 0) {
-            entries.push({ transaction_id: txId, account_id: disposalExpenseId, debit: nbv, credit: 0, description: 'Disposal Expense (NBV)', status: 'approved' });
-          }
-          if (assetAccountId && cost > 0) {
-            entries.push({ transaction_id: txId, account_id: assetAccountId, debit: 0, credit: cost, description: 'Derecognize Asset Cost', status: 'approved' });
-          }
-
-          const { error: entErr } = await supabase.from("transaction_entries").insert(entries as any);
-          if (!entErr) {
-            await supabase.from("transactions").update({ status: 'approved' }).eq("id", txId);
-          }
-        }
-      } catch {}
-
-      toast({ title: "Success", description: "Asset disposed and postings recorded" });
-      setDisposalDialogOpen(false);
-      setSelectedAsset(null);
-      setDisposalData({ 
-        disposal_date: new Date().toISOString().split("T")[0], 
-        disposal_amount: "", 
-        asset_account_id: disposalData.asset_account_id || "", 
-        bank_account_id: disposalData.bank_account_id || "" 
-      });
-      loadAssets();
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
     }
+    const params = new URLSearchParams({
+      flow: 'asset_disposal',
+      asset_id: String(selectedAsset.id),
+      date: disposalData.disposal_date,
+      amount: String(disposalAmount || ''),
+      bank_id: disposalData.bank_account_id || '',
+      asset_account_id: disposalData.asset_account_id || '',
+      description: `Asset Disposal - ${selectedAsset.description}`
+    });
+    navigate(`/transactions?${params.toString()}`);
+    setDisposalDialogOpen(false);
+    setSelectedAsset(null);
+    setDisposalData({ 
+      disposal_date: new Date().toISOString().split("T")[0], 
+      disposal_amount: "", 
+      asset_account_id: disposalData.asset_account_id || "", 
+      bank_account_id: disposalData.bank_account_id || "" 
+    });
   };
 
   const canEdit = isAdmin || isAccountant;
@@ -644,6 +552,13 @@ export default function FixedAssetsPage() {
                               variant="outline" 
                               onClick={() => {
                                 setSelectedAsset(asset);
+                                const byName = assetAccounts.find(a => a.account_name.toLowerCase().includes((asset.description || '').toLowerCase()));
+                                const bankCandidate = assetAccounts.find(a => a.account_name.toLowerCase().includes('bank'));
+                                setDisposalData(prev => ({
+                                  ...prev,
+                                  asset_account_id: (byName?.id || prev.asset_account_id || ''),
+                                  bank_account_id: (bankCandidate?.id || prev.bank_account_id || '')
+                                }));
                                 setDisposalDialogOpen(true);
                               }}
                             >
@@ -723,6 +638,32 @@ export default function FixedAssetsPage() {
                         placeholder="Amount received from sale"
                         required
                       />
+                    </div>
+                    <div>
+                      <Label>Asset Account (to derecognize)</Label>
+                      <Select value={disposalData.asset_account_id} onValueChange={(val) => setDisposalData({ ...disposalData, asset_account_id: val })}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {assetAccounts.map(acc => (
+                            <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Bank Account (proceeds)</Label>
+                      <Select value={disposalData.bank_account_id} onValueChange={(val) => setDisposalData({ ...disposalData, bank_account_id: val })}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {assetAccounts.filter(a => a.account_name.toLowerCase().includes('bank')).map(acc => (
+                            <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="text-sm text-muted-foreground">
                       {disposalData.disposal_amount && (

@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -32,11 +33,15 @@ interface Quote {
 
 export const SalesQuotes = () => {
   const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [services, setServices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const { user } = useAuth();
   const { toast } = useToast();
   const { isAdmin, isAccountant } = useRoles();
+  const todayStr = new Date().toISOString().split("T")[0];
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -44,7 +49,7 @@ export const SalesQuotes = () => {
     quote_date: new Date().toISOString().split("T")[0],
     expiry_date: "",
     notes: "",
-    items: [{ description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
+    items: [{ product_id: "", description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
   });
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
   const [sendEmail, setSendEmail] = useState<string>('');
@@ -56,13 +61,12 @@ export const SalesQuotes = () => {
   const [endDate, setEndDate] = useState<string>("");
 
   useEffect(() => {
-    loadQuotes();
+    loadData();
 
-    // Real-time updates
     const channel = supabase
       .channel('quotes-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => {
-        loadQuotes();
+        loadData();
       })
       .subscribe();
 
@@ -78,7 +82,7 @@ export const SalesQuotes = () => {
     }
   }, []);
 
-  const loadQuotes = async () => {
+  const loadData = async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
@@ -87,6 +91,28 @@ export const SalesQuotes = () => {
         .maybeSingle();
 
       if (!profile) return;
+
+      const { data: customersData } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("name");
+      setCustomers(customersData || []);
+
+      const { data: productsData } = await supabase
+        .from("items")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .eq("item_type", "product")
+        .order("name");
+      setProducts(productsData || []);
+      const { data: servicesData } = await supabase
+        .from("items")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .eq("item_type", "service")
+        .order("name");
+      setServices(servicesData || []);
 
       const { data, error } = await supabase
         .from("quotes")
@@ -121,6 +147,31 @@ export const SalesQuotes = () => {
     setFormData({ ...formData, items: newItems });
   };
 
+  const updateItemProduct = (index: number, productId: string) => {
+    const product = products.find((p: any) => String(p.id) === String(productId));
+    const service = services.find((s: any) => String(s.id) === String(productId));
+    const newItems = [...formData.items];
+    newItems[index] = { ...newItems[index], product_id: productId } as any;
+    const picked: any = product || service;
+    if (picked) {
+      const name = (picked.name ?? picked.description ?? '').toString();
+      (newItems[index] as any).description = name;
+      if (typeof picked.unit_price === 'number') {
+        (newItems[index] as any).unit_price = picked.unit_price;
+      }
+    }
+    setFormData({ ...formData, items: newItems });
+  };
+
+  const applyCustomerSelection = (name: string) => {
+    const selected = customers.find((c: any) => c.name === name);
+    setFormData(prev => ({
+      ...prev,
+      customer_name: name,
+      customer_email: selected?.email ?? "",
+    }));
+  };
+
   const calculateTotals = () => {
     let subtotal = 0;
     let taxAmount = 0;
@@ -138,6 +189,48 @@ export const SalesQuotes = () => {
     e.preventDefault();
     if (!isAdmin && !isAccountant) {
       toast({ title: "Permission denied", variant: "destructive" });
+      return;
+    }
+    if (!formData.customer_name) {
+      toast({ title: "Customer required", description: "Please select a customer.", variant: "destructive" });
+      return;
+    }
+    if (formData.items.some((it: any) => !it.product_id)) {
+      toast({ title: "Item required", description: "Select a product or service for each item.", variant: "destructive" });
+      return;
+    }
+    if (formData.items.some((it: any) => (Number(it.quantity) || 0) <= 0)) {
+      toast({ title: "Invalid quantity", description: "Each item must have quantity > 0.", variant: "destructive" });
+      return;
+    }
+    for (const it of formData.items as any[]) {
+      const prod = products.find((p: any) => String(p.id) === String((it as any).product_id));
+      const svc = services.find((s: any) => String(s.id) === String((it as any).product_id));
+      if (svc) continue;
+      const available = Number(prod?.quantity_on_hand ?? 0);
+      const requested = Number((it as any).quantity ?? 0);
+      if (!prod) {
+        toast({ title: "Product not found", description: "Selected product no longer exists.", variant: "destructive" });
+        return;
+      }
+      if (requested > available) {
+        toast({ title: "Insufficient stock", description: `Requested ${requested}, available ${available} for ${prod.name}.`, variant: "destructive" });
+        return;
+      }
+    }
+    const qDate = new Date(formData.quote_date);
+    const eDate = formData.expiry_date ? new Date(formData.expiry_date) : null;
+    const today = new Date(todayStr);
+    if (isNaN(qDate.getTime())) {
+      toast({ title: "Invalid date", description: "Quote date is not valid.", variant: "destructive" });
+      return;
+    }
+    if (qDate > today) {
+      toast({ title: "Invalid quote date", description: "Quote date cannot be in the future.", variant: "destructive" });
+      return;
+    }
+    if (eDate && eDate < qDate) {
+      toast({ title: "Invalid expiry date", description: "Expiry date cannot be earlier than quote date.", variant: "destructive" });
       return;
     }
 
@@ -190,7 +283,7 @@ export const SalesQuotes = () => {
       toast({ title: "Success", description: "Quote created successfully" });
       setDialogOpen(false);
       resetForm();
-      loadQuotes();
+      loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
@@ -203,7 +296,7 @@ export const SalesQuotes = () => {
       quote_date: new Date().toISOString().split("T")[0],
       expiry_date: "",
       notes: "",
-      items: [{ description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
+      items: [{ product_id: "", description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
     });
   };
 
@@ -270,7 +363,7 @@ export const SalesQuotes = () => {
         .eq("id", quoteId);
 
       toast({ title: "Success", description: "Quote converted to invoice successfully" });
-      loadQuotes();
+      loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
@@ -391,7 +484,7 @@ export const SalesQuotes = () => {
       const { error } = await supabase.from("quotes").delete().eq("id", id);
       if (error) throw error;
       toast({ title: "Success", description: "Quote deleted" });
-      loadQuotes();
+      loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
@@ -519,13 +612,20 @@ export const SalesQuotes = () => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Customer Name *</Label>
-                <Input
-                  value={formData.customer_name}
-                  onChange={(e) => setFormData({ ...formData, customer_name: e.target.value })}
-                  placeholder="Enter customer name"
-                  required
-                />
+                <div className="flex items-center justify-between">
+                  <Label>Customer *</Label>
+                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/customers', '_blank')}>Add customer</Button>
+                </div>
+                <Select value={formData.customer_name} onValueChange={(value) => applyCustomerSelection(value)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={customers.length ? "Select customer" : "No customers found"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customers.map((c: any) => (
+                      <SelectItem key={c.id ?? c.name} value={c.name}>{c.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div>
                 <Label>Customer Email</Label>
@@ -544,6 +644,7 @@ export const SalesQuotes = () => {
                   type="date"
                   value={formData.quote_date}
                   onChange={(e) => setFormData({ ...formData, quote_date: e.target.value })}
+                  max={todayStr}
                   required
                 />
               </div>
@@ -553,6 +654,7 @@ export const SalesQuotes = () => {
                   type="date"
                   value={formData.expiry_date}
                   onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
+                  min={formData.quote_date}
                 />
               </div>
             </div>
@@ -567,7 +669,10 @@ export const SalesQuotes = () => {
 
             <div>
               <div className="flex justify-between items-center mb-2">
-                <Label>Items</Label>
+                <div className="flex items-center gap-3">
+                  <Label>Items</Label>
+                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/sales?tab=products', '_blank')}>Add product</Button>
+                </div>
                 <Button type="button" size="sm" variant="outline" onClick={addItem}>
                   <Plus className="h-4 w-4 mr-2" />
                   Add Item
@@ -578,13 +683,21 @@ export const SalesQuotes = () => {
                 {formData.items.map((item, index) => (
                   <div key={index} className="grid grid-cols-12 gap-2 items-end p-3 border rounded-lg">
                     <div className="col-span-4">
-                      <Label className="text-xs">Description</Label>
-                      <Input
-                        placeholder="Item description"
-                        value={item.description}
-                        onChange={(e) => updateItem(index, "description", e.target.value)}
-                        required
-                      />
+                      <Label className="text-xs">Product/Service</Label>
+                      <Select value={(item as any).product_id || ""} onValueChange={(val) => updateItemProduct(index, val)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder={(products.length + services.length) ? "Select an item" : "No items found"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {products.map((p: any) => (
+                            <SelectItem key={p.id} value={String(p.id)}>{(p.name ?? p.title ?? p.description ?? `Product ${p.id}`) as string}</SelectItem>
+                          ))}
+                          {services.map((s: any) => (
+                            <SelectItem key={s.id} value={String(s.id)}>{((s.name ?? s.title ?? s.description ?? `Service ${s.id}`) as string)}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="mt-2 text-[11px] text-muted-foreground">{item.description}</div>
                     </div>
                     <div className="col-span-2">
                       <Label className="text-xs">Qty</Label>

@@ -51,6 +51,7 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
   const { user } = useAuth();
   const [userProfile, setUserProfile] = useState<{ name: string; role: string } | null>(null);
   const [logoError, setLogoError] = useState(false);
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const loadUserProfile = async () => {
@@ -73,6 +74,13 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
             .eq("company_id", profile.company_id)
             .maybeSingle();
 
+          // Get company logo
+          const { data: company } = await supabase
+            .from("companies")
+            .select("logo_url")
+            .eq("id", profile.company_id)
+            .maybeSingle();
+
           const fullName = [profile.first_name, profile.last_name]
             .filter(Boolean)
             .join(" ") || user.email?.split("@")[0] || "User";
@@ -80,6 +88,7 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
           const role = roles?.role || "User";
 
           setUserProfile({ name: fullName, role });
+          setCompanyLogoUrl(company?.logo_url || null);
         } else {
           // Fallback to email if no profile
           setUserProfile({ 
@@ -159,15 +168,24 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
 
         {/* Footer */}
         <div className="border-t border-sidebar-border p-4">
-          <div className={cn("flex items-center gap-3", !open && "justify-center")}>
+        <div className={cn("flex items-center gap-3", !open && "justify-center")}>
+          {companyLogoUrl && !logoError ? (
+            <img
+              src={companyLogoUrl}
+              alt="Company Logo"
+              className="h-8 w-8 rounded-full object-cover"
+              onError={() => setLogoError(true)}
+            />
+          ) : (
             <div className="h-8 w-8 rounded-full bg-gradient-accent flex items-center justify-center text-sidebar-foreground font-semibold text-sm">
               {userProfile?.name ? userProfile.name.charAt(0).toUpperCase() : "U"}
             </div>
-            {open && (
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-sidebar-foreground truncate">
-                  {userProfile?.name || "User"}
-                </p>
+          )}
+          {open && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-sidebar-foreground truncate">
+                {userProfile?.name || "User"}
+              </p>
                 <p className="text-xs text-sidebar-foreground/70 capitalize">
                   {userProfile?.role || "User"}
                 </p>

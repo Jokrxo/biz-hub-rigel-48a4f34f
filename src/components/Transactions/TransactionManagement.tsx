@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, Suspense, lazy } from "react";
+import { useLocation } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
  
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ interface Transaction {
 
 export const TransactionManagement = () => {
   const { toast } = useToast();
+  const location = useLocation();
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -39,6 +41,8 @@ export const TransactionManagement = () => {
   const [items, setItems] = useState<Transaction[]>([]);
   const [open, setOpen] = useState(false);
   const [editData, setEditData] = useState<any>(null);
+  const [prefillData, setPrefillData] = useState<any>(null);
+  const [headless, setHeadless] = useState(false);
   const [sourceTab, setSourceTab] = useState<"all" | "invoice" | "csv" | "bank" | "manual" | "purchase">("all");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -148,6 +152,70 @@ export const TransactionManagement = () => {
 
   useEffect(() => { load(); }, [page, pageSize, searchTerm, filterType, filterStatus, sourceTab]);
   useEffect(() => { setPage(0); }, [searchTerm, filterType, filterStatus, sourceTab, pageSize]);
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(location.search || "");
+      const flow = params.get("flow") || "";
+      if (flow.toLowerCase() === "asset_disposal") {
+        const assetId = params.get("asset_id") || "";
+        const date = params.get("date") || new Date().toISOString().slice(0,10);
+        const amount = params.get("amount") || "";
+        const bankLedgerId = params.get("bank_id") || "";
+        const assetAccountId = params.get("asset_account_id") || "";
+        const description = params.get("description") || "Asset Disposal";
+
+        (async () => {
+          try {
+            const { data: { user } } = await supabase.auth.getUser();
+            if (!user) return;
+            const { data: profile } = await supabase
+              .from("profiles")
+              .select("company_id")
+              .eq("user_id", user.id)
+              .single();
+            const companyId = (profile as any)?.company_id;
+            if (!companyId) return;
+            const { data: existing } = await supabase
+              .from("chart_of_accounts")
+              .select("id, account_code")
+              .eq("company_id", companyId)
+              .in("account_code", ["9500","9600"]);
+            const hasGainNew = (existing || []).some((a: any) => String(a.account_code) === "9500");
+            const hasLossNew = (existing || []).some((a: any) => String(a.account_code) === "9600");
+            if (!hasGainNew) {
+              await supabase
+                .from("chart_of_accounts")
+                .insert({ company_id: companyId, account_code: "9500", account_name: "Gain on Sale of Assets", account_type: "revenue", normal_balance: "credit", is_active: true });
+            }
+            if (!hasLossNew) {
+              await supabase
+                .from("chart_of_accounts")
+                .insert({ company_id: companyId, account_code: "9600", account_name: "Loss on Sale of Assets", account_type: "expense", normal_balance: "debit", is_active: true });
+            }
+          } catch {}
+        })();
+
+        const prefill = {
+          element: "asset_disposal",
+          description,
+          date,
+          amount,
+          bankAccountId: "",
+          debitAccount: bankLedgerId || "",
+          creditAccount: assetAccountId || "",
+          vatRate: "0",
+          paymentMethod: "bank",
+          assetId
+        };
+        setPrefillData(prefill);
+        setEditData(null);
+        setHeadless(true);
+        setOpen(true);
+        return;
+      }
+    } catch {}
+  }, [location.search]);
 
   const derived = useMemo(() => {
     const tx = items.map(t => ({
@@ -619,6 +687,8 @@ export const TransactionManagement = () => {
             onOpenChange={setOpen}
             onSuccess={load}
             editData={editData}
+            prefill={prefillData}
+            headless={headless}
           />
         </Suspense>
       </div>

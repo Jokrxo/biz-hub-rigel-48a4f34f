@@ -57,6 +57,7 @@ interface TransactionFormProps {
   onSuccess: () => void;
   editData?: any;
   prefill?: any;
+  headless?: boolean;
 }
 
 // Accounting element configurations with debit/credit rules
@@ -148,7 +149,15 @@ const ACCOUNTING_ELEMENTS = [
     creditTypes: ['asset'],
     description: "Record periodic depreciation (Dr Depreciation / Cr Accumulated Depreciation)"
   }
-  
+  ,
+  {
+    value: "asset_disposal",
+    label: "Asset Disposal",
+    icon: TrendingUp,
+    debitType: 'asset',
+    creditTypes: ['asset','income','expense'],
+    description: "Dispose a fixed asset with proceeds and auto gain/loss"
+  }
 ];
 
 const PAYMENT_METHODS = [
@@ -169,7 +178,7 @@ const transactionSchema = z.object({
   vatRate: z.string()
 });
 
-export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editData, prefill }: TransactionFormProps) => {
+export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editData, prefill, headless }: TransactionFormProps) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -222,11 +231,33 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       setForm(prev => ({ ...prev, ...prefill }));
     }
   }, [open, prefill]);
+  useEffect(() => {
+    if (open && prefill && prefill.assetId) {
+      setSelectedAssetId(String(prefill.assetId));
+    }
+  }, [open, prefill]);
+
+  useEffect(() => {
+    if (headless && open && accounts.length > 0 && form.debitAccount && form.creditAccount) {
+      handleSubmit();
+    }
+  }, [headless, open, accounts, form.debitAccount, form.creditAccount]);
   const [depreciationMethod, setDepreciationMethod] = useState<string>("straight_line");
 
   useEffect(() => {
-    setShowFixedAssetsUI(form.element === 'asset' || form.element === 'depreciation');
+    setShowFixedAssetsUI(form.element === 'asset' || form.element === 'depreciation' || form.element === 'asset_disposal');
   }, [form.element]);
+
+  useEffect(() => {
+    if (!form.bankAccountId || !form.element || accounts.length === 0) return;
+    const bankLedger = accounts.find(a => (a.account_type || '').toLowerCase() === 'asset' && (a.account_name || '').toLowerCase().includes('bank'));
+    if (!bankLedger) return;
+    if (form.element === 'income' || form.element === 'receipt' || form.element === 'asset_disposal') {
+      setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || bankLedger.id }));
+    } else if (form.element === 'expense' || form.element === 'asset' || form.element === 'product_purchase' || form.element === 'liability') {
+      setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || bankLedger.id }));
+    }
+  }, [form.bankAccountId, form.element, accounts]);
 
   useEffect(() => {
     if (open) {
@@ -727,6 +758,16 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if (accDep) {
           setForm(prev => ({ ...prev, creditAccount: accDep.id }));
         }
+      } else if (form.element === 'asset_disposal') {
+        const bankAccount = debits.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank')) || credits.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank'));
+        const assetAcc = credits.find(acc => acc.account_type === 'asset' && ((acc.account_code || '').toString().startsWith('15') || acc.account_name.toLowerCase().includes('asset') || acc.account_name.toLowerCase().includes('equipment') || acc.account_name.toLowerCase().includes('vehicle') || acc.account_name.toLowerCase().includes('machinery')))
+          || debits.find(acc => acc.account_type === 'asset' && ((acc.account_code || '').toString().startsWith('15') || acc.account_name.toLowerCase().includes('asset')));
+        if (bankAccount) {
+          setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || bankAccount.id }));
+        }
+        if (assetAcc) {
+          setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || assetAcc.id }));
+        }
       }
     } catch (error) {
       console.error("Auto-select accounts error:", error);
@@ -770,7 +811,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         // Calculate VAT amounts for edit path (similar to create path)
       const amountNum = parseFloat(form.amount || "0");
       const isLoan = !!(form.element && form.element.startsWith('loan_'));
-      const vatRate = isLoan ? 0 : parseFloat(form.vatRate);
+      const vatRate = (isLoan || form.element === 'asset_disposal') ? 0 : parseFloat(form.vatRate);
       const isPurchase = form.element === 'expense' || form.element === 'product_purchase';
       const vatAmount = vatRate > 0 ? (isPurchase ? (amountNum * vatRate) / 100 : (amountNum * vatRate) / (100 + vatRate)) : 0;
       const netAmount = vatRate > 0 ? (isPurchase ? amountNum : amountNum - vatAmount) : amountNum;
@@ -1252,7 +1293,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       }
 
       // If payment method is bank, enforce that a valid bank account is selected
-      if (form.paymentMethod === 'bank' && form.element !== 'depreciation' && !bankAccountId) {
+      if (form.paymentMethod === 'bank' && form.element !== 'depreciation' && form.element !== 'asset_disposal' && !bankAccountId) {
         toast({ 
           title: "Bank Account Required", 
           description: "For bank payments/receipts, please select a valid bank account.", 
@@ -1277,7 +1318,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       const amount = parseFloat(form.amount);
       const isLoan = !!(form.element && form.element.startsWith('loan_'));
-      const vatRate = (isLoan || form.element === 'depreciation') ? 0 : parseFloat(form.vatRate);
+      const vatRate = (isLoan || form.element === 'depreciation' || form.element === 'asset_disposal') ? 0 : parseFloat(form.vatRate);
       const isPurchase = form.element === 'expense' || form.element === 'product_purchase';
       const vatAmount = vatRate > 0 ? (isPurchase ? (amount * vatRate) / 100 : (amount * vatRate) / (100 + vatRate)) : 0;
       const netAmount = vatRate > 0 ? (isPurchase ? amount : amount - vatAmount) : amount;
@@ -1570,6 +1611,56 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           { transaction_id: transaction.id, account_id: form.debitAccount, debit: amount, credit: 0, description: sanitizedDescription, status: 'pending' },
           { transaction_id: transaction.id, account_id: form.creditAccount, debit: 0, credit: amount, description: sanitizedDescription, status: 'pending' }
         );
+      } else if (form.element === 'asset_disposal') {
+        const asset = fixedAssets.find(a => a.id === selectedAssetId);
+        if (!asset) {
+          toast({ title: 'Select Asset', description: 'Please select the asset to dispose.', variant: 'destructive' });
+          return;
+        }
+        const cost = Number(asset.cost || 0);
+        const accum = Number(asset.accumulated_depreciation || 0);
+        const proceeds = amount;
+        const nbv = Math.max(0, cost - accum);
+        const accDepAccount = accounts.find(a => (a.account_type || '').toLowerCase() === 'asset' && (a.account_name || '').toLowerCase().includes('accumulated'))
+          || accounts.find(a => (a.account_type || '').toLowerCase() === 'asset' && (a.account_name || '').toLowerCase().includes('depreciation'));
+        const assetAcc = accounts.find(a => a.id === form.creditAccount)
+          || accounts.find(a => (a.account_type || '').toLowerCase() === 'asset' && ((a.account_code || '').toString().startsWith('15') || (a.account_name || '').toLowerCase().includes('asset')));
+
+        const lower = accounts.map(a => ({ id: a.id, account_type: (a.account_type || '').toLowerCase(), account_name: (a.account_name || '').toLowerCase(), account_code: String((a as any).account_code || '') }));
+        const ensureAccount = async (type: 'revenue' | 'expense', name: string, code: string) => {
+          const found = lower.find(a => a.account_type === type && (a.account_name.includes(name.toLowerCase()) || a.account_code === code));
+          if (found) return found.id;
+          const { data: created } = await supabase
+            .from('chart_of_accounts')
+            .insert({ company_id: companyId, account_code: code, account_name: name, account_type: type, is_active: true, normal_balance: type === 'revenue' ? 'credit' : 'debit' })
+            .select('id')
+            .single();
+          return String((created as any)?.id || '');
+        };
+
+        const gainLoss = proceeds - nbv;
+        let gainAccId = '';
+        let lossAccId = '';
+        if (gainLoss > 0) {
+          gainAccId = await ensureAccount('revenue', 'Gain on Sale of Assets', '9500');
+        } else if (gainLoss < 0) {
+          lossAccId = await ensureAccount('expense', 'Loss on Sale of Assets', '9600');
+        }
+
+        if (proceeds > 0 && form.debitAccount) {
+          entries.push({ transaction_id: transaction.id, account_id: form.debitAccount, debit: proceeds, credit: 0, description: sanitizedDescription, status: 'pending' });
+        }
+        if (accDepAccount && accum > 0) {
+          entries.push({ transaction_id: transaction.id, account_id: accDepAccount.id, debit: accum, credit: 0, description: 'Derecognize Accumulated Depreciation', status: 'pending' });
+        }
+        if (assetAcc && cost > 0) {
+          entries.push({ transaction_id: transaction.id, account_id: assetAcc.id, debit: 0, credit: cost, description: 'Derecognize Asset Cost', status: 'pending' });
+        }
+        if (gainLoss > 0 && gainAccId) {
+          entries.push({ transaction_id: transaction.id, account_id: gainAccId, debit: 0, credit: gainLoss, description: 'Gain on Asset Disposal', status: 'pending' });
+        } else if (gainLoss < 0 && lossAccId) {
+          entries.push({ transaction_id: transaction.id, account_id: lossAccId, debit: Math.abs(gainLoss), credit: 0, description: 'Loss on Asset Disposal', status: 'pending' });
+        }
       } else if (vatAmount > 0 && vatAccount && vatAccount.id) {
         // General VAT-inclusive transaction (non-locked)
         if (form.element === 'expense') {
@@ -1978,6 +2069,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             .update({ accumulated_depreciation: Math.min((asset.accumulated_depreciation || 0) + amt, asset.cost) })
             .eq('id', asset.id);
         }
+      } else if (showFixedAssetsUI && form.element === 'asset_disposal' && selectedAssetId) {
+        await supabase
+          .from('fixed_assets')
+          .update({ status: 'disposed', disposal_date: form.date })
+          .eq('id', selectedAssetId);
       }
 
       // Update bank balance if bank account is involved
@@ -2008,7 +2104,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
       } catch {}
 
-      notify.success("Transaction posted", { description: `Dr ${debitAccountName || 'Debit'} / Cr ${creditAccountName || 'Credit'} • ${form.date}`, duration: 6000 });
+      notify.success("Transaction posted");
 
       // Auto-insert Fixed Asset when transaction represents asset acquisition
       try {
@@ -2077,6 +2173,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     }
   }, [form.element, form.loanId, form.installmentNumber, loans]);
 
+  if (headless) return null;
   if (!open) return null;
 
   return (
@@ -2194,25 +2291,25 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     {form.description.length}/500 characters
                   </p>
                 </div>
-                {showFixedAssetsUI && form.element === 'asset' && (
-                  <div>
-                    <Label className="text-xs">Select Fixed Asset</Label>
-                    <Select value={selectedAssetId} onValueChange={(val) => {
-                      setSelectedAssetId(val);
-                      const asset = fixedAssets.find(a => a.id === val);
-                      if (asset?.description) setForm(prev => ({ ...prev, description: asset.description }));
-                    }}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Choose asset" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {fixedAssets.map(a => (
-                          <SelectItem key={a.id} value={a.id}>{a.description}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
+      {showFixedAssetsUI && (form.element === 'asset' || form.element === 'asset_disposal') && (
+        <div>
+          <Label className="text-xs">Select Fixed Asset</Label>
+          <Select value={selectedAssetId} onValueChange={(val) => {
+            setSelectedAssetId(val);
+            const asset = fixedAssets.find(a => a.id === val);
+            if (asset?.description) setForm(prev => ({ ...prev, description: asset.description }));
+          }}>
+            <SelectTrigger>
+              <SelectValue placeholder="Choose asset" />
+            </SelectTrigger>
+            <SelectContent>
+              {fixedAssets.map(a => (
+                <SelectItem key={a.id} value={a.id}>{a.description}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
               </div>
               {showFixedAssetsUI && form.element === 'asset' && (
                 <div className="mt-3 grid grid-cols-2 gap-4">
@@ -2607,7 +2704,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   )}
                 </div>
               ) : (
-                form.element !== 'depreciation' && (
+                form.element !== 'depreciation' && form.element !== 'asset_disposal' && (
                   <div>
                     <Label htmlFor="vatRate">VAT Rate (%)</Label>
                     <Select value={form.vatRate} onValueChange={(val) => setForm({ ...form, vatRate: val })}>
@@ -2628,10 +2725,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             {form.amount && parseFloat(form.amount) > 0 && (
               <div className="p-4 bg-background rounded-lg border space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' ? '' : '(incl. VAT)'}:</span>
+                  <span className="text-muted-foreground">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' || form.element === 'asset_disposal' ? '' : '(incl. VAT)'}:</span>
                   <span className="font-mono">R {parseFloat(form.amount).toFixed(2)}</span>
                 </div>
-                {!form.element?.startsWith('loan_') && form.element !== 'depreciation' && (
+                {!form.element?.startsWith('loan_') && form.element !== 'depreciation' && form.element !== 'asset_disposal' && (
                   <>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">VAT ({form.vatRate}%):</span>

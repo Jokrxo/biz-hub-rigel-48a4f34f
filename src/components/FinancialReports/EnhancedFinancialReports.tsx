@@ -306,9 +306,13 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     );
     
     let totalRevenue = 0;
-    const pinnedRev = revenue.find(acc => (acc.account_code || '').toString() === '4000');
-    const restRev = revenue.filter(acc => (acc.account_code || '').toString() !== '4000');
-    const orderedRev = [pinnedRev, ...restRev].filter(Boolean) as any[];
+    const pinnedSales = revenue.find(acc => (acc.account_code || '').toString() === '4000');
+    const pinnedGain = revenue.find(acc => (acc.account_code || '').toString() === '4800');
+    const restRev = revenue.filter(acc => {
+      const code = (acc.account_code || '').toString();
+      return code !== '4000' && code !== '4900';
+    });
+    const orderedRev = [pinnedSales, pinnedGain, ...restRev].filter(Boolean) as any[];
     orderedRev.forEach(acc => {
       // Use balance from trial balance directly
       const total = acc.balance || 0;
@@ -329,12 +333,26 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
     data.push({ type: 'header', account: 'COST OF SALES', amount: 0, accountId: null });
     const cogs = trialBalance.filter(a => 
-      (String(a.account_code || '')).startsWith('50') || a.account_name.toLowerCase().includes('cost of')
+      (String(a.account_code || '')).startsWith('50') || 
+      a.account_name.toLowerCase().includes('cost of') || 
+      ['9500','9600'].includes(String(a.account_code || ''))
     );
     const totalCOGSFromTB = cogs.reduce((sum, acc) => sum + (acc.balance || 0), 0);
     const cogsValue = totalCOGSFromTB > 0 ? totalCOGSFromTB : fallbackCOGS;
+    const pinnedGainCOGS = trialBalance.find(acc => (acc.account_code || '').toString() === '9500');
+    const pinnedLossCOGS = trialBalance.find(acc => (acc.account_code || '').toString() === '9600');
+    const restCOGS = cogs.filter(acc => {
+      const code = (acc.account_code || '').toString();
+      return code !== '9500' && code !== '9600';
+    });
+    
     let totalCOGS = 0;
-    cogs.forEach(acc => {
+    // Always show pinned lines
+    data.push({ type: 'expense', account: 'Gain on Sale of Assets', amount: -(pinnedGainCOGS?.balance || 0), accountId: pinnedGainCOGS?.account_id || null, accountCode: '9500' });
+    data.push({ type: 'expense', account: 'Loss on Sale of Assets', amount: (pinnedLossCOGS?.balance || 0), accountId: pinnedLossCOGS?.account_id || null, accountCode: '9600' });
+    totalCOGS += (-(pinnedGainCOGS?.balance || 0)) + (pinnedLossCOGS?.balance || 0);
+
+    restCOGS.forEach(acc => {
       // Use balance from trial balance directly
       const total = acc.balance || 0;
       if (Math.abs(total) > 0.01) {
@@ -362,9 +380,12 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       (String(a.account_type || '').toLowerCase() === 'expense') && 
       !((String(a.account_code || '')).startsWith('50') || a.account_name.toLowerCase().includes('cost of'))
     );
+    const pinnedLoss = opex.find(acc => (acc.account_code || '').toString() === '6980');
+    const restOpex = opex.filter(acc => (acc.account_code || '').toString() !== '6900');
+    const orderedOpex = [pinnedLoss, ...restOpex].filter(Boolean) as any[];
     
     let totalOpex = 0;
-    opex.forEach(acc => {
+    orderedOpex.forEach(acc => {
       // Use balance from trial balance directly
       const total = acc.balance || 0;
       if (Math.abs(total) > 0.01) {

@@ -70,6 +70,8 @@ export const GAAPFinancialStatements = () => {
   const [ppeBookValue, setPpeBookValue] = useState<number>(0);
   const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
   const [vatNet, setVatNet] = useState<number>(0);
+  const [ppeDisposalProceeds, setPpeDisposalProceeds] = useState<number>(0);
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     loadFinancialData();
@@ -169,6 +171,18 @@ export const GAAPFinancialStatements = () => {
         if (isPurchase) inn += Math.max(0, vat);
       });
       setVatNet(out - inn);
+
+      const { data: disposals } = await supabase
+        .from('transactions')
+        .select('transaction_date, transaction_type, total_amount, status')
+        .eq('company_id', companyProfile.company_id)
+        .eq('transaction_type', 'asset_disposal')
+        .gte('transaction_date', periodStart)
+        .lte('transaction_date', periodEnd)
+        .in('status', ['approved','posted','pending']);
+      const proceeds = (disposals || [])
+        .reduce((sum: number, t: any) => sum + Math.max(0, Number(t.total_amount || 0)), 0);
+      setPpeDisposalProceeds(proceeds);
 
       // Validate accounting equation
       const { data: equation, error: eqError } = await supabase
@@ -422,7 +436,19 @@ export const GAAPFinancialStatements = () => {
         if (error) throw error;
         if (Array.isArray(data) && data.length > 0) {
           const cf = (data as any)[0];
-          setCashFlow(cf);
+          const opening = await computeOpeningCashOnly(profile.company_id, periodStart);
+          const nets = (
+            Number(cf.net_cash_from_operations || 0) +
+            Number(cf.net_cash_from_investing || 0) +
+            Number(cf.net_cash_from_financing || 0)
+          );
+          const updated = {
+            ...cf,
+            opening_cash_balance: opening,
+            net_change_in_cash: nets,
+            closing_cash_balance: opening + nets,
+          };
+          setCashFlow(updated);
           return;
         }
       } catch {}
@@ -457,20 +483,23 @@ export const GAAPFinancialStatements = () => {
           closing_cash_balance: toNumber(d.closing_cash_balance ?? d.closing_cash),
           net_change_in_cash: toNumber(d.net_change_in_cash ?? d.net_cash_flow),
         };
+        const opening = await computeOpeningCashOnly(profile.company_id, periodStart);
+        const nets = cf.net_cash_from_operations + cf.net_cash_from_investing + cf.net_cash_from_financing;
+        const updated = { ...cf, opening_cash_balance: opening, net_change_in_cash: nets, closing_cash_balance: opening + nets };
         // If legacy returns zeros while we have transactions, compute a local fallback
         const isAllZero = [
-          cf.operating_inflows,
-          cf.operating_outflows,
-          cf.net_cash_from_operations,
-          cf.investing_inflows,
-          cf.investing_outflows,
-          cf.net_cash_from_investing,
-          cf.financing_inflows,
-          cf.financing_outflows,
-          cf.net_cash_from_financing,
-          cf.opening_cash_balance,
-          cf.closing_cash_balance,
-          cf.net_change_in_cash,
+          updated.operating_inflows,
+          updated.operating_outflows,
+          updated.net_cash_from_operations,
+          updated.investing_inflows,
+          updated.investing_outflows,
+          updated.net_cash_from_investing,
+          updated.financing_inflows,
+          updated.financing_outflows,
+          updated.net_cash_from_financing,
+          updated.opening_cash_balance,
+          updated.closing_cash_balance,
+          updated.net_change_in_cash,
         ].every(v => Math.abs(v || 0) < 0.001);
 
         if (isAllZero) {
@@ -480,7 +509,7 @@ export const GAAPFinancialStatements = () => {
             return;
           }
         }
-        setCashFlow(cf);
+        setCashFlow(updated);
       } else {
         // No data; compute local fallback
         const local = await computeCashFlowFallback(profile.company_id, periodStart, periodEnd);
@@ -843,6 +872,103 @@ export const GAAPFinancialStatements = () => {
   };
 
   const renderCashFlowStatement = () => {
+    const cf = cashFlow || {
+      operating_inflows: 0,
+      operating_outflows: 0,
+      net_cash_from_operations: 0,
+      investing_inflows: 0,
+      investing_outflows: 0,
+      net_cash_from_investing: 0,
+      financing_inflows: 0,
+      financing_outflows: 0,
+      net_cash_from_financing: 0,
+      opening_cash_balance: 0,
+      closing_cash_balance: 0,
+      net_change_in_cash: 0,
+    };
+    const lowerTB = trialBalance.map(a => ({
+      account_id: a.account_id,
+      account_code: String(a.account_code || ''),
+      account_name: String(a.account_name || '').toLowerCase(),
+      account_type: String(a.account_type || '').toLowerCase(),
+      balance: Number(a.balance || 0)
+    }));
+    const sum = (arr: any[]) => arr.reduce((s, x) => s + Number(x.balance || 0), 0);
+    const revenueCF = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'revenue' || String(r.account_type || '').toLowerCase() === 'income');
+    const cogsCF = trialBalance.filter(r => (String(r.account_code || '')).startsWith('50') || (String(r.account_name || '').toLowerCase().includes('cost of')));
+    const opexCF = trialBalance
+      .filter(r => String(r.account_type || '').toLowerCase() === 'expense' && !cogsCF.includes(r))
+      .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
+    const totalRevenueCF = revenueCF.reduce((sum, r) => sum + Number(r.balance || 0), 0);
+    const totalCOGSCF = cogsCF.reduce((sum, r) => sum + Number(r.balance || 0), 0);
+    const cogsValueCF = totalCOGSCF > 0 ? totalCOGSCF : fallbackCOGS;
+    const totalOpexCF = opexCF.reduce((sum, r) => sum + Number(r.balance || 0), 0);
+    const profitBeforeTax = totalRevenueCF - cogsValueCF - totalOpexCF;
+    const depAmort = sum(lowerTB.filter(a => a.account_type === 'expense' && (a.account_name.includes('depreciation') || a.account_name.includes('amortisation') || a.account_name.includes('amortization'))));
+    const impairmentNet = sum(lowerTB.filter(a => a.account_name.includes('impairment')));
+    const profitDisposal = sum(lowerTB.filter(a => (a.account_code === '9500') || (a.account_name.includes('gain on sale') || a.account_name.includes('disposal gain'))));
+    const lossDisposal = sum(lowerTB.filter(a => (a.account_code === '9600') || (a.account_name.includes('loss on sale') || a.account_name.includes('disposal loss'))));
+    const financeCosts = sum(lowerTB.filter(a => a.account_type === 'expense' && (a.account_name.includes('finance cost') || a.account_name.includes('interest expense'))));
+    const interestIncome = sum(lowerTB.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('interest')));
+    const fxUnrealised = sum(lowerTB.filter(a => a.account_name.includes('unrealised') && (a.account_name.includes('foreign exchange') || a.account_name.includes('fx') || a.account_name.includes('currency'))));
+    const provisionsMove = sum(lowerTB.filter(a => (a.account_type === 'liability' || a.account_type === 'expense') && a.account_name.includes('provision')));
+    const fairValueAdj = sum(lowerTB.filter(a => a.account_name.includes('fair value')));
+    const otherNonCash = sum(lowerTB.filter(a => a.account_name.includes('non-cash') || a.account_name.includes('non cash')));
+    const interestReceivedCF = sum(lowerTB.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('interest')));
+    const interestPaidCF = sum(lowerTB.filter(a => a.account_type === 'expense' && (a.account_name.includes('interest') || a.account_name.includes('finance cost'))));
+    const dividendsReceivedCF = sum(lowerTB.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('dividend')));
+    const dividendsPaidCF = sum(lowerTB.filter(a => (a.account_type === 'expense' || a.account_type === 'equity') && a.account_name.includes('dividend')));
+    const taxPaidCF = sum(lowerTB.filter(a => (a.account_type === 'expense' || a.account_type === 'liability') && a.account_name.includes('tax') && !a.account_name.includes('vat')));
+    const isAccumulated = (a: any) => a.account_name.includes('accumulated');
+    const isPPE = (a: any) => a.account_type === 'asset' && !isAccumulated(a) && (a.account_name.includes('property') || a.account_name.includes('plant') || a.account_name.includes('equipment') || a.account_name.includes('machinery') || a.account_name.includes('vehicle'));
+    const isIntangible = (a: any) => a.account_type === 'asset' && !isAccumulated(a) && (a.account_name.includes('intangible') || a.account_name.includes('software') || a.account_name.includes('patent') || a.account_name.includes('goodwill'));
+    const isInvestment = (a: any) => a.account_type === 'asset' && a.account_name.includes('investment');
+    const isLoanReceivable = (a: any) => a.account_type === 'asset' && (a.account_name.includes('loan') || a.account_name.includes('advance'));
+    const ppeMovement = sum(lowerTB.filter(isPPE));
+    const intangibleMovement = sum(lowerTB.filter(isIntangible));
+    const investmentMovement = sum(lowerTB.filter(isInvestment));
+    const loansMovement = sum(lowerTB.filter(isLoanReceivable));
+    const isShareEquity = (a: any) => a.account_type === 'equity' && (a.account_name.includes('share') || a.account_name.includes('capital') || a.account_name.includes('share premium') || a.account_name.includes('treasury'));
+    const sharesMovement = sum(lowerTB.filter(isShareEquity));
+    const proceedsShares = Math.max(0, sharesMovement);
+    const repurchaseShares = Math.max(0, -sharesMovement);
+    const isLoanLiability = (a: any) => a.account_type === 'liability' && (a.account_name.includes('loan') || a.account_name.includes('borrow') || a.account_name.includes('debenture') || a.account_name.includes('note payable') || a.account_name.includes('overdraft'));
+    const borrowingsMovement = sum(lowerTB.filter(isLoanLiability));
+    const proceedsBorrowings = Math.max(0, borrowingsMovement);
+    const repaymentBorrowings = Math.max(0, -borrowingsMovement);
+    const isLeaseLiability = (a: any) => a.account_type === 'liability' && a.account_name.includes('lease');
+    const leasesMovement = sum(lowerTB.filter(isLeaseLiability));
+    const nz = (v: number) => Math.abs(v) > 0.0001;
+    const purchasePPE = Math.max(0, ppeMovement);
+    const proceedsPPE = ppeDisposalProceeds;
+    const purchaseIntangible = Math.max(0, intangibleMovement);
+    const proceedsIntangible = Math.max(0, -intangibleMovement);
+    const investmentsPurchased = Math.max(0, investmentMovement);
+    const investmentsProceeds = Math.max(0, -investmentMovement);
+    const loansAdvanced = Math.max(0, loansMovement);
+    const loansRepaid = Math.max(0, -loansMovement);
+    const leasesPaid = Math.max(0, -leasesMovement);
+    const financeCostsPaid = Math.abs(financeCosts);
+    
+    const isAsset = (a: any) => a.account_type === 'asset';
+    const isLiability = (a: any) => a.account_type === 'liability';
+    const isInventory = (a: any) => a.account_code === '1300' || a.account_name.includes('inventory') || a.account_name.includes('stock');
+    const isTradeReceivable = (a: any) => isAsset(a) && (a.account_name.includes('trade receivable') || a.account_name.includes('accounts receivable') || a.account_name.includes('debtors'));
+    const isOtherReceivable = (a: any) => isAsset(a) && (a.account_name.includes('other receivable') || a.account_name.includes('prepaid') || a.account_name.includes('deposit')) && !isTradeReceivable(a);
+    const isTradePayable = (a: any) => isLiability(a) && (a.account_name.includes('trade payable') || a.account_name.includes('accounts payable') || a.account_name.includes('creditors'));
+    const isOtherPayable = (a: any) => isLiability(a) && (a.account_name.includes('other payable') || a.account_name.includes('accrual') || a.account_name.includes('vat payable') || a.account_name.includes('tax payable')) && !isTradePayable(a);
+
+    const tbTradeReceivables = lowerTB.filter(isTradeReceivable);
+    const tbInventories = lowerTB.filter(isInventory);
+    const tbOtherReceivables = lowerTB.filter(isOtherReceivable);
+    const tbTradePayables = lowerTB.filter(isTradePayable);
+    const tbOtherPayables = lowerTB.filter(isOtherPayable);
+
+    const wcTradeReceivables = -sum(tbTradeReceivables);
+    const wcInventories = -sum(tbInventories);
+    const wcOtherReceivables = -sum(tbOtherReceivables);
+    const wcTradePayables = sum(tbTradePayables);
+    const wcOtherPayables = sum(tbOtherPayables);
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -862,86 +988,75 @@ export const GAAPFinancialStatements = () => {
           </div>
         </div>
 
-        {!cashFlow && (
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">No cash flow data loaded.</p>
-            <Button variant="outline" onClick={loadCashFlow}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Load Cash Flow
-            </Button>
-          </div>
-        )}
-
-        {cashFlow && (
-          <div className="space-y-6">
-            {/* Operating Activities */}
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold border-b-2 pb-2">Operating Activities</h3>
-              <div className="flex justify-between">
-                <span>Cash Inflows</span>
-                <span className="font-mono">R {cashFlow.operating_inflows.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Cash Outflows</span>
-                <span className="font-mono">(R {cashFlow.operating_outflows.toLocaleString()})</span>
-              </div>
-              <div className="flex justify-between py-2 text-lg font-semibold border-t">
-                <span>Net Cash from Operations</span>
-                <span className="font-mono">R {cashFlow.net_cash_from_operations.toLocaleString()}</span>
-              </div>
-            </div>
-
-            {/* Investing Activities */}
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold border-b-2 pb-2">Investing Activities</h3>
-              <div className="flex justify-between">
-                <span>Cash Inflows</span>
-                <span className="font-mono">R {cashFlow.investing_inflows.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Cash Outflows</span>
-                <span className="font-mono">(R {cashFlow.investing_outflows.toLocaleString()})</span>
-              </div>
-              <div className="flex justify-between py-2 text-lg font-semibold border-t">
-                <span>Net Cash from Investing</span>
-                <span className="font-mono">R {cashFlow.net_cash_from_investing.toLocaleString()}</span>
-              </div>
-            </div>
-
-            {/* Financing Activities */}
-            <div className="space-y-2">
-              <h3 className="text-xl font-bold border-b-2 pb-2">Financing Activities</h3>
-              <div className="flex justify-between">
-                <span>Cash Inflows</span>
-                <span className="font-mono">R {cashFlow.financing_inflows.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Cash Outflows</span>
-                <span className="font-mono">(R {cashFlow.financing_outflows.toLocaleString()})</span>
-              </div>
-              <div className="flex justify-between py-2 text-lg font-semibold border-t">
-                <span>Net Cash from Financing</span>
-                <span className="font-mono">R {cashFlow.net_cash_from_financing.toLocaleString()}</span>
-              </div>
-            </div>
-
-            {/* Net Change and Balances */}
-            <div className="space-y-2">
-              <div className="flex justify-between py-2 text-lg font-bold border-t-2 border-b-2">
-                <span>NET CHANGE IN CASH</span>
-                <span className="font-mono">R {cashFlow.net_change_in_cash.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Opening Cash Balance</span>
-                <span className="font-mono">R {cashFlow.opening_cash_balance.toLocaleString()}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Closing Cash Balance</span>
-                <span className="font-mono">R {cashFlow.closing_cash_balance.toLocaleString()}</span>
-              </div>
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <h3 className="text-xl font-bold">CASH FLOWS FROM OPERATING ACTIVITIES</h3>
+            <div className="space-y-1 pl-2">
+              <div className="flex justify-between"><span>Profit before tax</span><span className="font-mono">R {profitBeforeTax.toLocaleString()}</span></div>
+              <div className="font-semibold mt-2">Adjustments for:</div>
+              {nz(depAmort) && (<div className="flex justify-between"><span>Depreciation and amortisation</span><span className="font-mono">R {depAmort.toLocaleString()}</span></div>)}
+              {nz(impairmentNet) && (<div className="flex justify-between"><span>Impairment losses / reversals</span><span className="font-mono">R {impairmentNet.toLocaleString()}</span></div>)}
+              {nz(profitDisposal) && (<div className="flex justify-between"><span>Profit on disposal of assets</span><span className="font-mono">R {profitDisposal.toLocaleString()}</span></div>)}
+              {nz(lossDisposal) && (<div className="flex justify-between"><span>Loss on disposal of assets</span><span className="font-mono">R {lossDisposal.toLocaleString()}</span></div>)}
+              {nz(financeCosts) && (<div className="flex justify-between"><span>Finance costs</span><span className="font-mono">R {financeCosts.toLocaleString()}</span></div>)}
+              {nz(interestIncome) && (<div className="flex justify-between"><span>Interest income</span><span className="font-mono">R {interestIncome.toLocaleString()}</span></div>)}
+              {nz(fxUnrealised) && (<div className="flex justify-between"><span>Unrealised foreign exchange differences</span><span className="font-mono">R {fxUnrealised.toLocaleString()}</span></div>)}
+              {nz(provisionsMove) && (<div className="flex justify-between"><span>Movements in provisions</span><span className="font-mono">R {provisionsMove.toLocaleString()}</span></div>)}
+              {nz(fairValueAdj) && (<div className="flex justify-between"><span>Fair value adjustments</span><span className="font-mono">R {fairValueAdj.toLocaleString()}</span></div>)}
+              {nz(otherNonCash) && (<div className="flex justify-between"><span>Other non-cash items</span><span className="font-mono">R {otherNonCash.toLocaleString()}</span></div>)}
+              <div className="font-semibold mt-2">Changes in working capital:</div>
+              {nz(wcTradeReceivables) && (<div className="flex justify-between"><span>(Increase)/Decrease in trade receivables</span><span className="font-mono">R {wcTradeReceivables.toLocaleString()}</span></div>)}
+              {nz(wcInventories) && (<div className="flex justify-between"><span>(Increase)/Decrease in inventories</span><span className="font-mono">R {wcInventories.toLocaleString()}</span></div>)}
+              {nz(wcOtherReceivables) && (<div className="flex justify-between"><span>(Increase)/Decrease in other receivables</span><span className="font-mono">R {wcOtherReceivables.toLocaleString()}</span></div>)}
+              {nz(wcTradePayables) && (<div className="flex justify-between"><span>Increase/(Decrease) in trade payables</span><span className="font-mono">R {wcTradePayables.toLocaleString()}</span></div>)}
+              <div className="flex justify-between font-semibold border-t pt-2"><span>Cash generated from operations</span><span className="font-mono">R {cf.net_cash_from_operations.toLocaleString()}</span></div>
+              {nz(interestReceivedCF) && (<div className="flex justify-between"><span>Interest received</span><span className="font-mono">R {interestReceivedCF.toLocaleString()}</span></div>)}
+              {nz(interestPaidCF) && (<div className="flex justify-between"><span>Interest paid</span><span className="font-mono">(R {Math.abs(interestPaidCF).toLocaleString()})</span></div>)}
+              {nz(dividendsReceivedCF) && (<div className="flex justify-between"><span>Dividends received</span><span className="font-mono">R {dividendsReceivedCF.toLocaleString()}</span></div>)}
+              {nz(dividendsPaidCF) && (<div className="flex justify-between"><span>Dividends paid</span><span className="font-mono">(R {Math.abs(dividendsPaidCF).toLocaleString()})</span></div>)}
+              {nz(taxPaidCF) && (<div className="flex justify-between"><span>Tax paid</span><span className="font-mono">(R {Math.abs(taxPaidCF).toLocaleString()})</span></div>)}
+              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash from operating activities</span><span className="font-mono">R {cf.net_cash_from_operations.toLocaleString()}</span></div>
             </div>
           </div>
-        )}
+
+          <div className="space-y-2">
+            <h3 className="text-xl font-bold">CASH FLOWS FROM INVESTING ACTIVITIES</h3>
+            <div className="space-y-1 pl-2">
+              {nz(purchasePPE) && (<div className="flex justify-between"><span>Purchase of property, plant and equipment</span><span className="font-mono">(R {purchasePPE.toLocaleString()})</span></div>)}
+              {nz(proceedsPPE) && (<div className="flex justify-between"><span>Proceeds from disposal of property, plant and equipment</span><span className="font-mono">R {proceedsPPE.toLocaleString()}</span></div>)}
+              {nz(purchaseIntangible) && (<div className="flex justify-between"><span>Purchase of intangible assets</span><span className="font-mono">(R {purchaseIntangible.toLocaleString()})</span></div>)}
+              {nz(proceedsIntangible) && (<div className="flex justify-between"><span>Proceeds from sale of intangible assets</span><span className="font-mono">R {proceedsIntangible.toLocaleString()}</span></div>)}
+              {nz(investmentsPurchased) && (<div className="flex justify-between"><span>Investments purchased</span><span className="font-mono">(R {investmentsPurchased.toLocaleString()})</span></div>)}
+              {nz(investmentsProceeds) && (<div className="flex justify-between"><span>Proceeds from sale/maturity of investments</span><span className="font-mono">R {investmentsProceeds.toLocaleString()}</span></div>)}
+              {nz(loansAdvanced) && (<div className="flex justify-between"><span>Loans advanced to other parties</span><span className="font-mono">(R {loansAdvanced.toLocaleString()})</span></div>)}
+              {nz(loansRepaid) && (<div className="flex justify-between"><span>Loans repaid to the entity</span><span className="font-mono">R {loansRepaid.toLocaleString()}</span></div>)}
+              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash used in / from investing activities</span><span className="font-mono">R {cf.net_cash_from_investing.toLocaleString()}</span></div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xl font-bold">CASH FLOWS FROM FINANCING ACTIVITIES</h3>
+            <div className="space-y-1 pl-2">
+              {nz(proceedsShares) && (<div className="flex justify-between"><span>Proceeds from issue of shares</span><span className="font-mono">R {proceedsShares.toLocaleString()}</span></div>)}
+              {nz(repurchaseShares) && (<div className="flex justify-between"><span>Repurchase of shares</span><span className="font-mono">(R {repurchaseShares.toLocaleString()})</span></div>)}
+              {nz(proceedsBorrowings) && (<div className="flex justify-between"><span>Proceeds from borrowings</span><span className="font-mono">R {proceedsBorrowings.toLocaleString()}</span></div>)}
+              {nz(repaymentBorrowings) && (<div className="flex justify-between"><span>Repayment of borrowings</span><span className="font-mono">(R {repaymentBorrowings.toLocaleString()})</span></div>)}
+              {nz(leasesPaid) && (<div className="flex justify-between"><span>Lease liabilities paid (IFRS 16)</span><span className="font-mono">(R {leasesPaid.toLocaleString()})</span></div>)}
+              {nz(financeCostsPaid) && (<div className="flex justify-between"><span>Finance costs paid (if treated as financing)</span><span className="font-mono">(R {financeCostsPaid.toLocaleString()})</span></div>)}
+              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash from / used in financing activities</span><span className="font-mono">R {cf.net_cash_from_financing.toLocaleString()}</span></div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xl font-bold">NET INCREASE / (DECREASE) IN CASH AND CASH EQUIVALENTS</h3>
+            <div className="space-y-1 pl-2">
+              <div className="flex justify-between"><span>Cash at the beginning of the period</span><span className="font-mono">R {cf.opening_cash_balance.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span>Net increase / (decrease) in cash</span><span className="font-mono">R {cf.net_change_in_cash.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span>Effect of exchange rate changes on cash</span><span className="font-mono">R 0</span></div>
+              <div className="flex justify-between font-semibold border-t pt-2"><span>Cash and cash equivalents at end of period</span><span className="font-mono">R {cf.closing_cash_balance.toLocaleString()}</span></div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   };
@@ -955,28 +1070,24 @@ export const GAAPFinancialStatements = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">GAAP Financial Statements</h1>
-          <p className="text-muted-foreground">Annual Financial Statements with drill-down</p>
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold">GAAP Financial Statements</h1>
+            <p className="text-muted-foreground">Annual Financial Statements with drill-down</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={handleRefresh} disabled={loading}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Refresh AFS
+            </Button>
+            <Button variant="outline" onClick={() => setShowFilters(v => !v)}>
+              {showFilters ? 'Hide Filters' : 'Show Filters'}
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={handleRefresh} disabled={loading}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh AFS
-          </Button>
-          <Button variant="outline" onClick={() => handleExport('pdf')}>
-            <FileDown className="h-4 w-4 mr-2" />
-            Download PDF
-          </Button>
-          <Button variant="outline" onClick={() => handleExport('excel')}>
-            <Download className="h-4 w-4 mr-2" />
-            Download Excel
-          </Button>
-        </div>
-      </div>
 
+      {showFilters && (
       <Card>
         <CardHeader>
           <CardTitle>Reporting Period</CardTitle>
@@ -1028,6 +1139,7 @@ export const GAAPFinancialStatements = () => {
           </div>
         </CardContent>
       </Card>
+      )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
@@ -1379,4 +1491,13 @@ const computeCashFlowFallback = async (companyId: string, start: string, end: st
     console.error('Fallback cash flow error', e);
     return null;
   }
+};
+
+const computeOpeningCashOnly = async (companyId: string, start: string) => {
+  const { data: banks } = await supabase
+    .from('bank_accounts')
+    .select('opening_balance')
+    .eq('company_id', companyId);
+  const totalOpening = (banks || []).reduce((s: number, b: any) => s + Number(b.opening_balance || 0), 0);
+  return totalOpening;
 };
