@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertTriangle, CheckCircle2, Building2, AlertCircle } from "lucide-react";
@@ -69,6 +70,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     creditAccount: "",
     amount: "",
     vatRate: "0",
+    amountIncludesVat: false,
     loanId: "",
     interestRate: "",
     loanTerm: ""
@@ -103,6 +105,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         creditAccount: "",
         amount: editData.total_amount?.toString() || "",
         vatRate: editData.vat_rate ? String(editData.vat_rate) : "0",
+        amountIncludesVat: !!editData.vat_inclusive,
         loanId: "",
         interestRate: "",
         loanTerm: ""
@@ -474,15 +477,20 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         bankAccountId = null;
       }
 
-      const amount = parseFloat(form.amount);
-      if (isNaN(amount) || amount <= 0) {
+      const rawAmount = parseFloat(form.amount);
+      if (isNaN(rawAmount) || rawAmount <= 0) {
         toast({ title: "Invalid amount", description: "Amount must be greater than 0", variant: "destructive" });
         return;
       }
 
       const ratePct = parseFloat(form.vatRate) || 0;
-      const vatAmount = amount * (ratePct / 100);
-      const totalAmount = amount + vatAmount;
+      const txTypeLower = String(form.transactionType).toLowerCase();
+      const isIncomeTx = ['income','sales','receipt'].includes(txTypeLower);
+      const isPurchaseTx = ['expense','purchase','bill','product_purchase'].includes(txTypeLower);
+      const purchaseInclusive = isPurchaseTx && !!form.amountIncludesVat && ratePct > 0;
+      const baseAmount = purchaseInclusive ? (rawAmount / (1 + ratePct / 100)) : rawAmount;
+      const vatAmount = purchaseInclusive ? (rawAmount - baseAmount) : (baseAmount * (ratePct / 100));
+      const totalAmount = purchaseInclusive ? rawAmount : (baseAmount + vatAmount);
 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
@@ -519,9 +527,6 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       let transaction;
       let txError;
       if (editData?.id) {
-        const existingTotal = Number(editData.total_amount || totalAmount || 0);
-        const baseFromInclusive = ratePct > 0 ? existingTotal / (1 + ratePct / 100) : existingTotal;
-        const vatFromInclusive = ratePct > 0 ? existingTotal - baseFromInclusive : 0;
         const { data: updated, error: updErr } = await supabase
           .from("transactions")
           .update({
@@ -529,9 +534,10 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             description: form.description.trim(),
             reference_number: form.reference?.trim() || null,
             vat_rate: ratePct || null,
-            vat_amount: vatFromInclusive || null,
-            base_amount: baseFromInclusive,
-            vat_inclusive: ratePct > 0,
+            vat_amount: vatAmount || null,
+            base_amount: baseAmount,
+            vat_inclusive: isPurchaseTx ? !!form.amountIncludesVat : (ratePct > 0),
+            total_amount: totalAmount,
           })
           .eq("id", editData.id)
           .select()
@@ -553,8 +559,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             category: autoClassification?.category || null,
             vat_rate: parseFloat(form.vatRate) || null,
             vat_amount: vatAmount || null,
-            base_amount: amount,
-            vat_inclusive: (parseFloat(form.vatRate) || 0) > 0,
+            base_amount: baseAmount,
+            vat_inclusive: isPurchaseTx ? !!form.amountIncludesVat : ((parseFloat(form.vatRate) || 0) > 0),
             status: "pending"
           })
           .select()
@@ -651,8 +657,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         }
       }
 
-      const isIncomeTx = ['income','sales','receipt'].includes(String(form.transactionType).toLowerCase());
-      const isPurchaseTx = ['expense','purchase','bill','product_purchase'].includes(String(form.transactionType).toLowerCase());
+      const isIncomeTx2 = ['income','sales','receipt'].includes(String(form.transactionType).toLowerCase());
+      const isPurchaseTx2 = ['expense','purchase','bill','product_purchase'].includes(String(form.transactionType).toLowerCase());
       let vatOutputAcc = accounts.find(a => a.account_code === '2100' || (a.account_name || '').toLowerCase().includes('vat output') || (a.account_name || '').toLowerCase().includes('vat payable'));
       let vatInputAcc = accounts.find(a => a.account_code === '2110' || (a.account_name || '').toLowerCase().includes('vat input') || (a.account_name || '').toLowerCase().includes('vat receivable'));
 
@@ -682,13 +688,13 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       } catch {}
 
       const entries: Array<{ account_id: string; debit: number; credit: number; description: string }> = [];
-      if (ratePct > 0 && (isIncomeTx || isPurchaseTx) && (vatOutputAcc || vatInputAcc)) {
-        if (isIncomeTx) {
+      if (ratePct > 0 && (isIncomeTx2 || isPurchaseTx2) && (vatOutputAcc || vatInputAcc)) {
+        if (isIncomeTx2) {
           entries.push({ account_id: form.debitAccount, debit: totalAmount, credit: 0, description: form.description.trim() });
-          entries.push({ account_id: form.creditAccount, debit: 0, credit: amount, description: form.description.trim() });
+          entries.push({ account_id: form.creditAccount, debit: 0, credit: baseAmount, description: form.description.trim() });
           if (vatOutputAcc) entries.push({ account_id: vatOutputAcc.id, debit: 0, credit: vatAmount, description: `VAT Output ${ratePct}%` });
-        } else if (isPurchaseTx) {
-          entries.push({ account_id: form.debitAccount, debit: amount, credit: 0, description: form.description.trim() });
+        } else if (isPurchaseTx2) {
+          entries.push({ account_id: form.debitAccount, debit: baseAmount, credit: 0, description: form.description.trim() });
           if (vatInputAcc) entries.push({ account_id: vatInputAcc.id, debit: vatAmount, credit: 0, description: `VAT Input ${ratePct}%` });
           entries.push({ account_id: form.creditAccount, debit: 0, credit: totalAmount, description: form.description.trim() });
         }
@@ -1307,6 +1313,12 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                     <SelectItem value="15">15% (Standard)</SelectItem>
                   </SelectContent>
                 </Select>
+                {['expense','purchase','product_purchase'].includes(String(form.transactionType).toLowerCase()) && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <Switch checked={form.amountIncludesVat} onCheckedChange={(val) => setForm({ ...form, amountIncludesVat: val })} />
+                    <span className="text-sm">Amount includes VAT</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1314,16 +1326,51 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           {form.amount && !form.transactionType?.startsWith('loan_') && (
             <div className="p-4 bg-primary/5 rounded-lg border border-primary/10">
               <div className="flex justify-between text-sm">
-                <span>Amount:</span>
-                <span className="font-mono">R {parseFloat(form.amount || "0").toFixed(2)}</span>
+                <span>{['expense','purchase','product_purchase'].includes(String(form.transactionType).toLowerCase()) && form.amountIncludesVat ? 'Base (extracted):' : 'Amount:'}</span>
+                <span className="font-mono">
+                  {(() => {
+                    const amt = parseFloat(form.amount || '0');
+                    const rate = parseFloat(form.vatRate || '0');
+                    const isPur = ['expense','purchase','product_purchase'].includes(String(form.transactionType).toLowerCase());
+                    if (isPur && form.amountIncludesVat && rate > 0) {
+                      const base = amt / (1 + rate/100);
+                      return `R ${base.toFixed(2)}`;
+                    }
+                    return `R ${amt.toFixed(2)}`;
+                  })()}
+                </span>
               </div>
               <div className="flex justify-between text-sm mt-1">
                 <span>VAT ({form.vatRate}%):</span>
-                <span className="font-mono">R {(parseFloat(form.amount || "0") * parseFloat(form.vatRate) / 100).toFixed(2)}</span>
+                <span className="font-mono">
+                  {(() => {
+                    const amt = parseFloat(form.amount || '0');
+                    const rate = parseFloat(form.vatRate || '0');
+                    const isPur = ['expense','purchase','product_purchase'].includes(String(form.transactionType).toLowerCase());
+                    if (isPur && form.amountIncludesVat && rate > 0) {
+                      const base = amt / (1 + rate/100);
+                      const vat = amt - base;
+                      return `R ${vat.toFixed(2)}`;
+                    }
+                    const vat = amt * rate / 100;
+                    return `R ${vat.toFixed(2)}`;
+                  })()}
+                </span>
               </div>
               <div className="flex justify-between font-bold mt-2 pt-2 border-t border-primary/10">
                 <span>Total (Posted Amount):</span>
-                <span className="font-mono text-primary">R {(parseFloat(form.amount || "0") * (1 + parseFloat(form.vatRate) / 100)).toFixed(2)}</span>
+                <span className="font-mono text-primary">
+                  {(() => {
+                    const amt = parseFloat(form.amount || '0');
+                    const rate = parseFloat(form.vatRate || '0');
+                    const isPur = ['expense','purchase','product_purchase'].includes(String(form.transactionType).toLowerCase());
+                    if (isPur && form.amountIncludesVat && rate > 0) {
+                      return `R ${amt.toFixed(2)}`;
+                    }
+                    const total = amt * (1 + rate/100);
+                    return `R ${total.toFixed(2)}`;
+                  })()}
+                </span>
               </div>
             </div>
           )}

@@ -149,9 +149,9 @@ export const SalesTaxReport = () => {
                 <TableRow>
                   <TableHead>Date</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Net</TableHead>
+                  <TableHead className="text-right">Amount (excl. VAT)</TableHead>
                   <TableHead className="text-right">VAT</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Amount (incl. VAT)</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

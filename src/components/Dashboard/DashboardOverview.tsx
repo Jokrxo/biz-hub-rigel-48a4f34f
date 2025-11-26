@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { LineChart, Line, AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { calculateDepreciation } from "@/components/FixedAssets/DepreciationCalculator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -427,16 +427,23 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       };
 
       transactions?.forEach(tx => {
+        const dtKey = new Date(tx.transaction_date).toISOString().slice(0,7);
+        let hadEntryIncome = false;
+        let hadEntryExpense = false;
         tx.entries?.forEach((entry: any) => {
           const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
           const nameLower = String(entry.chart_of_accounts?.account_name || '').toLowerCase();
           const isVat = nameLower.includes('vat');
           const netAmount = entry.debit - entry.credit;
-          const dtKey = new Date(tx.transaction_date).toISOString().slice(0,7);
           const agg = monthlyMap.get(dtKey) || { income: 0, expenses: 0 };
           if (!isVat) {
-            if (type.includes("income") || type.includes("revenue")) agg.income += Math.abs(netAmount);
-            else if (type.includes("expense")) agg.expenses += Math.abs(netAmount);
+            if (type.includes("income") || type.includes("revenue")) {
+              agg.income += Math.abs(netAmount);
+              hadEntryIncome = true;
+            } else if (type.includes("expense")) {
+              agg.expenses += Math.abs(netAmount);
+              hadEntryExpense = true;
+            }
           }
           monthlyMap.set(dtKey, agg);
           if (type.includes("asset")) {
@@ -452,6 +459,16 @@ const calculateTotalInventoryValue = async (companyId: string) => {
             else if (!isVat && type.includes("expense")) expenses += Math.abs(netAmount);
           }
         });
+        const aggPost = monthlyMap.get(dtKey) || { income: 0, expenses: 0 };
+        if (!hadEntryIncome && !hadEntryExpense) {
+          const t = String(tx.transaction_type || '').toLowerCase();
+          if (t.includes('income') || t.includes('sales') || t.includes('receipt')) {
+            aggPost.income += Math.abs(Number(tx.total_amount || 0));
+          } else if (t.includes('expense') || t.includes('purchase') || t.includes('bill') || t.includes('product_purchase')) {
+            aggPost.expenses += Math.abs(Number(tx.total_amount || 0));
+          }
+          monthlyMap.set(dtKey, aggPost);
+        }
       });
 
       const [
@@ -1135,26 +1152,19 @@ const calculateTotalInventoryValue = async (companyId: string) => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp className="h-5 w-5 text-primary" />
-                Income vs Expenses
+                Income vs Expenses (6 months)
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={plTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
-                  <defs>
-                    <linearGradient id="incomeGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#2563eb" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="#2563eb" stopOpacity={0.05} />
-                    </linearGradient>
-                    <linearGradient id="expenseGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#EF4444" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="#EF4444" stopOpacity={0.05} />
-                    </linearGradient>
-                  </defs>
+              <div className="h-64 w-full">
+                <ResponsiveContainer>
+                  <LineChart
+                    data={chartData}
+                    margin={{ top: 10, right: 24, left: 0, bottom: 0 }}
+                  >
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
                   <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} domain={["dataMin", "dataMax"]} />
-                  <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
                   <Tooltip 
                     formatter={(value: any, name: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, name === 'income' ? 'Income' : 'Expenses']}
                     contentStyle={{ 
@@ -1164,11 +1174,12 @@ const calculateTotalInventoryValue = async (companyId: string) => {
                     }} 
                   />
                   <Legend />
-                  <Area type="monotone" dataKey="income" name="Income" stroke="#2563eb" strokeWidth={2} fill="url(#incomeGradient)" stackId="1" dot />
-                  <Area type="monotone" dataKey="expenses" name="Expenses" stroke="#EF4444" strokeWidth={2} fill="url(#expenseGradient)" stackId="1" dot />
-                </AreaChart>
+                  <Line type="monotone" dataKey="income" name="Income" stroke="#22c55e" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="expenses" name="Expenses" stroke="#ef4444" strokeWidth={2} dot={false} />
+                </LineChart>
               </ResponsiveContainer>
-              {plTrend.length === 0 && (
+              </div>
+              {chartData.length === 0 && incomeBreakdown.length === 0 && expenseBreakdown.length === 0 && (
                 <div className="text-sm text-muted-foreground mt-2">No income/expense data for the selected period</div>
               )}
             </CardContent>

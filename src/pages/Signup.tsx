@@ -67,6 +67,7 @@ export default function Signup() {
         try { localStorage.setItem('pendingInvite', invite); } catch {}
       }
       await signup(values.name, values.email, values.password);
+      try { localStorage.setItem('just_signed_up', 'true'); } catch {}
       // After signup, try to attach company via invite
       if (invite) {
         try {
@@ -107,13 +108,18 @@ export default function Signup() {
       <SEO title="Sign Up | Rigel Business" description="Create your Rigel Business enterprise account" canonical={window.location.href} />
       <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
         {/* Background Image */}
-        <div className="absolute inset-0 bg-[url('/src/assets/sa-finance-hero.jpg')] bg-cover bg-center" />
+        <div className="absolute inset-0 bg-[url('/src/assets/background-picture.jpg')] bg-cover bg-center" />
         <div className="absolute inset-0 bg-gradient-to-br from-background/90 via-background/85 to-background/90" />
         
         <article className="w-full max-w-md rounded-lg border border-border bg-card/95 shadow-2xl p-8 relative z-10">
           <header className="mb-8 text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4">
-              <span className="text-3xl font-bold text-primary-foreground">A</span>
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4 overflow-hidden border border-border bg-background">
+              <img
+                src="/Modern Rigel Business Logo Design.png"
+                alt="Rigel Business"
+                className="h-full w-full object-cover"
+                onError={(e) => { (e.currentTarget.style.display = 'none'); }}
+              />
             </div>
             <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
             <p className="text-sm text-muted-foreground mt-2">Create your enterprise account</p>

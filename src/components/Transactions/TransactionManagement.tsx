@@ -40,6 +40,9 @@ export const TransactionManagement = () => {
   const [open, setOpen] = useState(false);
   const [editData, setEditData] = useState<any>(null);
   const [sourceTab, setSourceTab] = useState<"all" | "invoice" | "csv" | "bank" | "manual" | "purchase">("all");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [totalCount, setTotalCount] = useState(0);
 
   const load = async () => {
     try {
@@ -55,7 +58,27 @@ export const TransactionManagement = () => {
 
       if (!profile) return;
 
-      const { data, error } = await supabase
+      const start = page * pageSize;
+      const end = start + pageSize - 1;
+
+      let baseCountQuery = supabase
+        .from("transactions")
+        .select(`
+          *,
+          bank_account:bank_accounts(bank_name, account_number),
+          entries:transaction_entries(
+            id,
+            account_id,
+            debit,
+            credit,
+            description,
+            status,
+            chart_of_accounts(account_code, account_name)
+          )
+        `, { count: 'exact' })
+        .eq("company_id", profile.company_id);
+
+      let basePageQuery = supabase
         .from("transactions")
         .select(`
           *,
@@ -70,11 +93,52 @@ export const TransactionManagement = () => {
             chart_of_accounts(account_code, account_name)
           )
         `)
-        .eq("company_id", profile.company_id)
-        .order("transaction_date", { ascending: false });
+        .eq("company_id", profile.company_id);
+
+      if (searchTerm && searchTerm.trim().length > 0) {
+        const term = `%${searchTerm.trim()}%`;
+        baseCountQuery = baseCountQuery.or(`description.ilike.${term},reference_number.ilike.${term}`);
+        basePageQuery = basePageQuery.or(`description.ilike.${term},reference_number.ilike.${term}`);
+      }
+      if (filterStatus !== "all") {
+        baseCountQuery = baseCountQuery.eq("status", filterStatus);
+        basePageQuery = basePageQuery.eq("status", filterStatus);
+      }
+      if (filterType !== "all") {
+        if (filterType.toLowerCase() === "income") {
+          baseCountQuery = baseCountQuery.gt("total_amount", 0);
+          basePageQuery = basePageQuery.gt("total_amount", 0);
+        } else if (filterType.toLowerCase() === "expense") {
+          baseCountQuery = baseCountQuery.lt("total_amount", 0);
+          basePageQuery = basePageQuery.lt("total_amount", 0);
+        }
+      }
+      if (sourceTab !== "all") {
+        const s = sourceTab.toLowerCase();
+        if (s === "invoice") {
+          baseCountQuery = baseCountQuery.or(`transaction_type.eq.sales,description.ilike.%invoice%,reference_number.ilike.INV-%`);
+          basePageQuery = basePageQuery.or(`transaction_type.eq.sales,description.ilike.%invoice%,reference_number.ilike.INV-%`);
+        } else if (s === "purchase") {
+          baseCountQuery = baseCountQuery.or(`transaction_type.eq.purchase,description.ilike.%purchase%,reference_number.ilike.PO%`);
+          basePageQuery = basePageQuery.or(`transaction_type.eq.purchase,description.ilike.%purchase%,reference_number.ilike.PO%`);
+        } else if (s === "csv") {
+          baseCountQuery = baseCountQuery.or(`category.eq.Bank Import,description.ilike.%csv%,reference_number.ilike.%CSV%`);
+          basePageQuery = basePageQuery.or(`category.eq.Bank Import,description.ilike.%csv%,reference_number.ilike.%CSV%`);
+        } else if (s === "bank") {
+          baseCountQuery = baseCountQuery.not("bank_account_id", "is", "null");
+          basePageQuery = basePageQuery.not("bank_account_id", "is", "null");
+        }
+      }
+
+      const { data, error, count } = await baseCountQuery.order("transaction_date", { ascending: false });
+      const { data: pagedData, error: rangeError } = await basePageQuery
+        .order("transaction_date", { ascending: false })
+        .range(start, end);
 
       if (error) throw error;
-      setItems(data || []);
+      if (rangeError) throw rangeError;
+      setItems(pagedData || []);
+      setTotalCount(typeof count === 'number' ? count : (data?.length || 0));
     } catch (e: any) {
       toast({ title: "Failed to load", description: e.message, variant: "destructive" });
     } finally {
@@ -82,7 +146,8 @@ export const TransactionManagement = () => {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [page, pageSize, searchTerm, filterType, filterStatus, sourceTab]);
+  useEffect(() => { setPage(0); }, [searchTerm, filterType, filterStatus, sourceTab, pageSize]);
 
   const derived = useMemo(() => {
     const tx = items.map(t => ({
@@ -92,23 +157,39 @@ export const TransactionManagement = () => {
       type: (t as any).transaction_type || (t.total_amount >= 0 ? "Income" : "Expense"),
       category: (t as any).category || "—",
       bank: (t as any).bank_account ? `${(t as any).bank_account.bank_name} (${(t as any).bank_account.account_number})` : "—",
-      amount: Math.abs(t.total_amount),
+      amount: (() => {
+        const total = Number(t.total_amount || 0);
+        const base = Number((t as any).base_amount || 0);
+        // Prefer posted VAT from entries
+        const vatFromEntries = (t.entries || []).reduce((sum: number, e: any) => {
+          const name = String(e.chart_of_accounts?.account_name || '').toLowerCase();
+          if (!name.includes('vat')) return sum;
+          return sum + Math.abs(Number(e.debit || 0) - Number(e.credit || 0));
+        }, 0);
+        const vaStored = (t as any).vat_amount;
+        const ratePct = Number((t as any).vat_rate) || 0;
+        const r = ratePct / 100;
+        const vat = vatFromEntries > 0
+          ? vatFromEntries
+          : (typeof vaStored === 'number' && !Number.isNaN(vaStored))
+            ? Math.abs(vaStored)
+            : (base > 0 && r > 0) ? Math.abs(base * r) : 0;
+        const net = base > 0 ? base : Math.max(0, total - vat);
+        return Math.abs(net);
+      })(),
       vatAmount: (() => {
+        const vatFromEntries = (t.entries || []).reduce((sum: number, e: any) => {
+          const name = String(e.chart_of_accounts?.account_name || '').toLowerCase();
+          if (!name.includes('vat')) return sum;
+          return sum + Math.abs(Number(e.debit || 0) - Number(e.credit || 0));
+        }, 0);
+        if (vatFromEntries > 0) return vatFromEntries;
         const va = (t as any).vat_amount;
-        const rate = Number((t as any).vat_rate) || 0;
-        const inclusive = Boolean((t as any).vat_inclusive);
-        const base = Number((t as any).base_amount) || 0;
-        const total = Number(t.total_amount) || 0;
         if (typeof va === 'number' && !Number.isNaN(va)) return Math.abs(va);
-        if (rate > 0) {
-          if (inclusive) {
-            if (base > 0) return Math.abs(total - base);
-            return Math.abs(total * (rate / (1 + rate)));
-          } else {
-            if (base > 0) return Math.abs(base * rate);
-            return Math.abs(total * rate);
-          }
-        }
+        const ratePct = Number((t as any).vat_rate) || 0;
+        const r = ratePct / 100;
+        const base = Number((t as any).base_amount) || 0;
+        if (r > 0 && base > 0) return Math.abs(base * r);
         return 0;
       })(),
       reference: t.reference_number || "—",
@@ -588,7 +669,7 @@ export const TransactionManagement = () => {
       <div className="space-y-2">
         <div className="flex items-center gap-2">
           <Receipt className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">Transactions ({derived.filtered.length})</h2>
+          <h2 className="text-lg font-semibold">Transactions ({totalCount})</h2>
         </div>
         <div className="rounded-md border">
           <Table>
@@ -666,6 +747,23 @@ export const TransactionManagement = () => {
                 ))}
               </TableBody>
           </Table>
+        </div>
+        <div className="flex items-center justify-between mt-3">
+          <div className="text-sm text-muted-foreground">
+            Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {items.length} of {totalCount}
+          </div>
+          <div className="flex items-center gap-2">
+            <Select value={String(pageSize)} onValueChange={(v) => { setPage(0); setPageSize(parseInt(v)); }}>
+              <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+            <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+          </div>
         </div>
       </div>
     </div>

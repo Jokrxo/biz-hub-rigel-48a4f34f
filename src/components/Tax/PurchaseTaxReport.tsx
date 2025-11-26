@@ -54,7 +54,15 @@ export const PurchaseTaxReport = () => {
         const detail: DetailRow[] = [];
         for (const e of filtered as any[]) {
           const accName = (e.chart_of_accounts?.account_name || '').toLowerCase();
-          const isVatInput = accName.includes('vat input') || accName.includes('vat receivable') || accName.includes('vat');
+          const isVatInput = (
+            accName.includes('vat input') ||
+            accName.includes('input tax') ||
+            accName.includes('vat receivable')
+          ) && !(
+            accName.includes('vat output') ||
+            accName.includes('output tax') ||
+            accName.includes('vat payable')
+          );
           const isExpenseTx = String(e.transactions?.transaction_type || '').toLowerCase() === 'expense';
           const isPurchaseTx = String(e.transactions?.transaction_type || '').toLowerCase() === 'purchase';
           const debit = Number(e.debit || 0);
@@ -64,13 +72,14 @@ export const PurchaseTaxReport = () => {
           const rate = Number(e.transactions?.vat_rate || 0);
           if (!byMonth[ym]) byMonth[ym] = { vatInput: 0, purchasesExclVat: 0, rate };
           if (isVatInput && debit > credit && rate > 0) {
-            byMonth[ym].vatInput += debit - credit;
+            const vatVal = debit - credit;
+            byMonth[ym].vatInput += vatVal;
             const inclusive = Boolean(e.transactions?.vat_inclusive);
             const total = Number(e.transactions?.total_amount || 0);
             const base = Number(e.transactions?.base_amount || 0);
-            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - (debit - credit));
+            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vatVal);
             byMonth[ym].purchasesExclVat += Math.max(0, net);
-            detail.push({ date: txDate || '', description: e.transactions?.description || '', net: Math.max(0, net), vat: debit - credit, total });
+            detail.push({ date: txDate || '', description: e.transactions?.description || '', net: Math.max(0, net), vat: vatVal, total });
           } else if (isExpenseTx && rate > 0 && Number(e.transactions?.vat_amount || 0) > 0 && !processedTx.has(String(e.transactions?.id || e.transaction_id || ''))) {
             const inclusive = Boolean(e.transactions?.vat_inclusive);
             const total = Number(e.transactions?.total_amount || 0);
@@ -189,10 +198,10 @@ export const PurchaseTaxReport = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead className="text-right">Net</TableHead>
-                    <TableHead className="text-right">VAT</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead className="text-right">Amount (excl. VAT)</TableHead>
+                  <TableHead className="text-right">VAT</TableHead>
+                  <TableHead className="text-right">Amount (incl. VAT)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

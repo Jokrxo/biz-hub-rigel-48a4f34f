@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { GeneralSettings } from "@/components/Settings/GeneralSettings";
 import { AdministrationSettings } from "@/components/Settings/AdministrationSettings";
 import { DataManagement } from "@/components/Settings/DataManagement";
+import { ThemeSettings } from "@/components/Settings/ThemeSettings";
 import { SecuritySettings } from "@/components/Settings/SecuritySettings";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -42,12 +43,13 @@ export default function SettingsPage() {
           </div>
 
           <Tabs defaultValue="company" className="w-full">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="company">Company Settings</TabsTrigger>
               <TabsTrigger value="general">General Settings</TabsTrigger>
               <TabsTrigger value="administration">Administration</TabsTrigger>
               <TabsTrigger value="data">Data Management</TabsTrigger>
               <TabsTrigger value="security">Security</TabsTrigger>
+              <TabsTrigger value="theme">Theme</TabsTrigger>
             </TabsList>
             
             <TabsContent value="company" className="space-y-4">
@@ -68,6 +70,10 @@ export default function SettingsPage() {
 
             <TabsContent value="security" className="space-y-4">
               <SecuritySettings />
+            </TabsContent>
+
+            <TabsContent value="theme" className="space-y-4">
+              <ThemeSettings />
             </TabsContent>
           </Tabs>
 

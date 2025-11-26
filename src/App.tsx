@@ -53,6 +53,35 @@ const App = () => {
       <Sonner />
       <AuthProvider>
         <BrowserRouter>
+          {(() => {
+            try {
+              const saved = localStorage.getItem('app_theme');
+              const html = document.documentElement;
+              [
+                "theme-corp-blue",
+                "theme-fintech-green",
+                "theme-premium-navy",
+                "theme-neutral-enterprise",
+                "theme-dark-pro",
+                "theme-exec-gold",
+                "theme-ocean-gradient",
+                "theme-purple-digital",
+                "theme-tech-silver",
+                "theme-eco-green"
+              ].forEach(c => html.classList.remove(c));
+              if (saved === 'corp_blue') html.classList.add('theme-corp-blue');
+              else if (saved === 'fintech_green') html.classList.add('theme-fintech-green');
+              else if (saved === 'premium_navy') html.classList.add('theme-premium-navy');
+              else if (saved === 'neutral_enterprise') html.classList.add('theme-neutral-enterprise');
+              else if (saved === 'dark_pro') html.classList.add('theme-dark-pro');
+              else if (saved === 'exec_gold') html.classList.add('theme-exec-gold');
+              else if (saved === 'ocean_gradient') html.classList.add('theme-ocean-gradient');
+              else if (saved === 'purple_digital') html.classList.add('theme-purple-digital');
+              else if (saved === 'tech_silver') html.classList.add('theme-tech-silver');
+              else if (saved === 'eco_green') html.classList.add('theme-eco-green');
+            } catch {}
+            return null;
+          })()}
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />

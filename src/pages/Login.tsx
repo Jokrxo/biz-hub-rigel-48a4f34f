@@ -37,6 +37,7 @@ export default function Login() {
   const onSubmit = async (values: FormValues) => {
     try {
       await login(values.email, values.password);
+      try { localStorage.setItem('just_logged_in', 'true'); } catch {}
       const redirect = params.get("redirect") || "/";
       navigate(redirect, { replace: true });
     } catch (e: unknown) {
@@ -65,13 +66,18 @@ export default function Login() {
       <SEO title="Login | Rigel Business" description="Secure login to Rigel Business enterprise dashboard" canonical={window.location.href} />
       <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
         {/* Background Image */}
-        <div className="absolute inset-0 bg-[url('/src/assets/professional-finance-bg.jpg')] bg-cover bg-center" />
+        <div className="absolute inset-0 bg-[url('/src/assets/stella-sign-up.jpg')] bg-cover bg-center" />
         <div className="absolute inset-0 bg-gradient-to-br from-background/90 via-background/85 to-background/90" />
         
         <article className="w-full max-w-md rounded-lg border border-border bg-card/95 shadow-2xl p-8 relative z-10">
           <header className="mb-8 text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4">
-              <Calculator className="h-8 w-8 text-primary-foreground" />
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4 overflow-hidden border border-border bg-background">
+              <img
+                src="/Modern Rigel Business Logo Design.png"
+                alt="Rigel Business"
+                className="h-full w-full object-cover"
+                onError={(e) => { (e.currentTarget.style.display = 'none'); }}
+              />
             </div>
             <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
             <p className="text-sm text-muted-foreground mt-2">Enterprise Accounting & Financial Management</p>

@@ -768,11 +768,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
         
         // Calculate VAT amounts for edit path (similar to create path)
-        const amountNum = parseFloat(form.amount || "0");
-        const isLoan = !!(form.element && form.element.startsWith('loan_'));
-        const vatRate = isLoan ? 0 : parseFloat(form.vatRate);
-        const vatAmount = vatRate > 0 ? (amountNum * vatRate) / (100 + vatRate) : 0; // VAT from inclusive amount
-        const netAmount = amountNum - vatAmount;
+      const amountNum = parseFloat(form.amount || "0");
+      const isLoan = !!(form.element && form.element.startsWith('loan_'));
+      const vatRate = isLoan ? 0 : parseFloat(form.vatRate);
+      const isPurchase = form.element === 'expense' || form.element === 'product_purchase';
+      const vatAmount = vatRate > 0 ? (isPurchase ? (amountNum * vatRate) / 100 : (amountNum * vatRate) / (100 + vatRate)) : 0;
+      const netAmount = vatRate > 0 ? (isPurchase ? amountNum : amountNum - vatAmount) : amountNum;
         
         // Get VAT account if needed
         let vatAccount = null;
@@ -800,13 +801,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             reference_number: form.reference ? form.reference.trim() : null,
             transaction_type: lockType === 'po_sent' ? 'purchase' : (form.element || null),
             bank_account_id: form.bankAccountId && form.bankAccountId.trim() !== "" ? form.bankAccountId : null,
-            total_amount: isNaN(amountNum) ? 0 : amountNum,
+            total_amount: isPurchase ? (netAmount + vatAmount) : (isNaN(amountNum) ? 0 : amountNum),
             debit_account_id: form.debitAccount,
             credit_account_id: form.creditAccount,
             vat_rate: vatRate > 0 ? vatRate : null,
             vat_amount: vatAmount > 0 ? vatAmount : null,
             base_amount: netAmount,
-            vat_inclusive: lockType === 'po_sent' ? false : (vatRate > 0),
+            vat_inclusive: isPurchase ? false : (lockType === 'po_sent' ? false : (vatRate > 0)),
            })
           .eq("id", editData.id);
 
@@ -873,7 +874,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 transaction_id: editData.id,
                 account_id: form.creditAccount, // Bank account
                 debit: 0,
-                credit: amountAbs, // Total amount
+                credit: netAmount + vatAmount,
                 description: sanitizedDescription,
                 status: "approved"
               }
@@ -928,7 +929,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 transaction_id: editData.id,
                 account_id: form.creditAccount,
                 debit: 0,
-                credit: amountAbs,
+                credit: netAmount + vatAmount,
                 description: sanitizedDescription,
                 status: "approved"
               }
@@ -955,7 +956,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 transaction_id: editData.id,
                 account_id: form.creditAccount,
                 debit: 0,
-                credit: amountAbs,
+                credit: netAmount + vatAmount,
                 description: sanitizedDescription,
                 status: "approved"
               }
@@ -1277,8 +1278,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       const amount = parseFloat(form.amount);
       const isLoan = !!(form.element && form.element.startsWith('loan_'));
       const vatRate = (isLoan || form.element === 'depreciation') ? 0 : parseFloat(form.vatRate);
-      const vatAmount = vatRate > 0 ? (amount * vatRate) / (100 + vatRate) : 0; // VAT from inclusive amount
-      const netAmount = amount - vatAmount;
+      const isPurchase = form.element === 'expense' || form.element === 'product_purchase';
+      const vatAmount = vatRate > 0 ? (isPurchase ? (amount * vatRate) / 100 : (amount * vatRate) / (100 + vatRate)) : 0;
+      const netAmount = vatRate > 0 ? (isPurchase ? amount : amount - vatAmount) : amount;
 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
@@ -1359,11 +1361,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           transaction_date: form.date,
           description: sanitizedDescription,
           reference_number: sanitizedReference,
-          total_amount: amount,
+          total_amount: isPurchase ? (netAmount + vatAmount) : amount,
           vat_rate: vatRate > 0 ? vatRate : null,
           vat_amount: vatAmount > 0 ? vatAmount : null,
           base_amount: netAmount,
-          vat_inclusive: lockType === 'po_sent' ? false : (vatRate > 0),
+          vat_inclusive: isPurchase ? false : (lockType === 'po_sent' ? false : (vatRate > 0)),
           bank_account_id: bankAccountId,
           transaction_type: lockType === 'po_sent' ? 'purchase' : form.element,
           category: autoClassification?.category || null,
@@ -1593,7 +1595,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               transaction_id: transaction.id,
               account_id: form.creditAccount, // Bank account
               debit: 0,
-              credit: amount, // Total amount
+              credit: isPurchase ? (netAmount + vatAmount) : amount,
               description: sanitizedDescription,
               status: "pending"
             }
@@ -1648,7 +1650,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               transaction_id: transaction.id,
               account_id: form.creditAccount,
               debit: 0,
-              credit: amount,
+              credit: isPurchase ? (netAmount + vatAmount) : amount,
               description: sanitizedDescription,
               status: "pending"
             }
@@ -1675,7 +1677,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               transaction_id: transaction.id,
               account_id: form.creditAccount,
               debit: 0,
-              credit: amount,
+              credit: isPurchase ? (netAmount + vatAmount) : amount,
               description: sanitizedDescription,
               status: "pending"
             }
@@ -1987,13 +1989,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if ((debitAccount?.account_type || '').toLowerCase() === 'asset' && debitAccount.account_name.toLowerCase().includes('bank')) {
           await supabase.rpc('update_bank_balance', {
             _bank_account_id: bankAccountId,
-            _amount: amount,
+            _amount: isPurchase ? (netAmount + vatAmount) : amount,
             _operation: 'add'
           });
         } else if ((creditAccount?.account_type || '').toLowerCase() === 'asset' && creditAccount.account_name.toLowerCase().includes('bank')) {
           await supabase.rpc('update_bank_balance', {
             _bank_account_id: bankAccountId,
-            _amount: amount,
+            _amount: isPurchase ? (netAmount + vatAmount) : amount,
             _operation: 'subtract'
           });
         }
@@ -2552,7 +2554,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="amount">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' ? '' : '(incl. VAT)'} *</Label>
+                    <Label htmlFor="amount">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' ? '' : (form.element === 'expense' || form.element === 'product_purchase' ? '(excl. VAT)' : '(incl. VAT)')} *</Label>
                 <Input
                   id="amount"
                   type="number"
@@ -2634,13 +2636,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">VAT ({form.vatRate}%):</span>
                       <span className="font-mono">
-                        R {((parseFloat(form.amount) * parseFloat(form.vatRate)) / (100 + parseFloat(form.vatRate))).toFixed(2)}
+                        R {(form.element === 'expense' || form.element === 'product_purchase' ? (parseFloat(form.amount) * parseFloat(form.vatRate) / 100) : (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate)))).toFixed(2)}
                       </span>
                     </div>
                     <div className="flex justify-between text-base font-semibold border-t pt-2">
                       <span>Net Amount:</span>
                       <span className="font-mono">
-                        R {(parseFloat(form.amount) - (parseFloat(form.amount) * parseFloat(form.vatRate)) / (100 + parseFloat(form.vatRate))).toFixed(2)}
+                        R {(form.element === 'expense' || form.element === 'product_purchase' ? parseFloat(form.amount) : (parseFloat(form.amount) - (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate))))).toFixed(2)}
                       </span>
                     </div>
                   </>

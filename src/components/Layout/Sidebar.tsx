@@ -50,6 +50,7 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
   const location = useLocation();
   const { user } = useAuth();
   const [userProfile, setUserProfile] = useState<{ name: string; role: string } | null>(null);
+  const [logoError, setLogoError] = useState(false);
 
   useEffect(() => {
     const loadUserProfile = async () => {
@@ -109,9 +110,18 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
         {/* Logo Section */}
         <div className="flex h-16 items-center border-b border-sidebar-border px-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-primary animate-glow">
-              <Calculator className="h-5 w-5 text-primary-foreground" />
-            </div>
+            {logoError ? (
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-primary animate-glow">
+                <Calculator className="h-5 w-5 text-primary-foreground" />
+              </div>
+            ) : (
+              <img
+                src="/Modern Rigel Business Logo Design.png"
+                alt="Rigel Business"
+                className="h-10 w-10 rounded-lg object-cover"
+                onError={() => setLogoError(true)}
+              />
+            )}
             {open && (
               <div className="flex flex-col">
                 <span className="text-lg font-bold text-sidebar-primary">Rigel Business</span>

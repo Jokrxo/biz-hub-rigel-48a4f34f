@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import { useNavigate } from "react-router-dom";
@@ -26,9 +28,13 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
   const [metrics, setMetrics] = useState<{ tx: number; inv: number; po: number; bills: number; budgets: number; bank: number; customers: number; items: number }>({ tx: 0, inv: 0, po: 0, bills: 0, budgets: 0, bank: 0, customers: 0, items: 0 });
   const [messages, setMessages] = useState<ChatMsg[]>([{ role: 'bot', text: 'Hi, I am Stella. How can I help you today?', ts: new Date().toISOString() }]);
   const [chatInput, setChatInput] = useState("");
+  const [aiEnabled, setAiEnabled] = useState<boolean>(false);
+  const [openaiKey, setOpenaiKey] = useState<string>("");
+  const [model, setModel] = useState<string>("gpt-4o-mini");
 
   useEffect(() => {
     if (!open) return;
+    const ac = new AbortController();
     const init = async () => {
       const { data: profile } = await supabase
         .from("profiles")
@@ -37,34 +43,42 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
         .maybeSingle();
       if (!profile?.company_id) return;
       setCompanyId(profile.company_id);
-      await loadMetrics(profile.company_id);
+      await loadMetrics(profile.company_id, ac.signal);
       wireRealtime(profile.company_id);
+      const savedEnabled = localStorage.getItem("stella_ai_enabled");
+      const savedKey = localStorage.getItem("stella_openai_key");
+      const savedModel = localStorage.getItem("stella_openai_model");
+      setAiEnabled(savedEnabled === "true");
+      setOpenaiKey(savedKey || "");
+      setModel(savedModel || "gpt-4o-mini");
     };
     init();
-    return () => {};
+    return () => { ac.abort(); };
   }, [open]);
 
-  const loadMetrics = async (cid: string) => {
-    const [tx, inv, po, bills, budgets, bank, customers, items] = await Promise.all([
-      supabase.from("transactions").select("id", { count: "exact", head: true }).eq("company_id", cid),
-      supabase.from("invoices").select("id", { count: "exact", head: true }).eq("company_id", cid),
-      supabase.from("purchase_orders").select("id", { count: "exact", head: true }).eq("company_id", cid),
-      supabase.from("bills").select("id", { count: "exact", head: true }).eq("company_id", cid),
-      supabase.from("budgets").select("id", { count: "exact", head: true }).eq("company_id", cid),
-      supabase.from("bank_accounts").select("id", { count: "exact", head: true }).eq("company_id", cid),
-      supabase.from("customers").select("id", { count: "exact", head: true }).eq("company_id", cid),
-      supabase.from("items").select("id", { count: "exact", head: true }).eq("company_id", cid)
-    ]);
-    setMetrics({
-      tx: (tx.count as number) || 0,
-      inv: (inv.count as number) || 0,
-      po: (po.count as number) || 0,
-      bills: (bills.count as number) || 0,
-      budgets: (budgets.count as number) || 0,
-      bank: (bank.count as number) || 0,
-      customers: (customers.count as number) || 0,
-      items: (items.count as number) || 0
-    });
+  const loadMetrics = async (cid: string, signal?: AbortSignal) => {
+    try {
+      const [tx, inv, po, bills, budgets, bank, customers, items] = await Promise.all([
+        supabase.from("transactions").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any),
+        supabase.from("invoices").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any),
+        supabase.from("purchase_orders").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any),
+        supabase.from("bills").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any),
+        supabase.from("budgets").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any),
+        supabase.from("bank_accounts").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any),
+        supabase.from("customers").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any),
+        supabase.from("items").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any)
+      ]);
+      setMetrics({
+        tx: (tx.count as number) || 0,
+        inv: (inv.count as number) || 0,
+        po: (po.count as number) || 0,
+        bills: (bills.count as number) || 0,
+        budgets: (budgets.count as number) || 0,
+        bank: (bank.count as number) || 0,
+        customers: (customers.count as number) || 0,
+        items: (items.count as number) || 0
+      });
+    } catch {}
   };
 
   const wireRealtime = (cid: string) => {
@@ -111,18 +125,33 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
     setMessages(prev => [...prev, { role: 'user', text: q, ts: now }]);
     const lower = q.toLowerCase();
     let answer: string | null = null;
-    if (companyId) {
+    if (companyId && !aiEnabled) {
       if (lower.includes('unpaid') && lower.includes('invoice')) {
-        const { count } = await supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('company_id', companyId).neq('status', 'paid');
+        const { count } = await supabase.from('invoices').select('id', { count: 'exact' }).eq('company_id', companyId).neq('status', 'paid').limit(1);
         answer = `Unpaid invoices: ${count || 0}`;
       } else if (lower.includes('recent') && lower.includes('transaction')) {
         const { data } = await supabase.from('transactions').select('description, transaction_date, total_amount').eq('company_id', companyId).order('transaction_date', { ascending: false }).limit(5);
         const list = (data || []).map((r: any) => `${r.transaction_date} • ${r.description || ''} • R ${(Number(r.total_amount || 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`).join('\n');
         answer = list ? `Recent transactions:\n${list}` : 'No recent transactions found';
       } else if (lower.includes('unpaid') && lower.includes('bill')) {
-        const { count } = await supabase.from('bills').select('id', { count: 'exact', head: true }).eq('company_id', companyId).neq('status', 'paid');
+        const { count } = await supabase.from('bills').select('id', { count: 'exact' }).eq('company_id', companyId).neq('status', 'paid').limit(1);
         answer = `Unpaid bills: ${count || 0}`;
       }
+    }
+    if (!answer && aiEnabled && openaiKey) {
+      try {
+        const sys = "You are Stella, an assistant for a finance manager web app. Answer clearly and concisely.";
+        const history = messages.map(m => ({ role: m.role === 'bot' ? 'assistant' as const : 'user' as const, content: m.text }));
+        const body = { model, messages: [{ role: 'system', content: sys }, ...history, { role: 'user', content: q }], temperature: 0.3 };
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${openaiKey}` },
+          body: JSON.stringify(body)
+        });
+        const json = await res.json();
+        const text = json?.choices?.[0]?.message?.content || null;
+        answer = text || null;
+      } catch {}
     }
     if (!answer) answer = respond(q);
     setMessages(prev => [...prev, { role: 'bot', text: answer!, ts: new Date().toISOString() }]);
@@ -241,6 +270,27 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
               <div className="space-y-2">
                 <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><span className="text-sm">Company-scoped realtime enabled</span></div>
                 <div className="text-xs text-muted-foreground">Live updates bound to your company only.</div>
+                <div className="mt-4 p-3 border rounded-md space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Switch checked={aiEnabled} onCheckedChange={(v) => { setAiEnabled(v); localStorage.setItem('stella_ai_enabled', v ? 'true' : 'false'); }} />
+                    <span className="text-sm">Enable OpenAI</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Input type="password" placeholder="OpenAI API Key" value={openaiKey} onChange={(e) => { setOpenaiKey(e.target.value); localStorage.setItem('stella_openai_key', e.target.value); }} />
+                    </div>
+                    <div>
+                      <Select value={model} onValueChange={(v) => { setModel(v); localStorage.setItem('stella_openai_model', v); }}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="gpt-4o-mini">gpt-4o-mini</SelectItem>
+                          <SelectItem value="gpt-4o">gpt-4o</SelectItem>
+                          <SelectItem value="gpt-3.5-turbo">gpt-3.5-turbo</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
               </div>
             </TabsContent>
           </Tabs>
