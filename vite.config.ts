@@ -9,6 +9,7 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       workbox: {
+        navigateFallback: '/index.html',
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
         runtimeCaching: [
           {
@@ -48,13 +49,13 @@ export default defineConfig({
         orientation: 'portrait-primary',
         icons: [
           {
-            src: '/icons/icon-192x192.png',
+            src: '/Modern Rigel Business Logo Design.png',
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any maskable'
           },
           {
-            src: '/icons/icon-512x512.png',
+            src: '/Modern Rigel Business Logo Design.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
@@ -67,14 +68,14 @@ export default defineConfig({
             short_name: 'Transaction',
             description: 'Quickly add a new transaction',
             url: '/transactions/new',
-            icons: [{ src: '/icons/icon-192x192.png', sizes: '192x192' }]
+            icons: [{ src: '/Modern Rigel Business Logo Design.png', sizes: '192x192' }]
           },
           {
             name: 'View Reports',
             short_name: 'Reports',
             description: 'View financial reports',
             url: '/reports',
-            icons: [{ src: '/icons/icon-192x192.png', sizes: '192x192' }]
+            icons: [{ src: '/Modern Rigel Business Logo Design.png', sizes: '192x192' }]
           }
         ]
       },
