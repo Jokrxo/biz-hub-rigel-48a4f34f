@@ -1,17 +1,9 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
+import AuthContext, { AuthContextValue } from "./AuthContextBase";
 
-interface AuthContextValue {
-  user: User | null;
-  loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
-  forgotPassword: (email: string) => Promise<void>;
-  logout: () => Promise<void>;
-}
-
-const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+ 
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -55,13 +47,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
-  };
+  }, []);
 
-  const generateUuid = () => {
+  const generateUuid = useCallback(() => {
     try { return crypto.randomUUID(); } catch { /* fallback */ }
     const tpl = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
     return tpl.replace(/[xy]/g, c => {
@@ -69,9 +61,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const v = c === 'x' ? r : (r & 0x3) | 0x8;
       return v.toString(16);
     });
-  };
+  }, []);
 
-  const bootstrapProfileIfNeeded = async (userId: string) => {
+  const bootstrapProfileIfNeeded = useCallback(async (userId: string) => {
     try {
       // If an invite is being processed, skip bootstrap
       try { if (localStorage.getItem('pendingInvite')) return; } catch {}
@@ -173,9 +165,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // non-fatal
     }
-  };
+  }, [generateUuid]);
 
-  const signup = async (name: string, email: string, password: string) => {
+  const signup = useCallback(async (name: string, email: string, password: string) => {
     if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
     const { data, error } = await supabase.auth.signUp({ 
       email, 
@@ -196,28 +188,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Bootstrap will check and fix any DEFAULT company assignment
       await bootstrapProfileIfNeeded(data.user.id);
     }
-  };
+  }, [bootstrapProfileIfNeeded]);
 
-  const forgotPassword = async (email: string) => {
+  const forgotPassword = useCallback(async (email: string) => {
     if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
     const { error } = await supabase.auth.resetPasswordForEmail(email);
     if (error) throw error;
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     if (!hasSupabaseEnv) { setUser(null); return; }
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-  };
+  }, []);
 
-  const value = useMemo(() => ({ user, loading, login, signup, forgotPassword, logout }), [user, loading]);
+  const value = useMemo(() => ({ user, loading, login, signup, forgotPassword, logout }), [user, loading, login, signup, forgotPassword, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
-
-export const useAuth = () => {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
-};
+ 
 

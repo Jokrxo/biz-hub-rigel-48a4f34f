@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -33,51 +33,27 @@ export const FinancialReports = () => {
   const [activeReport, setActiveReport] = useState<'pl' | 'bs' | 'cf'>('pl');
   const { toast } = useToast();
 
-  useEffect(() => {
-    loadFinancialData();
-  }, []);
-
-  const loadFinancialData = async () => {
+  const loadFinancialData = useCallback(async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
-      // Get user's company
       const { data: profile } = await supabase
         .from('profiles')
         .select('company_id')
         .eq('user_id', user.id)
         .single();
-
       if (!profile?.company_id) return;
-
-      // Try to get stored financial statements first
       const { data: storedStatements, error: fsError } = await supabase
-        .rpc('get_latest_financial_statements', {
-          _company_id: profile.company_id
-        });
-
+        .rpc('get_latest_financial_statements', { _company_id: profile.company_id });
       if (fsError) throw fsError;
-
       if (storedStatements && (storedStatements.balance_sheet || storedStatements.income_statement || storedStatements.cash_flow_statement)) {
-        // Use stored financial statements
-        if (storedStatements.balance_sheet) {
-          parseStoredBalanceSheet(storedStatements.balance_sheet);
-        }
-        if (storedStatements.income_statement) {
-          parseStoredIncomeStatement(storedStatements.income_statement);
-        }
-        if (storedStatements.cash_flow_statement) {
-          parseStoredCashFlowStatement(storedStatements.cash_flow_statement);
-        }
+        if (storedStatements.balance_sheet) { parseStoredBalanceSheet(storedStatements.balance_sheet); }
+        if (storedStatements.income_statement) { parseStoredIncomeStatement(storedStatements.income_statement); }
+        if (storedStatements.cash_flow_statement) { parseStoredCashFlowStatement(storedStatements.cash_flow_statement); }
       } else {
-        // Fallback: generate from trial balance if no stored statements
-        const { data: trialBalance, error: tbError } = await supabase
-          .rpc('get_trial_balance_for_company');
-
+        const { data: trialBalance, error: tbError } = await supabase.rpc('get_trial_balance_for_company');
         if (tbError) throw tbError;
-
         if (trialBalance) {
           generateProfitLoss(trialBalance);
           generateBalanceSheet(trialBalance);
@@ -86,15 +62,11 @@ export const FinancialReports = () => {
       }
     } catch (error) {
       console.error('Error loading financial data:', error);
-      toast({
-        title: "Error",
-        description: "Failed to load financial reports",
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+      toast({ title: "Error", description: "Failed to load financial reports", variant: "destructive" });
+    } finally { setLoading(false); }
+  }, [toast, generateCashFlow]);
+  useEffect(() => { loadFinancialData(); }, [loadFinancialData]);
+
 
   const generateProfitLoss = (trialBalance: any[]) => {
     // Group by account type - use trial balance balances directly

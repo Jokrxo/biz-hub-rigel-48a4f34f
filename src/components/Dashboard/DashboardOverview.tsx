@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,13 +28,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 export const DashboardOverview = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [metrics, setMetrics] = useState({
     totalAssets: 0,
     totalLiabilities: 0,
     totalEquity: 0,
     totalIncome: 0,
     totalExpenses: 0,
+    operatingExpenses: 0,
     bankBalance: 0
   });
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
@@ -57,6 +58,7 @@ export const DashboardOverview = () => {
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean; hasProducts: boolean; hasCustomers: boolean; hasSuppliers: boolean; hasEmployees: boolean }>({ hasCoa: true, hasBank: true, hasProducts: true, hasCustomers: true, hasSuppliers: true, hasEmployees: true });
   const [userName, setUserName] = useState<string>("");
   const [companyId, setCompanyId] = useState<string>("");
+  const [chartMonths, setChartMonths] = useState<number>(3);
   const [onboardingOpen, setOnboardingOpen] = useState<boolean>(false);
   const loadingRef = useRef(false);
   
@@ -83,9 +85,572 @@ export const DashboardOverview = () => {
     return { ...defaultWidgets, ...parsed };
   });
 
+  const calculateTotalInventoryValue = useCallback(async (companyId: string) => {
+    try {
+      const { data: products } = await supabase
+        .from('items')
+        .select('cost_price, quantity_on_hand')
+        .eq('company_id', companyId)
+        .eq('item_type', 'product')
+        .gt('quantity_on_hand', 0);
+      const totalValue = (products || []).reduce((sum, product) => {
+        const cost = Number(product.cost_price || 0);
+        const qty = Number(product.quantity_on_hand || 0);
+        return sum + (cost * qty);
+      }, 0);
+      return totalValue;
+    } catch (error) {
+      return 0;
+    }
+  }, []);
+
+  function totalsFromTrialBalance(tb: any[]) {
+    const income = tb.filter((a: any) => a.account_type.toLowerCase() === 'revenue' || a.account_type.toLowerCase() === 'income').reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    const cogs = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && ((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    const opex = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && !((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
+    return { income, expenses: cogs + opex };
+  }
+
+  const fetchTrialBalanceForPeriod = useCallback(async (companyId: string, start: string, end: string) => {
+    const startDateObj = new Date(start);
+    const endDateObj = new Date(end);
+    endDateObj.setHours(23, 59, 59, 999);
+
+    const { data: accounts, error: accountsError } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_code, account_name, account_type')
+      .eq('company_id', companyId)
+      .eq('is_active', true)
+      .order('account_code');
+    if (accountsError) throw accountsError;
+
+    const { data: txEntries, error: txError } = await supabase
+      .from('transaction_entries')
+      .select(`
+        transaction_id,
+        account_id,
+        debit,
+        credit,
+        transactions!inner (
+          transaction_date
+        )
+      `)
+      .eq('transactions.company_id', companyId)
+      .gte('transactions.transaction_date', startDateObj.toISOString())
+      .lte('transactions.transaction_date', endDateObj.toISOString());
+    if (txError) throw txError;
+
+    const { data: ledgerEntries, error: ledgerError } = await supabase
+      .from('ledger_entries')
+      .select('transaction_id, account_id, debit, credit, entry_date')
+      .eq('company_id', companyId)
+      .gte('entry_date', startDateObj.toISOString())
+      .lte('entry_date', endDateObj.toISOString());
+    if (ledgerError) throw ledgerError;
+
+    const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
+    const totalInventoryValue = await calculateTotalInventoryValue(companyId);
+    const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+    const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
+    (accounts || []).forEach((acc: any) => {
+      let sumDebit = 0;
+      let sumCredit = 0;
+      filteredTxEntries?.forEach((entry: any) => { if (entry.account_id === acc.id) { sumDebit += Number(entry.debit || 0); sumCredit += Number(entry.credit || 0); } });
+      ledgerEntries?.forEach((entry: any) => { if (entry.account_id === acc.id) { sumDebit += Number(entry.debit || 0); sumCredit += Number(entry.credit || 0); } });
+      const type = (acc.account_type || '').toLowerCase();
+      const naturalDebit = type === 'asset' || type === 'expense';
+      let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+      if (acc.account_code === '1300') { balance = totalInventoryValue; }
+      const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
+      const isPrimaryInventory = acc.account_code === '1300';
+      const shouldShow = Math.abs(balance) > 0.01 && (!isInventoryName || isPrimaryInventory);
+      if (shouldShow) { trialBalance.push({ account_id: acc.id, account_code: acc.account_code, account_name: acc.account_name, account_type: acc.account_type, balance }); }
+    });
+    return trialBalance;
+  }, [calculateTotalInventoryValue]);
+
+  const loadDashboardData = useCallback(async () => {
+    try {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) { setLoading(false); return; }
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("company_id, first_name, last_name")
+        .eq("user_id", user.id)
+        .single();
+      if (profileError || !profile) { setLoading(false); return; }
+      setCompanyId(String(profile.company_id));
+      const fullName = [String(profile.first_name || '').trim(), String(profile.last_name || '').trim()].filter(Boolean).join(' ');
+      setUserName(fullName || (user.user_metadata?.name as string) || user.email || "");
+      const startDate = new Date(selectedYear, selectedMonth - 1, 1);
+      const endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
+      const rangeStart = new Date(selectedYear, selectedMonth - chartMonths, 1);
+      const cacheKey = `db-cache-${String(profile.company_id)}-${selectedYear}-${selectedMonth}`;
+      try {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const c = JSON.parse(cached);
+          if (c?.metrics) setMetrics(c.metrics);
+          if (c?.recentTransactions) setRecentTransactions(c.recentTransactions);
+          if (c?.chartData) setChartData(c.chartData);
+          if (c?.netProfitTrend) setNetProfitTrend(c.netProfitTrend);
+          if (c?.plTrend) setPlTrend(c.plTrend);
+        }
+      } catch {}
+      const hadCache = !!localStorage.getItem(cacheKey);
+      if (!hadCache) setLoading(true);
+      const txPromise = supabase
+        .from("transactions")
+        .select(`
+          id,
+          reference_number,
+          description,
+          total_amount,
+          transaction_date,
+          transaction_type,
+          status
+        `)
+        .eq("company_id", profile.company_id)
+        .gte("transaction_date", rangeStart.toISOString())
+        .lte("transaction_date", endDate.toISOString())
+        .order("transaction_date", { ascending: false });
+      const tbPromise = fetchTrialBalanceForPeriod(String(profile.company_id), startDate.toISOString(), endDate.toISOString());
+      const [txRes, trialBalance] = await Promise.all([txPromise, tbPromise]);
+      if ((txRes as any)?.error) throw (txRes as any).error;
+      const transactions = (txRes as any)?.data || [];
+      const recent = (transactions || []).slice(0, 10).map((t: any) => ({
+        id: String(t.reference_number || t.id || ''),
+        description: String(t.description || ''),
+        date: new Date(String(t.transaction_date || new Date())).toLocaleDateString('en-ZA'),
+        type: ['sales','income','asset_disposal','invoice'].includes(String(t.transaction_type || '').toLowerCase()) ? 'income' : 'expense',
+        amount: `R ${Number(t.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`
+      }));
+      setRecentTransactions(recent);
+      const totals = totalsFromTrialBalance(trialBalance);
+      const operatingExpensesTB = (trialBalance || [])
+        .filter((a: any) => {
+          const type = String(a.account_type || '').toLowerCase();
+          const name = String(a.account_name || '').toLowerCase();
+          const code = String(a.account_code || '');
+          const isExpense = type === 'expense';
+          const isCogs = name.includes('cost of') || code.startsWith('5000');
+          return isExpense && !isCogs;
+        })
+        .reduce((s: number, a: any) => s + Math.abs(Number(a.balance || 0)), 0);
+      const totalAssets = (trialBalance || []).filter((a: any) => String(a.account_type || '').toLowerCase() === 'asset').reduce((s: number, a: any) => s + Number(a.balance || 0), 0);
+      const totalLiabilities = (trialBalance || []).filter((a: any) => String(a.account_type || '').toLowerCase() === 'liability').reduce((s: number, a: any) => s + Number(a.balance || 0), 0);
+      const totalEquity = (trialBalance || []).filter((a: any) => String(a.account_type || '').toLowerCase() === 'equity').reduce((s: number, a: any) => s + Number(a.balance || 0), 0);
+
+      const incomeAccounts = (trialBalance || []).filter((a: any) => ['revenue', 'income'].includes(String(a.account_type || '').toLowerCase())).map((a: any) => ({ name: String(a.account_name || ''), value: Math.abs(Number(a.balance || 0)) }));
+      const expenseAccounts = (trialBalance || []).filter((a: any) => String(a.account_type || '').toLowerCase() === 'expense').map((a: any) => ({ name: String(a.account_name || ''), value: Math.abs(Number(a.balance || 0)) }));
+      let incomeSorted = incomeAccounts.sort((a: any, b: any) => b.value - a.value).slice(0, 10);
+      let expenseSorted = expenseAccounts.sort((a: any, b: any) => b.value - a.value).slice(0, 10);
+      if (expenseSorted.length === 0 || Number(totals.expenses) === 0 || incomeSorted.length === 0 || Number(totals.income) === 0) {
+        const { data: te } = await supabase
+          .from('transaction_entries')
+          .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id)`) 
+          .eq('transactions.company_id', profile.company_id)
+          .gte('transactions.transaction_date', startDate.toISOString())
+          .lte('transactions.transaction_date', endDate.toISOString());
+        const { data: accounts } = await supabase
+          .from('chart_of_accounts')
+          .select('id, account_type, account_name, account_code')
+          .eq('company_id', profile.company_id)
+          .eq('is_active', true);
+        const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
+        const nameById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
+        const codeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
+        const incomeMap: Record<string, number> = {};
+        const expenseMap: Record<string, number> = {};
+        (te || []).forEach((e: any) => {
+          const id = String(e.account_id);
+          const type = (typeById.get(id) || '').toLowerCase();
+          const name = (nameById.get(id) || '').toLowerCase();
+          const code = codeById.get(id) || '';
+          const debit = Number(e.debit || 0);
+          const credit = Number(e.credit || 0);
+          const isIncome = type.includes('income') || type.includes('revenue');
+          const isExpense = type.includes('expense') || name.includes('cost of') || String(code).startsWith('5');
+          if (isIncome) {
+            incomeMap[id] = (incomeMap[id] || 0) + Math.abs(credit - debit);
+          } else if (isExpense) {
+            expenseMap[id] = (expenseMap[id] || 0) + Math.abs(debit - credit);
+          }
+        });
+        incomeSorted = Object.entries(incomeMap).map(([id, val]) => ({ name: nameById.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
+        expenseSorted = Object.entries(expenseMap).map(([id, val]) => ({ name: nameById.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
+      }
+      setIncomeBreakdown(incomeSorted);
+      setExpenseBreakdown(expenseSorted);
+      setIncomeWheelInner([{ name: 'Expenses', value: totals.expenses }, { name: 'Income', value: totals.income }]);
+      setExpenseWheelInner([{ name: 'Income', value: totals.income }, { name: 'Expenses', value: totals.expenses }]);
+
+      const months: Array<{ start: Date; end: Date; label: string }> = [];
+      for (let i = 5; i >= 0; i--) {
+        const ms = new Date(selectedYear, selectedMonth - 1 - i, 1);
+        const me = new Date(selectedYear, selectedMonth - 1 - i + 1, 0, 23, 59, 59, 999);
+        const label = ms.toLocaleDateString('en-ZA', { month: 'short' });
+        months.push({ start: ms, end: me, label });
+      }
+      const monthlyData: any[] = [];
+      const netTrend: any[] = [];
+      const assetMonthly: any[] = [];
+      for (const m of months) {
+        const tb = await fetchTrialBalanceForPeriod(String(profile.company_id), m.start.toISOString(), m.end.toISOString());
+        const t = totalsFromTrialBalance(tb);
+        monthlyData.push({ month: m.label, income: t.income, expenses: t.expenses });
+        netTrend.push({ month: m.label, netProfit: Number((t.income - t.expenses).toFixed(2)) });
+        assetMonthly.push({ month: m.label, nbv: 0 });
+      }
+      const { data: fa } = await supabase
+        .from('fixed_assets')
+        .select('id, description, cost, purchase_date, useful_life_years, status')
+        .eq('company_id', profile.company_id);
+      if (fa && fa.length > 0) {
+        for (let i = 0; i < months.length; i++) {
+          const monthEnd = months[i].end;
+          let nbvSum = 0;
+          (fa || []).forEach((asset: any) => {
+            const status = String(asset.status || '').toLowerCase();
+            if (status === 'disposed') return;
+            const res = calculateDepreciation(Number(asset.cost || 0), String(asset.purchase_date || new Date().toISOString()), Number(asset.useful_life_years || 5), monthEnd);
+            nbvSum += Number(res.netBookValue || 0);
+          });
+          assetMonthly[i].nbv = Number(nbvSum.toFixed(2));
+        }
+        setAssetTrend(assetMonthly);
+      } else {
+        setAssetTrend([]);
+      }
+      setChartData(monthlyData);
+      setNetProfitTrend(netTrend);
+
+      const { data: banks } = await supabase
+        .from('bank_accounts')
+        .select('current_balance')
+        .eq('company_id', profile.company_id);
+      const bankBalance = (banks || []).reduce((s: number, b: any) => s + Number(b.current_balance || 0), 0);
+      const newMetrics = {
+        totalAssets,
+        totalLiabilities,
+        totalEquity,
+        totalIncome: totals.income,
+        totalExpenses: totals.expenses,
+        operatingExpenses: Number(operatingExpensesTB.toFixed(2)),
+        bankBalance
+      };
+
+      if ((newMetrics.totalIncome === 0 || newMetrics.totalExpenses === 0) || (newMetrics.totalAssets === 0 && newMetrics.totalLiabilities === 0 && newMetrics.totalEquity === 0)) {
+        try {
+          const { data: te } = await supabase
+            .from('transaction_entries')
+            .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id)`) 
+            .eq('transactions.company_id', profile.company_id)
+            .gte('transactions.transaction_date', startDate.toISOString())
+            .lte('transactions.transaction_date', endDate.toISOString());
+          const { data: accounts } = await supabase
+            .from('chart_of_accounts')
+            .select('id, account_type, account_name, account_code')
+            .eq('company_id', profile.company_id)
+            .eq('is_active', true);
+
+          const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
+          const nameById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
+          const codeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
+
+          let inc = 0, exp = 0, opex = 0, assetsSum = 0, liabSum = 0, eqSum = 0;
+          (te || []).forEach((e: any) => {
+            const id = String(e.account_id);
+            const type = (typeById.get(id) || '').toLowerCase();
+            const name = String(nameById.get(id) || '').toLowerCase();
+            const code = String(codeById.get(id) || '');
+            const debit = Number(e.debit || 0);
+            const credit = Number(e.credit || 0);
+            const naturalDebit = type === 'asset' || type.includes('expense');
+            const bal = naturalDebit ? (debit - credit) : (credit - debit);
+            if (type.includes('income') || type.includes('revenue')) inc += Math.abs(credit - debit);
+            else if (type.includes('expense')) exp += Math.abs(debit - credit);
+            if ((type.includes('expense')) && !(name.includes('cost of') || code.startsWith('5000'))) {
+              opex += Math.abs(debit - credit);
+            }
+            else if (type === 'asset') assetsSum += bal;
+            else if (type === 'liability') liabSum += bal;
+            else if (type === 'equity') eqSum += bal;
+          });
+          newMetrics.totalIncome = Math.max(Number(newMetrics.totalIncome || 0), Number(inc.toFixed(2)));
+          newMetrics.totalExpenses = Math.max(Number(newMetrics.totalExpenses || 0), Number(exp.toFixed(2)));
+          newMetrics.operatingExpenses = Math.max(Number(newMetrics.operatingExpenses || 0), Number(opex.toFixed(2)));
+          if (newMetrics.totalAssets === 0 && newMetrics.totalLiabilities === 0 && newMetrics.totalEquity === 0) {
+            newMetrics.totalAssets = Number(assetsSum.toFixed(2));
+            newMetrics.totalLiabilities = Number(liabSum.toFixed(2));
+            newMetrics.totalEquity = Number(eqSum.toFixed(2));
+          }
+
+          if (monthlyData.every(d => Number(d.income) === 0 && Number(d.expenses) === 0)) {
+            const monthlyBuckets: Record<string, { income: number; expenses: number; label: string }> = {};
+            months.forEach(m => { const key = m.label; monthlyBuckets[key] = { income: 0, expenses: 0, label: m.label }; });
+            (te || []).forEach((e: any) => {
+              const dt = new Date(String(e.transactions?.transaction_date || startDate));
+              const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+              const type = typeById.get(String(e.account_id)) || '';
+              const debit = Number(e.debit || 0);
+              const credit = Number(e.credit || 0);
+              if (monthlyBuckets[label]) {
+                const name = String(nameById.get(String(e.account_id)) || '').toLowerCase();
+                const code = codeById.get(String(e.account_id)) || '';
+                const isIncome = type.includes('income') || type.includes('revenue');
+                const isExpense = type.includes('expense') || name.includes('cost of') || String(code).startsWith('5');
+                if (isIncome) monthlyBuckets[label].income += Math.abs(credit - debit);
+                else if (isExpense) monthlyBuckets[label].expenses += Math.abs(debit - credit);
+              }
+            });
+      const rebuilt = Object.values(monthlyBuckets);
+      setChartData(rebuilt.map(r => ({ month: r.label, income: Number(r.income.toFixed(2)), expenses: Number(r.expenses.toFixed(2)) })));
+      setNetProfitTrend(rebuilt.map(r => ({ month: r.label, netProfit: Number((r.income - r.expenses).toFixed(2)) })));
+      }
+
+          const incomeMap: Record<string, number> = {};
+          const expenseMap: Record<string, number> = {};
+          (te || []).forEach((e: any) => {
+            const type = typeById.get(String(e.account_id)) || '';
+            const debit = Number(e.debit || 0);
+            const credit = Number(e.credit || 0);
+            if (type === 'income' || type === 'revenue') {
+              incomeMap[String(e.account_id)] = (incomeMap[String(e.account_id)] || 0) + Math.abs(credit - debit);
+            } else if (type === 'expense') {
+              expenseMap[String(e.account_id)] = (expenseMap[String(e.account_id)] || 0) + Math.abs(debit - credit);
+            }
+          });
+          const incomeBreak = Object.entries(incomeMap).map(([id, val]) => ({ name: nameById.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
+          const expenseBreak = Object.entries(expenseMap).map(([id, val]) => ({ name: nameById.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
+          setIncomeBreakdown(incomeBreak);
+          setExpenseBreakdown(expenseBreak);
+          setIncomeWheelInner([{ name: 'Expenses', value: newMetrics.totalExpenses }, { name: 'Income', value: newMetrics.totalIncome }]);
+          setExpenseWheelInner([{ name: 'Income', value: newMetrics.totalIncome }, { name: 'Expenses', value: newMetrics.totalExpenses }]);
+
+          if (!banks || banks.length === 0) {
+            try {
+              const bankAccounts = (accounts || []).filter((a: any) => String(a.account_type || '').toLowerCase() === 'asset' && ((String(a.account_name || '').toLowerCase().includes('bank')) || String(a.account_code || '') === '1100'));
+              const bankIds = new Set(bankAccounts.map((a: any) => String(a.id)));
+              const { data: les } = await supabase
+                .from('ledger_entries')
+                .select('account_id, debit, credit')
+                .eq('company_id', profile.company_id)
+                .gte('entry_date', startDate.toISOString())
+                .lte('entry_date', endDate.toISOString());
+              const bb = (les || []).filter((e: any) => bankIds.has(String(e.account_id))).reduce((s: number, e: any) => s + (Number(e.debit || 0) - Number(e.credit || 0)), 0);
+              newMetrics.bankBalance = Number(bb.toFixed(2));
+            } catch {}
+          }
+        } catch {}
+      }
+
+      const { data: invoices } = await supabase
+        .from('invoices')
+        .select('id, customer_name, total_amount, status, invoice_date, due_date')
+        .eq('company_id', profile.company_id)
+        .gte('invoice_date', rangeStart.toISOString())
+        .lte('invoice_date', endDate.toISOString());
+      const unpaidStatuses = new Set(['unpaid','pending','partial','sent','overdue','open']);
+      const today = new Date();
+      const apStart = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+      const arByCustomer: Record<string, number> = {};
+      let arUnpaid = 0, arOver30 = 0, arOver90 = 0, arUnder30 = 0;
+      (invoices || []).forEach((inv: any) => {
+        const amt = Number(inv.total_amount || 0);
+        const isUnpaid = unpaidStatuses.has(String(inv.status || '').toLowerCase());
+        if (isUnpaid) {
+          const name = String(inv.customer_name || 'Unknown');
+          arByCustomer[name] = (arByCustomer[name] || 0) + amt;
+          arUnpaid += amt;
+          const due = inv.due_date ? new Date(String(inv.due_date)) : null;
+          if (due) {
+            const diffDays = Math.floor((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays > 90) arOver90 += amt;
+            else if (diffDays > 30) arOver30 += amt;
+            else if (diffDays > 0) arUnder30 += amt;
+          }
+        }
+      });
+      const arTop = Object.entries(arByCustomer).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount).slice(0, 10);
+      setArTop10(arTop);
+      setArDonut(arTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })));
+      setArKpis({ unpaidTotal: Number(arUnpaid.toFixed(2)), overdueTotal: Number((arUnder30 + arOver30 + arOver90).toFixed(2)), overdueUnder30Total: Number(arUnder30.toFixed(2)), overdue30Total: Number(arOver30.toFixed(2)), overdue90Total: Number(arOver90.toFixed(2)) });
+
+      const { data: purchases } = await supabase
+        .from('purchase_orders')
+        .select('id, supplier_id, supplier_name, po_number, total_amount, status, po_date, due_date')
+        .eq('company_id', profile.company_id)
+        .gte('po_date', apStart.toISOString())
+        .lte('po_date', endDate.toISOString());
+      const { data: bills } = await supabase
+        .from('bills')
+        .select('id, supplier_name, total_amount, status, bill_date, due_date')
+        .eq('company_id', profile.company_id)
+        .gte('bill_date', rangeStart.toISOString())
+        .lte('bill_date', endDate.toISOString());
+      const supplierIds = Array.from(new Set([
+        ...(purchases || []).map((p: any) => p.supplier_id).filter(Boolean),
+      ]));
+      const nameMap: Record<string, string> = {};
+      if (supplierIds.length > 0) {
+        const { data: supps } = await supabase
+          .from('suppliers')
+          .select('id, name')
+          .in('id', supplierIds);
+        (supps || []).forEach((s: any) => { nameMap[String(s.id)] = String(s.name || 'Unknown'); });
+      }
+      const poNumbers = (purchases || []).map((p: any) => p.po_number).filter(Boolean);
+      const payMap: Record<string, number> = {};
+      if (poNumbers.length > 0) {
+        const { data: pays } = await supabase
+          .from('transactions')
+          .select('reference_number, total_amount, transaction_type, status')
+          .in('reference_number', poNumbers)
+          .eq('transaction_type', 'payment')
+          .eq('status', 'posted');
+        (pays || []).forEach((t: any) => {
+          const ref = String(t.reference_number || '');
+          payMap[ref] = (payMap[ref] || 0) + Number(t.total_amount || 0);
+        });
+      }
+      const rows: Array<{ supplier_name: string; outstanding: number; source: string; due_date?: string | null }> = [];
+      (bills || []).forEach((b: any) => {
+        const status = String(b.status || '').toLowerCase();
+        if (['paid','cancelled'].includes(status)) return;
+        const supplierName = String(b.supplier_name || 'Unknown');
+        rows.push({ supplier_name: supplierName, outstanding: Number(b.total_amount || 0), source: 'bills', due_date: b.due_date || null });
+      });
+      (purchases || []).forEach((po: any) => {
+        const total = Number(po.total_amount || 0);
+        const paidAmt = payMap[String(po.po_number || '')] || 0;
+        const outstanding = Math.max(0, total - paidAmt);
+        if (String(po.status).toLowerCase() === 'paid' || outstanding <= 0) return;
+        const supplierName = nameMap[String(po.supplier_id)] || String(po.supplier_name || 'Unknown');
+        rows.push({ supplier_name: supplierName, outstanding, source: 'purchase_orders', due_date: po.due_date || null });
+      });
+      const totalsMap = new Map<string, { name: string; amount: number }>();
+      rows.forEach(r => {
+        const key = r.supplier_name || 'Unknown';
+        const curr = totalsMap.get(key) || { name: key, amount: 0 };
+        curr.amount += r.outstanding || 0;
+        totalsMap.set(key, curr);
+      });
+      const apTop = Array.from(totalsMap.values()).sort((a, b) => b.amount - a.amount).slice(0, 10);
+      setApTop10(apTop);
+      const totalOutstanding = rows.reduce((sum, r) => sum + (r.outstanding || 0), 0) || 1;
+      const donutBuckets = new Map<string, { name: string; value: number }>();
+      rows.forEach(r => {
+        const key = r.supplier_name || 'Unknown';
+        const curr = donutBuckets.get(key) || { name: key, value: 0 };
+        curr.value += r.outstanding || 0;
+        donutBuckets.set(key, curr);
+      });
+      const apAll = Array.from(donutBuckets.values()).map(b => ({ name: b.name, value: Number(b.value.toFixed(2)), pct: (b.value / totalOutstanding) * 100 }));
+      setApDonut(apAll);
+      const nowIso = new Date().toISOString().split('T')[0];
+      const unpaidTotal = rows.reduce((sum, r) => sum + (r.outstanding || 0), 0);
+      const overdueBills = rows.filter(r => r.source === 'bills' && r.outstanding > 0 && r.due_date && String(r.due_date) < nowIso);
+      const overdueTotal = overdueBills.reduce((sum, r) => sum + (r.outstanding || 0), 0);
+      const overdueUnder30 = overdueBills.filter(r => {
+        const d = r.due_date ? Math.floor((new Date(nowIso).getTime() - new Date(String(r.due_date)).getTime()) / (1000 * 60 * 60 * 24)) : 0;
+        return d > 0 && d <= 30;
+      });
+      const overdue30 = overdueBills.filter(r => {
+        const d = r.due_date ? Math.floor((new Date(nowIso).getTime() - new Date(String(r.due_date)).getTime()) / (1000 * 60 * 60 * 24)) : 0;
+        return d >= 31 && d < 90;
+      });
+      const overdue90 = overdueBills.filter(r => {
+        const d = r.due_date ? Math.floor((new Date(nowIso).getTime() - new Date(String(r.due_date)).getTime()) / (1000 * 60 * 60 * 24)) : 0;
+        return d >= 90;
+      });
+      setApKpis({
+        unpaidTotal: Number(unpaidTotal.toFixed(2)),
+        overdueTotal: Number(overdueTotal.toFixed(2)),
+        overdueUnder30Total: Number(overdueUnder30.reduce((s, r) => s + (r.outstanding || 0), 0).toFixed(2)),
+        overdue30Total: Number(overdue30.reduce((s, r) => s + (r.outstanding || 0), 0).toFixed(2)),
+        overdue90Total: Number(overdue90.reduce((s, r) => s + (r.outstanding || 0), 0).toFixed(2))
+      });
+
+      if (monthlyData.every(d => Number(d.income) === 0 && Number(d.expenses) === 0)) {
+        const invBuckets: Record<string, number> = {};
+        const poBuckets: Record<string, number> = {};
+        const billBuckets: Record<string, number> = {};
+        months.forEach(m => { invBuckets[m.label] = 0; poBuckets[m.label] = 0; billBuckets[m.label] = 0; });
+        (invoices || []).forEach((inv: any) => {
+          const dt = new Date(String(inv.invoice_date || inv.sent_at || endDate));
+          const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+          if (invBuckets[label] !== undefined) invBuckets[label] += Number(inv.total_amount || 0);
+        });
+        (purchases || []).forEach((po: any) => {
+          const dt = new Date(String(po.po_date || po.due_date || endDate));
+          const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+          if (poBuckets[label] !== undefined) poBuckets[label] += Number(po.total_amount || 0);
+        });
+        (bills || []).forEach((b: any) => {
+          const dt = new Date(String(b.bill_date || b.due_date || endDate));
+          const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+          if (billBuckets[label] !== undefined) billBuckets[label] += Number(b.total_amount || 0);
+        });
+        const altMonthly = months.map(m => ({ month: m.label, income: Number((invBuckets[m.label] || 0).toFixed(2)), expenses: Number(((poBuckets[m.label] || 0) + (billBuckets[m.label] || 0)).toFixed(2)) }));
+        setChartData(altMonthly);
+        setNetProfitTrend(altMonthly.map(r => ({ month: r.month, netProfit: Number((r.income - r.expenses).toFixed(2)) })));
+      }
+      // Fallback: if expense metric still zero, derive from purchase orders total
+      if (newMetrics.totalExpenses === 0 || newMetrics.operatingExpenses === 0) {
+        const purchasesMonthSum = (purchases || [])
+          .filter((po: any) => {
+            const dt = new Date(String(po.po_date || endDate));
+            return dt >= startDate && dt <= endDate;
+          })
+          .reduce((s: number, po: any) => s + Number(po.total_amount || 0), 0);
+        const billsMonthSum = (bills || [])
+          .filter((b: any) => {
+            const dt = new Date(String(b.bill_date || endDate));
+            return dt >= startDate && dt <= endDate;
+          })
+          .reduce((s: number, b: any) => s + Number(b.total_amount || 0), 0);
+        const combined = purchasesMonthSum + billsMonthSum;
+        if (combined > 0) {
+          newMetrics.totalExpenses = Math.max(Number(newMetrics.totalExpenses || 0), Number(combined.toFixed(2)));
+          newMetrics.operatingExpenses = Math.max(Number(newMetrics.operatingExpenses || 0), Number(combined.toFixed(2)));
+        }
+      }
+      const expFromBreakdown = (expenseSorted || []).reduce((s: number, r: any) => s + Number(r.value || 0), 0);
+      if (newMetrics.totalExpenses === 0 && expFromBreakdown > 0) {
+        newMetrics.totalExpenses = Number(expFromBreakdown.toFixed(2));
+      }
+      setMetrics(newMetrics);
+      setLoading(false);
+      loadingRef.current = false;
+      try { localStorage.setItem(cacheKey, JSON.stringify({ metrics: newMetrics, recentTransactions: recent, chartData: monthlyData, netProfitTrend: netTrend, incomeBreakdown, expenseBreakdown, arTop10: arTop, apTop10: apTop, arDonut: arTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })), apDonut: apTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })) })); } catch {}
+    } catch (error) {
+      setLoading(false);
+      loadingRef.current = false;
+    }
+  }, [selectedMonth, selectedYear, chartMonths, fetchTrialBalanceForPeriod]);
   useEffect(() => {
     loadDashboardData();
-  }, [selectedMonth, selectedYear]);
+  }, [selectedMonth, selectedYear, loadDashboardData]);
+
+  const reloadTimerRef = useRef<number | null>(null);
+  const lastReloadAtRef = useRef<number>(0);
+  const scheduleReload = useCallback(() => {
+    const now = Date.now();
+    if (now - lastReloadAtRef.current < 10000) return;
+    lastReloadAtRef.current = now;
+    if (reloadTimerRef.current) {
+      clearTimeout(reloadTimerRef.current);
+    }
+    reloadTimerRef.current = window.setTimeout(() => {
+      if (!loadingRef.current) {
+        loadDashboardData();
+      }
+    }, 500);
+  }, [loadDashboardData]);
 
   useEffect(() => {
     const setupRealtime = async () => {
@@ -113,78 +678,68 @@ export const DashboardOverview = () => {
         const channel = supabase
           .channel('dashboard-realtime-updates')
           .on('postgres_changes', { 
-            event: '*', 
+            event: 'insert', 
             schema: 'public', 
             table: 'transactions',
             filter: `company_id=eq.${companyId}` 
           }, () => {
             console.log('Transaction changed - updating dashboard...');
-            if (!loadingRef.current) loadDashboardData();
+            scheduleReload();
           })
+          // Avoid listening to transaction_entries directly to reduce reload noise
           .on('postgres_changes', { 
-            event: '*', 
-            schema: 'public', 
-            table: 'transaction_entries',
-            // Note: transaction_entries doesn't have company_id, so we listen to all
-            // and rely on the parent transaction check to re-load.
-            // This is not ideal, but a constraint of the current schema.
-          }, () => {
-            console.log('Transaction entry changed - updating dashboard...');
-            if (!loadingRef.current) loadDashboardData();
-          })
-          .on('postgres_changes', { 
-            event: '*', 
+            event: 'insert', 
             schema: 'public', 
             table: 'bank_accounts',
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Bank account changed - updating dashboard...');
-            if (!loadingRef.current) loadDashboardData();
+            scheduleReload();
           })
           .on('postgres_changes', { 
-            event: '*', 
+            event: 'insert', 
             schema: 'public', 
             table: 'invoices',
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Invoice changed - updating dashboard...');
-            if (!loadingRef.current) loadDashboardData();
+            scheduleReload();
           })
           .on('postgres_changes', { 
-            event: '*', 
+            event: 'insert', 
             schema: 'public', 
             table: 'fixed_assets',
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Fixed asset changed - updating dashboard...');
-            if (!loadingRef.current) loadDashboardData();
+            scheduleReload();
           })
           .on('postgres_changes', { 
-            event: '*', 
+            event: 'insert', 
             schema: 'public', 
             table: 'purchase_orders',
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Purchase order changed - updating dashboard...');
-            if (!loadingRef.current) loadDashboardData();
+            scheduleReload();
           })
           .on('postgres_changes', { 
-            event: '*', 
+            event: 'insert', 
             schema: 'public', 
             table: 'quotes',
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Quote changed - updating dashboard...');
-            if (!loadingRef.current) loadDashboardData();
+            scheduleReload();
           })
           .on('postgres_changes', { 
-            event: '*', 
+            event: 'insert', 
             schema: 'public', 
             table: 'sales',
             filter: `company_id=eq.${companyId}`
           }, () => {
             console.log('Sale changed - updating dashboard...');
-            if (!loadingRef.current) loadDashboardData();
+            scheduleReload();
           })
           .subscribe((status) => {
             console.log('Dashboard real-time subscription status:', status);
@@ -199,7 +754,7 @@ export const DashboardOverview = () => {
     };
 
     setupRealtime();
-  }, []);
+  }, [scheduleReload]);
 
   useEffect(() => {
     localStorage.setItem('dashboardWidgets', JSON.stringify(widgets));
@@ -207,669 +762,6 @@ export const DashboardOverview = () => {
 
   const toggleWidget = (widget: string) => {
     setWidgets((prev: any) => ({ ...prev, [widget]: !prev[widget] }));
-  };
-
-// Function to calculate total inventory value from products
-const calculateTotalInventoryValue = async (companyId: string) => {
-  try {
-    const { data: products } = await supabase
-      .from('items')
-      .select('cost_price, quantity_on_hand')
-      .eq('company_id', companyId)
-      .eq('item_type', 'product')
-      .gt('quantity_on_hand', 0);
-    
-    const totalValue = (products || []).reduce((sum, product) => {
-      const cost = Number(product.cost_price || 0);
-      const qty = Number(product.quantity_on_hand || 0);
-      return sum + (cost * qty);
-    }, 0);
-    
-    return totalValue;
-  } catch (error) {
-    console.error('Error calculating inventory value:', error);
-    return 0;
-  }
-};
-
-  const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
-    const startDateObj = new Date(start);
-    const endDateObj = new Date(end);
-    endDateObj.setHours(23, 59, 59, 999);
-    
-    // Get all active accounts
-    const { data: accounts, error: accountsError } = await supabase
-      .from('chart_of_accounts')
-      .select('id, account_code, account_name, account_type')
-      .eq('company_id', companyId)
-      .eq('is_active', true)
-      .order('account_code');
-    
-    if (accountsError) throw accountsError;
-    
-    // Get transaction entries
-    const { data: txEntries, error: txError } = await supabase
-      .from('transaction_entries')
-      .select(`
-        transaction_id,
-        account_id,
-        debit,
-        credit,
-        transactions!inner (
-          transaction_date
-        )
-      `)
-      .eq('transactions.company_id', companyId)
-      .gte('transactions.transaction_date', start)
-      .lte('transactions.transaction_date', end);
-    
-    if (txError) throw txError;
-    
-    // Get ledger entries
-    const { data: ledgerEntries, error: ledgerError } = await supabase
-      .from('ledger_entries')
-      .select('transaction_id, account_id, debit, credit, entry_date')
-      .eq('company_id', companyId)
-      .gte('entry_date', start)
-      .lte('entry_date', end);
-    
-    if (ledgerError) throw ledgerError;
-    
-    const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
-    
-    // Calculate total inventory value from products
-    const totalInventoryValue = await calculateTotalInventoryValue(companyId);
-    
-    const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
-    const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
-
-    (accounts || []).forEach((acc: any) => {
-      let sumDebit = 0;
-      let sumCredit = 0;
-      
-      // Sum transaction entries
-      filteredTxEntries?.forEach((entry: any) => {
-        if (entry.account_id === acc.id) {
-          sumDebit += Number(entry.debit || 0);
-          sumCredit += Number(entry.credit || 0);
-        }
-      });
-      
-      // Sum ledger entries
-      ledgerEntries?.forEach((entry: any) => {
-        if (entry.account_id === acc.id) {
-          sumDebit += Number(entry.debit || 0);
-          sumCredit += Number(entry.credit || 0);
-        }
-      });
-      
-      const type = (acc.account_type || '').toLowerCase();
-      const naturalDebit = type === 'asset' || type === 'expense';
-      let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
-      
-      // Special handling for inventory account - use actual product values (only account 1300)
-      if (acc.account_code === '1300') {
-        balance = totalInventoryValue;
-        console.log(`Inventory account ${acc.account_code} - Using total product value: R ${totalInventoryValue}`);
-      }
-      
-      const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
-      const isPrimaryInventory = acc.account_code === '1300';
-      const shouldShow = Math.abs(balance) > 0.01 && (!isInventoryName || isPrimaryInventory);
-      if (shouldShow) {
-        trialBalance.push({
-          account_id: acc.id,
-          account_code: acc.account_code,
-          account_name: acc.account_name,
-          account_type: acc.account_type,
-          balance
-        });
-      }
-    });
-    return trialBalance;
-  };
-
-  const netProfitFromTrialBalance = (tb: any[]) => {
-    const rev = tb.filter((a: any) => a.account_type.toLowerCase() === 'revenue' || a.account_type.toLowerCase() === 'income').reduce((s: number, a: any) => s + (a.balance || 0), 0);
-    const cogs = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && ((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
-    const opex = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && !((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
-    return rev - cogs - opex;
-  };
-
-  const totalsFromTrialBalance = (tb: any[]) => {
-    const income = tb.filter((a: any) => a.account_type.toLowerCase() === 'revenue' || a.account_type.toLowerCase() === 'income').reduce((s: number, a: any) => s + (a.balance || 0), 0);
-    const cogs = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && ((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
-    const opex = tb.filter((a: any) => a.account_type.toLowerCase() === 'expense' && !((a.account_name || '').toLowerCase().includes('cost of') || String(a.account_code || '').startsWith('5000'))).reduce((s: number, a: any) => s + (a.balance || 0), 0);
-    return { income, expenses: cogs + opex };
-  };
-
-  const loadDashboardData = async () => {
-    try {
-      if (loadingRef.current) return;
-      setLoading(true);
-      loadingRef.current = true;
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) {
-        console.warn('Dashboard: User not authenticated or auth error:', authError);
-        setLoading(false);
-        return;
-      }
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("company_id, first_name, last_name")
-        .eq("user_id", user.id)
-        .single();
-
-      if (profileError || !profile) {
-        console.warn('Dashboard: Profile not found or error:', profileError);
-        setLoading(false);
-        return;
-      }
-
-      console.log('Loading dashboard data for company:', profile.company_id);
-      setCompanyId(String(profile.company_id));
-      const fullName = [String(profile.first_name || '').trim(), String(profile.last_name || '').trim()].filter(Boolean).join(' ');
-      setUserName(fullName || (user.user_metadata?.name as string) || user.email || "");
-
-      // Calculate date range for selected month/year
-      const startDate = new Date(selectedYear, selectedMonth - 1, 1);
-      const endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
-
-      // Load transactions filtered by selected month/year
-      const rangeStart = new Date(selectedYear, selectedMonth - 6, 1);
-      const cacheKey = `db-cache-${String(profile.company_id)}-${selectedYear}-${selectedMonth}`;
-      try {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          const c = JSON.parse(cached);
-          if (c?.metrics) setMetrics(c.metrics);
-          if (c?.recentTransactions) setRecentTransactions(c.recentTransactions);
-          if (c?.chartData) setChartData(c.chartData);
-          if (c?.netProfitTrend) setNetProfitTrend(c.netProfitTrend);
-          if (c?.plTrend) setPlTrend(c.plTrend);
-        }
-      } catch {}
-      const { data: transactions, error: txError } = await supabase
-        .from("transactions")
-        .select(`
-          id,
-          reference_number,
-          description,
-          total_amount,
-          transaction_date,
-          transaction_type,
-          status,
-          entries:transaction_entries(
-            id,
-            debit,
-            credit,
-            chart_of_accounts(account_type, account_name)
-          )
-        `)
-        .eq("company_id", profile.company_id)
-        .gte("transaction_date", rangeStart.toISOString())
-        .lte("transaction_date", endDate.toISOString())
-        .order("transaction_date", { ascending: false })
-        .limit(1000);
-
-      if (txError) throw txError;
-
-      console.log('Loaded transactions:', transactions?.length);
-
-      // Calculate totals by account type from ALL transaction entries
-      let assets = 0, liabilities = 0, equity = 0, income = 0, expenses = 0;
-      const monthlyMap = new Map<string, { income: number; expenses: number }>();
-      const assetsMap = new Map<string, number>();
-      const withinSelected = (d: string) => {
-        const dt = new Date(d);
-        return dt >= startDate && dt <= endDate;
-      };
-
-      transactions?.forEach(tx => {
-        const dtKey = new Date(tx.transaction_date).toISOString().slice(0,7);
-        let hadEntryIncome = false;
-        let hadEntryExpense = false;
-        tx.entries?.forEach((entry: any) => {
-          const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
-          const nameLower = String(entry.chart_of_accounts?.account_name || '').toLowerCase();
-          const isVat = nameLower.includes('vat');
-          const netAmount = entry.debit - entry.credit;
-          const agg = monthlyMap.get(dtKey) || { income: 0, expenses: 0 };
-          if (!isVat) {
-            if (type.includes("income") || type.includes("revenue")) {
-              agg.income += Math.abs(netAmount);
-              hadEntryIncome = true;
-            } else if (type.includes("expense")) {
-              agg.expenses += Math.abs(netAmount);
-              hadEntryExpense = true;
-            }
-          }
-          monthlyMap.set(dtKey, agg);
-          if (type.includes("asset")) {
-            const a = assetsMap.get(dtKey) || 0;
-            assetsMap.set(dtKey, a + netAmount);
-          }
-
-          if (withinSelected(tx.transaction_date)) {
-            if (type.includes("asset")) assets += netAmount;
-            else if (type.includes("liability")) liabilities += Math.abs(netAmount);
-            else if (type.includes("equity")) equity += Math.abs(netAmount);
-            else if (!isVat && (type.includes("income") || type.includes("revenue"))) income += Math.abs(netAmount);
-            else if (!isVat && type.includes("expense")) expenses += Math.abs(netAmount);
-          }
-        });
-        const aggPost = monthlyMap.get(dtKey) || { income: 0, expenses: 0 };
-        if (!hadEntryIncome && !hadEntryExpense) {
-          const t = String(tx.transaction_type || '').toLowerCase();
-          if (t.includes('income') || t.includes('sales') || t.includes('receipt')) {
-            aggPost.income += Math.abs(Number(tx.total_amount || 0));
-          } else if (t.includes('expense') || t.includes('purchase') || t.includes('bill') || t.includes('product_purchase')) {
-            aggPost.expenses += Math.abs(Number(tx.total_amount || 0));
-          }
-          monthlyMap.set(dtKey, aggPost);
-        }
-      });
-
-      const [
-        { count: coaCount },
-        { data: banksList },
-        { count: productsCount },
-        { count: customersCount },
-        { count: suppliersCount },
-        { count: employeesCount }
-      ] = await Promise.all([
-        supabase
-          .from('chart_of_accounts')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', profile.company_id)
-          .eq('is_active', true),
-        supabase
-          .from('bank_accounts')
-          .select('current_balance')
-          .eq('company_id', profile.company_id),
-        supabase
-          .from('items')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', profile.company_id)
-          .eq('item_type', 'product'),
-        supabase
-          .from('customers')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', profile.company_id),
-        supabase
-          .from('suppliers')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', profile.company_id),
-        supabase
-          .from('employees')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', profile.company_id),
-      ]);
-
-      const hasCoa = (coaCount || 0) > 0;
-      const hasBank = (banksList || []).length > 0;
-      const hasProducts = (productsCount || 0) > 0;
-      const hasCustomers = (customersCount || 0) > 0;
-      const hasSuppliers = (suppliersCount || 0) > 0;
-      const hasEmployees = (employeesCount || 0) > 0;
-      setFirstRun({ hasCoa, hasBank, hasProducts, hasCustomers, hasSuppliers, hasEmployees });
-      setOnboardingOpen(!(hasProducts && hasCustomers && hasSuppliers && hasEmployees));
-
-      // Load bank balance
-      const banks = banksList;
-
-      const bankBalance = banks?.reduce((sum, b) => sum + Number(b.current_balance), 0) || 0;
-
-      console.log('Calculated metrics:', { assets, liabilities, equity, income, expenses, bankBalance });
-
-      setMetrics({
-        totalAssets: assets,
-        totalLiabilities: liabilities,
-        totalEquity: equity,
-        totalIncome: income,
-        totalExpenses: expenses,
-        bankBalance
-      });
-
-      // Format recent transactions
-      const formatted = transactions?.slice(0, 4).map(tx => ({
-        id: tx.reference_number || tx.id.slice(0, 8),
-        description: tx.description,
-        amount: `R ${Math.abs(tx.total_amount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
-        type: tx.total_amount >= 0 ? "income" : "expense",
-        date: new Date(tx.transaction_date).toLocaleDateString('en-ZA')
-      })) || [];
-
-      setRecentTransactions(formatted);
-
-      const monthsSeq: { label: string; key: string }[] = Array.from({ length: 6 }, (_, i) => {
-        const d = new Date(selectedYear, selectedMonth - 1 - (5 - i), 1);
-        const label = d.toLocaleDateString('en-ZA', { month: 'short' });
-        const key = d.toISOString().slice(0,7);
-        return { label, key };
-      });
-      const incomeExpenseData = monthsSeq.map(m => ({
-        month: m.label,
-        income: monthlyMap.get(m.key)?.income || 0,
-        expenses: monthlyMap.get(m.key)?.expenses || 0,
-      }));
-      setChartData(incomeExpenseData);
-      const netData = monthsSeq.map(m => {
-        const fallback = (monthlyMap.get(m.key)?.income || 0) - (monthlyMap.get(m.key)?.expenses || 0);
-        return { month: m.label, netProfit: fallback };
-      });
-      setNetProfitTrend(netData);
-
-      const plData = monthsSeq.map(m => {
-        const inc = monthlyMap.get(m.key)?.income || 0;
-        const exp = monthlyMap.get(m.key)?.expenses || 0;
-        return { month: m.label, income: inc, expenses: exp };
-      });
-      setPlTrend(plData);
-
-      const incTotals = new Map<string, number>();
-      transactions?.forEach(tx => {
-        if (!withinSelected(tx.transaction_date)) return;
-        tx.entries?.forEach((entry: any) => {
-          const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
-          const name = entry.chart_of_accounts?.account_name || 'Income';
-          const isVat = String(name).toLowerCase().includes('vat');
-          if (isVat) return;
-          if (!type.includes('income') && !type.includes('revenue')) return;
-          const amt = Math.abs((entry.debit || 0) - (entry.credit || 0));
-          incTotals.set(name, (incTotals.get(name) || 0) + amt);
-        });
-      });
-      const incSorted = Array.from(incTotals.entries()).sort((a,b) => b[1]-a[1]);
-      const incTop5 = incSorted.slice(0,5).map(([name, value]) => ({ name, value }));
-      const incOtherTotal = incSorted.slice(5).reduce((s, [,v]) => s+v, 0);
-      setIncomeBreakdown(incTop5);
-      setIncomeWheelInner([
-        { name: 'Top 5', value: incTop5.reduce((s, v) => s + v.value, 0) },
-        { name: 'Other', value: incOtherTotal }
-      ] as any);
-
-      // Expense breakdown - group by expense account name
-      const expTotals = new Map<string, number>();
-      transactions?.forEach(tx => {
-        if (!withinSelected(tx.transaction_date)) return;
-        tx.entries?.forEach((entry: any) => {
-          const type = entry.chart_of_accounts?.account_type?.toLowerCase() || "";
-          const name = entry.chart_of_accounts?.account_name || 'Expense';
-          const isVat = String(name).toLowerCase().includes('vat');
-          if (!type.includes('expense')) return;
-          if (isVat) return;
-          const amt = Math.abs((entry.debit || 0) - (entry.credit || 0));
-          expTotals.set(name, (expTotals.get(name) || 0) + amt);
-        });
-      });
-      const sorted = Array.from(expTotals.entries()).sort((a,b) => b[1]-a[1]);
-      const top5 = sorted.slice(0,5).map(([name, value]) => ({ name, value }));
-      const otherTotal = sorted.slice(5).reduce((s, [,v]) => s+v, 0);
-      setExpenseBreakdown(top5);
-      const expenseWheelInner = [
-        { name: 'Top 5', value: top5.reduce((s, v) => s + v.value, 0) },
-        { name: 'Other', value: otherTotal }
-      ];
-      setExpenseWheelInner(expenseWheelInner as any);
-
-      const { data: fixedAssets } = await supabase
-        .from("fixed_assets")
-        .select("cost,purchase_date,useful_life_years,accumulated_depreciation,company_id")
-        .eq("company_id", (profile as any).company_id);
-      const faData = monthsSeq.map((m) => {
-        const [yy, mm] = m.key.split("-");
-        const monthEnd = new Date(Number(yy), Number(mm), 0);
-        let nbv = 0;
-        (fixedAssets || []).forEach((a: any) => {
-          const res = calculateDepreciation(Number(a.cost || 0), String(a.purchase_date), Number(a.useful_life_years || 1), monthEnd);
-          nbv += Math.max(0, res.netBookValue);
-        });
-        return { month: m.label, nbv };
-      });
-      setAssetTrend(faData);
-
-      // Load AR unpaid invoices (sent/overdue/draft – exclude paid/cancelled)
-      const [arRes, apBillsRes, apPOsRes] = await Promise.all([
-        supabase
-          .from('invoices')
-          .select('id, customer_name, invoice_date, due_date, total_amount, status')
-          .eq('company_id', profile.company_id)
-          .not('status', 'in', ['("paid")','("cancelled")'])
-          .gte('invoice_date', startDate.toISOString().split('T')[0])
-          .lte('invoice_date', endDate.toISOString().split('T')[0])
-          .order('invoice_date', { ascending: false }),
-        supabase
-          .from('bills')
-          .select('id, supplier_id, bill_date, due_date, total_amount, status')
-          .eq('company_id', profile.company_id)
-          .order('bill_date', { ascending: false }),
-        supabase
-          .from('purchase_orders')
-          .select('id, supplier_id, po_number, po_date, total_amount, status')
-          .eq('company_id', profile.company_id)
-          .order('po_date', { ascending: false })
-      ]);
-      const { data: arData, error: arErr } = arRes as any;
-      if (arErr) throw arErr;
-      const rows = (arData || []).map((r: any) => ({
-        id: r.id,
-        customer_name: r.customer_name || 'Unknown',
-        total_amount: r.status === 'paid' ? 0 : Number(r.total_amount || 0),
-        status: r.status,
-        invoice_date: r.invoice_date,
-        due_date: r.due_date || null
-      }));
-      setArInvoices(rows);
-      // Compute Top 10 and Donut
-      const totals = new Map<string, { name: string; amount: number }>();
-      rows.forEach(r => {
-        const key = r.customer_name || 'Unknown';
-        const curr = totals.get(key) || { name: key, amount: 0 };
-        curr.amount += r.total_amount || 0;
-        totals.set(key, curr);
-      });
-      const top10 = Array.from(totals.values())
-        .sort((a, b) => b.amount - a.amount)
-        .slice(0, 10)
-        .map(r => ({ name: r.name, amount: r.amount }));
-      setArTop10(top10);
-      const totalUnpaid = rows.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 1;
-      const donut = Array.from(totals.values()).map(b => ({ name: b.name, value: b.amount, pct: (b.amount / totalUnpaid) * 100 }));
-      setArDonut(donut);
-
-      // Load AP from Bills
-      const { data: apBills, error: apErr } = apBillsRes as any;
-      let apRowsLocal: Array<{ id: string; supplier_name: string; total_amount: number; status: string; bill_date?: string; due_date?: string | null; source?: string }> = [];
-      if (!apErr) {
-        const supplierIds: string[] = Array.from(new Set((apBills || []).map((b: any) => String(b.supplier_id || '')).filter(Boolean)));
-        let nameMap: Record<string, string> = {};
-        if (supplierIds.length > 0) {
-          const { data: supps } = await supabase
-            .from('suppliers')
-            .select('id, name')
-            .in('id', supplierIds as readonly string[]);
-          (supps || []).forEach((s: any) => { nameMap[s.id] = s.name; });
-        }
-        apRowsLocal = (apBills || []).filter((r: any) => !['paid','cancelled'].includes(String(r.status))).map((r: any) => ({
-          id: r.id,
-          supplier_name: nameMap[r.supplier_id] || 'Unknown',
-          total_amount: Number(r.total_amount || 0),
-          status: r.status,
-          bill_date: r.bill_date,
-          due_date: r.due_date || null,
-          source: 'bills'
-        }));
-      }
-
-      // Load AP from Purchase Orders and compute outstanding
-      const { data: apPOs } = apPOsRes as any;
-      let poRowsLocal: Array<{ id: string; supplier_name: string; total_amount: number; status: string; due_date?: string | null; bill_date?: string; source?: string }> = [];
-      if (apPOs && apPOs.length > 0) {
-        const supplierIdsPO: string[] = Array.from(new Set((apPOs || []).map((p: any) => String(p.supplier_id || '')).filter(Boolean)));
-        let nameMapPO: Record<string, string> = {};
-        if (supplierIdsPO.length > 0) {
-          const { data: suppsPO } = await supabase
-            .from('suppliers')
-            .select('id, name')
-            .in('id', supplierIdsPO as readonly string[]);
-          (suppsPO || []).forEach((s: any) => { nameMapPO[s.id] = s.name; });
-        }
-        const poNumbers = (apPOs || []).map((p: any) => p.po_number).filter(Boolean);
-        let payMap: Record<string, number> = {};
-        if (poNumbers.length > 0) {
-          const { data: pays } = await supabase
-            .from('transactions')
-            .select('reference_number, total_amount, transaction_type, status')
-            .in('reference_number', poNumbers)
-            .eq('transaction_type', 'payment')
-            .eq('status', 'posted');
-          (pays || []).forEach((t: any) => {
-            const ref = String(t.reference_number || '');
-            payMap[ref] = (payMap[ref] || 0) + Number(t.total_amount || 0);
-          });
-        }
-        poRowsLocal = (apPOs || []).filter((p: any) => String(p.status) !== 'paid').map((p: any) => {
-          const supplierName = nameMapPO[p.supplier_id] || 'Unknown';
-          const paidAmt = payMap[String(p.po_number || '')] || 0;
-          const outstanding = Math.max(0, Number(p.total_amount || 0) - paidAmt);
-          return {
-            id: p.id,
-            supplier_name: supplierName,
-            total_amount: outstanding,
-            status: p.status,
-            bill_date: p.po_date,
-            due_date: null,
-            source: 'purchase_orders'
-          };
-        }).filter(r => r.total_amount > 0);
-      }
-
-      const allApRowsLocal = [...apRowsLocal, ...poRowsLocal];
-      setApRows(allApRowsLocal);
-      const apTotals = new Map<string, { name: string; amount: number }>();
-      allApRowsLocal.forEach(r => {
-        const key = r.supplier_name || 'Unknown';
-        const curr = apTotals.get(key) || { name: key, amount: 0 };
-        curr.amount += r.total_amount || 0;
-        apTotals.set(key, curr);
-      });
-      const apTop = Array.from(apTotals.values()).sort((a, b) => b.amount - a.amount).slice(0, 10).map(r => ({ name: r.name, amount: r.amount }));
-      setApTop10(apTop);
-      const apTotalUnpaid = allApRowsLocal.reduce((sum, r) => sum + (r.total_amount || 0), 0) || 1;
-      const apDonutData = Array.from(apTotals.values()).map(b => ({ name: b.name, value: b.amount, pct: (b.amount / apTotalUnpaid) * 100 }));
-      setApDonut(apDonutData);
-
-      const nowStr = new Date().toISOString().split('T')[0];
-      const arOverdue = rows.filter(r => r.total_amount > 0 && r.due_date && r.due_date < nowStr);
-      const arOverUnder30 = arOverdue.filter(r => {
-        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
-        const b = new Date(nowStr).getTime();
-        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
-        return d > 0 && d <= 30;
-      });
-      const arOver30 = arOverdue.filter(r => {
-        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
-        const b = new Date(nowStr).getTime();
-        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
-        return d >= 31;
-      });
-      const arOver90 = arOverdue.filter(r => {
-        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
-        const b = new Date(nowStr).getTime();
-        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
-        return d >= 90;
-      });
-      setArKpis({
-        unpaidTotal: rows.reduce((s, r) => s + (r.total_amount || 0), 0),
-        overdueTotal: arOverdue.reduce((s, r) => s + (r.total_amount || 0), 0),
-        overdueUnder30Total: arOverUnder30.reduce((s, r) => s + (r.total_amount || 0), 0),
-        overdue30Total: arOver30.reduce((s, r) => s + (r.total_amount || 0), 0),
-        overdue90Total: arOver90.reduce((s, r) => s + (r.total_amount || 0), 0),
-      });
-
-      const arAgingMap = new Map<string, any>();
-      rows.forEach(r => {
-        const key = r.customer_name || 'Unknown';
-        const isOverdue = r.total_amount > 0 && r.due_date && r.due_date < nowStr;
-        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
-        const b = new Date(nowStr).getTime();
-        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
-        const bucket = !isOverdue ? 'current' : d <= 30 ? 'd1_30' : d <= 60 ? 'd31_60' : d <= 90 ? 'd61_90' : 'd91p';
-        const curr = arAgingMap.get(key) || { name: key, current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d91p: 0, due: 0 };
-        curr[bucket] += r.total_amount || 0;
-        curr.due += r.total_amount || 0;
-        arAgingMap.set(key, curr);
-      });
-      setArAging(Array.from(arAgingMap.values()));
-
-      const apAgingMap = new Map<string, any>();
-      allApRowsLocal.forEach(r => {
-        const key = r.supplier_name || 'Unknown';
-        const isOverdue = r.total_amount > 0 && r.due_date && r.due_date < nowStr;
-        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
-        const b = new Date(nowStr).getTime();
-        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
-        const bucket = !isOverdue ? 'current' : d <= 30 ? 'd1_30' : d <= 60 ? 'd31_60' : d <= 90 ? 'd61_90' : 'd91p';
-        const curr = apAgingMap.get(key) || { name: key, current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d91p: 0, due: 0 };
-        curr[bucket] += r.total_amount || 0;
-        curr.due += r.total_amount || 0;
-        apAgingMap.set(key, curr);
-      });
-      setApAging(Array.from(apAgingMap.values()));
-
-      const apOverdue = allApRowsLocal.filter(r => r.total_amount > 0 && r.due_date && r.due_date < nowStr);
-      const apUnder30 = apOverdue.filter(r => {
-        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
-        const b = new Date(nowStr).getTime();
-        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
-        return d > 0 && d <= 30;
-      });
-      const ap30 = apOverdue.filter(r => {
-        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
-        const b = new Date(nowStr).getTime();
-        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
-        return d >= 31;
-      });
-      const ap90 = apOverdue.filter(r => {
-        const a = r.due_date ? new Date(r.due_date).getTime() : 0;
-        const b = new Date(nowStr).getTime();
-        const d = Math.floor((b - a) / (1000 * 60 * 60 * 24));
-        return d >= 90;
-      });
-      setApKpis({
-        unpaidTotal: allApRowsLocal.reduce((s, r) => s + (r.total_amount || 0), 0),
-        overdueTotal: apOverdue.reduce((s, r) => s + (r.total_amount || 0), 0),
-        overdueUnder30Total: apUnder30.reduce((s, r) => s + (r.total_amount || 0), 0),
-        overdue30Total: ap30.reduce((s, r) => s + (r.total_amount || 0), 0),
-        overdue90Total: ap90.reduce((s, r) => s + (r.total_amount || 0), 0),
-      });
-
-      try {
-        const cachePayload = {
-          metrics: {
-            totalAssets: assets,
-            totalLiabilities: liabilities,
-            totalEquity: equity,
-            totalIncome: income,
-            totalExpenses: expenses,
-            bankBalance
-          },
-          recentTransactions: formatted,
-          chartData: incomeExpenseData,
-          netProfitTrend: netData,
-          plTrend: plData
-        };
-        localStorage.setItem(cacheKey, JSON.stringify(cachePayload));
-      } catch {}
-
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-      loadingRef.current = false;
-    }
   };
 
   const setupComplete = firstRun.hasCoa && firstRun.hasBank && firstRun.hasProducts && firstRun.hasCustomers && firstRun.hasSuppliers && firstRun.hasEmployees;
@@ -900,8 +792,8 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       color: "text-primary"
     },
     {
-      title: "Total Expenses",
-      value: `R ${metrics.totalExpenses.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      title: "Operating Expenses",
+      value: `R ${metrics.operatingExpenses.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
       icon: TrendingDown,
       color: "text-accent"
     },
@@ -919,11 +811,8 @@ const calculateTotalInventoryValue = async (companyId: string) => {
   ];
   const POS_COLORS = ['#22C55E', '#10B981', '#06B6D4', '#3B82F6'];
   const NEG_COLORS = ['#EF4444', '#F97316', '#DC2626', '#F43F5E'];
-  // @ts-ignore
   const [expenseWheelInner, setExpenseWheelInner] = useState<any[]>([]);
-  // @ts-ignore
   const [incomeWheelInner, setIncomeWheelInner] = useState<any[]>([]);
-  // @ts-ignore
   const [incomeWheelOuter, setIncomeWheelOuter] = useState<any[]>([]);
 
   if (loading) {
@@ -1149,11 +1038,20 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       <div className="grid gap-6 lg:grid-cols-2">
         {widgets.incomeVsExpense && (
           <Card className="card-professional">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp className="h-5 w-5 text-primary" />
-                Income vs Expenses (6 months)
+                {`Income vs Expenses (${chartMonths} months)`}
               </CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setChartMonths((m) => (m === 3 ? 6 : 3));
+                }}
+              >
+                {chartMonths === 3 ? 'Show More' : 'Show Less'}
+              </Button>
             </CardHeader>
             <CardContent>
               <div className="h-64 w-full">
@@ -1271,6 +1169,33 @@ const calculateTotalInventoryValue = async (companyId: string) => {
           </Card>
         )}
 
+        {widgets.apOverview && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-primary" />
+                Unpaid purchases amount (Top 10 Suppliers)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={apTop10} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis type="number" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} stroke="hsl(var(--muted-foreground))" />
+                  <YAxis type="category" dataKey="name" width={150} stroke="hsl(var(--muted-foreground))" />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Unpaid']} />
+                  <Legend />
+                  <Bar dataKey="amount" radius={[4, 4, 0, 0]} name="Unpaid">
+                    {apTop10.map((_, index) => (
+                      <Cell key={`ap-top10-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
+
         {widgets.expenseBreakdown && (
           <Card className="card-professional">
             <CardHeader>
@@ -1291,7 +1216,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
                     dataKey="value"
                   >
                     {expenseWheelInner.map((entry, index) => (
-                      <Cell key={`inner-${index}`} fill={index === 0 ? 'hsl(var(--primary))' : 'hsl(var(--muted))'} />
+                      <Cell key={`inner-${index}`} fill={index === 0 ? '#EF4444' : '#10B981'} />
                     ))}
                   </Pie>
                   <Pie
@@ -1321,6 +1246,29 @@ const calculateTotalInventoryValue = async (companyId: string) => {
           </Card>
         )}
 
+        {widgets.apOverview && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-primary" />
+                Unpaid purchases percentage by supplier
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={260}>
+                <PieChart>
+                  <Pie data={apDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                    {apDonut.map((entry, index) => (
+                      <Cell key={`ap-cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
         
 
         {widgets.arOverview && (
@@ -1346,32 +1294,6 @@ const calculateTotalInventoryValue = async (companyId: string) => {
           </Card>
         )}
 
-        {widgets.apOverview && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-primary" />
-                AP Unpaid (Top Suppliers)
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={apTop10} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis type="number" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis type="category" dataKey="name" width={150} stroke="hsl(var(--muted-foreground))" />
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Unpaid']} />
-                  <Legend />
-                  <Bar dataKey="amount" radius={[4, 4, 0, 0]} name="Unpaid">
-                    {apTop10.map((_, index) => (
-                      <Cell key={`ap-top10-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        )}
 
         {widgets.assetTrend && (
           <Card className="card-professional">
@@ -1427,29 +1349,6 @@ const calculateTotalInventoryValue = async (companyId: string) => {
           </Card>
         )}
 
-        {widgets.apOverview && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-primary" />
-                Unpaid bills percentage by supplier
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={260}>
-                <PieChart>
-                  <Pie data={apDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
-                    {apDonut.map((entry, index) => (
-                      <Cell key={`ap-cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        )}
       </div>
 
       

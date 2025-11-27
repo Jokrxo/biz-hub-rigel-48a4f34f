@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Plus, Package, Trash2, Edit } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
 
@@ -50,40 +50,21 @@ export const SalesProducts = () => {
     quantity_on_hand: "",
   });
 
-  useEffect(() => {
-    loadProducts();
-
-    // Real-time updates
-    const channel = supabase
-      .channel('products-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => {
-        loadProducts();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  const loadProducts = async () => {
+  const loadProducts = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user?.id)
         .maybeSingle();
-
       if (!profile) return;
       setCompanyId(profile.company_id as string);
-
       const { data, error } = await supabase
         .from("items")
         .select("*")
         .eq("company_id", profile.company_id)
         .eq("item_type", "product")
         .order("name");
-
       if (error) throw error;
       setProducts(data || []);
       const { data: svc } = await supabase
@@ -98,7 +79,24 @@ export const SalesProducts = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, toast]);
+
+  useEffect(() => {
+    loadProducts();
+
+    const channel = supabase
+      .channel('products-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, () => {
+        loadProducts();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadProducts]);
+
+  
 
   const openDialog = (product: Product) => {
     setEditingProduct(product);

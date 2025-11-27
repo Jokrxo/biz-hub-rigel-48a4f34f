@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import React from "react";
 import { lazy, Suspense } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { toast as notify } from "@/components/ui/sonner";
+import { toast as notify } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -232,16 +232,18 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     }
   }, [open, prefill]);
   useEffect(() => {
+    if (open && prefill) {
+      if (prefill.depreciationMethod) setDepreciationMethod(String(prefill.depreciationMethod));
+      if (prefill.usefulLifeYears) setAssetUsefulLifeYears(String(prefill.usefulLifeYears));
+    }
+  }, [open, prefill]);
+  useEffect(() => {
     if (open && prefill && prefill.assetId) {
       setSelectedAssetId(String(prefill.assetId));
     }
   }, [open, prefill]);
 
-  useEffect(() => {
-    if (headless && open && accounts.length > 0 && form.debitAccount && form.creditAccount) {
-      handleSubmit();
-    }
-  }, [headless, open, accounts, form.debitAccount, form.creditAccount]);
+  
   const [depreciationMethod, setDepreciationMethod] = useState<string>("straight_line");
 
   useEffect(() => {
@@ -259,6 +261,83 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     }
   }, [form.bankAccountId, form.element, accounts]);
 
+  const loadData = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+      if (!profile?.company_id) return;
+      setCompanyId(profile.company_id);
+      const { data: banks } = await supabase
+        .from("bank_accounts")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("account_name");
+      setBankAccounts(banks || []);
+      const { data: assetsData } = await supabase
+        .from("fixed_assets")
+        .select("id, description, cost, purchase_date, useful_life_years, accumulated_depreciation")
+        .eq("company_id", profile.company_id)
+        .order("purchase_date", { ascending: false });
+      setFixedAssets(assetsData || []);
+      const { data: loansData } = await supabase
+        .from("loans")
+        .select("id, reference, outstanding_balance, status, loan_type, interest_rate")
+        .eq("company_id", profile.company_id)
+        .eq("status", "active")
+        .order("reference");
+      setLoans(loansData || []);
+      const { data: accts, error } = await supabase
+        .from("chart_of_accounts")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .eq("is_active", true)
+        .order("account_code");
+      if (error) throw error;
+      if (!accts || accts.length === 0) {
+        setChartMissing(true);
+        toast({ title: "Chart of Accounts missing", description: "Please set up your Chart of Accounts before creating transactions.", variant: "destructive" });
+      } else {
+        setChartMissing(false);
+      }
+      setAccounts(accts || []);
+      if (lockAccounts && accts && accts.length > 0) {
+        const lower = accts.map(a => ({
+          ...a,
+          account_type: (a.account_type || '').toLowerCase(),
+          account_name: (a.account_name || '').toLowerCase(),
+          account_code: (a.account_code || '').toString(),
+        }));
+        const pick = (type: string, codes: string[], names: string[]) => {
+          const byCode = lower.find(a => codes.includes(a.account_code) && a.account_type === type.toLowerCase());
+          if (byCode) return byCode.id;
+          const byName = lower.find(a => a.account_type === type.toLowerCase() && names.some(n => a.account_name.includes(n)));
+          if (byName) return byName.id;
+          const byType = lower.find(a => a.account_type === type.toLowerCase());
+          return byType?.id || '';
+        };
+        if (lockType === 'sent') {
+          const arId = form.debitAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
+          const revId = form.creditAccount || pick('income', ['4000'], ['revenue','sales','income']);
+          setForm(prev => ({ ...prev, debitAccount: arId, creditAccount: revId }));
+        } else if (lockType === 'paid') {
+          const bankId = form.debitAccount || pick('asset', ['1100'], ['bank','cash']);
+          const arId = form.creditAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
+          setForm(prev => ({ ...prev, debitAccount: bankId, creditAccount: arId }));
+        } else if (lockType === 'po_sent') {
+          const invId = form.debitAccount || pick('asset', ['1300'], ['inventory','stock']);
+          const apId = form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']);
+          setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: apId }));
+        }
+      }
+    } catch (error: any) {
+      toast({ title: "Error loading data", description: error.message, variant: "destructive" });
+    }
+  }, [toast, lockAccounts, lockType, form.debitAccount, form.creditAccount]);
   useEffect(() => {
     if (open) {
       loadData();
@@ -284,7 +363,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       setDebitSearch("");
       setCreditSearch("");
     }
-  }, [open, editData]);
+  }, [open, editData, loadData]);
 
   // Prefill form when editing an existing transaction
   useEffect(() => {
@@ -311,8 +390,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     } catch {}
   }, [open, editData]);
 
-  useEffect(() => {
-    const computeCOGS = async () => {
+  const computeCOGS = useCallback(async () => {
       try {
         if (!open) return;
         if (lockType !== 'sent') return;
@@ -402,9 +480,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         setCogsAccount(cogsAcc || null);
         setInventoryAccount(invAcc || null);
       } catch {}
-    };
-    computeCOGS();
   }, [open, lockType, form.reference, accounts, companyId]);
+  useEffect(() => { computeCOGS(); }, [computeCOGS]);
 
   useEffect(() => {
     if (form.element === 'loan_interest') {
@@ -430,7 +507,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   }, [form.element, form.loanId, loans, selectedAssetId, fixedAssets]);
 
   // Ensure locked flows always have required accounts set once accounts are loaded
-  useEffect(() => {
+  const ensureLockedAccounts = useCallback(() => {
     if (!open || !lockAccounts || accounts.length === 0) return;
     const lower = accounts.map(a => ({
       ...a,
@@ -459,7 +536,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       const apId = form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']);
       setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: apId }));
     }
-  }, [open, lockAccounts, lockType, accounts]);
+  }, [open, lockAccounts, lockType, accounts, form.debitAccount, form.creditAccount]);
+  useEffect(() => { ensureLockedAccounts(); }, [ensureLockedAccounts]);
 
   // Filter accounts based on search input
   const debitSource = debitIncludeAll ? accounts : debitAccounts;
@@ -482,7 +560,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   }, [open, editData]);
 
   // Filter accounts based on accounting element and payment method
-  useEffect(() => {
+  const filterAccountsByElement = useCallback(() => {
     if (!form.element || accounts.length === 0) {
       setDebitAccounts([]);
       setCreditAccounts([]);
@@ -544,104 +622,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         creditAccount: prev.creditAccount || (credits[0]?.id || ""),
       }));
     }
-  }, [form.element, form.paymentMethod, accounts, form.debitAccount, form.creditAccount]);
+  }, [form.element, form.paymentMethod, accounts, form.debitAccount, form.creditAccount, lockAccounts]);
+  useEffect(() => { filterAccountsByElement(); }, [filterAccountsByElement]);
 
-  const loadData = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+  
+  
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user.id)
-        .single();
-
-      if (!profile?.company_id) return;
-      setCompanyId(profile.company_id);
-
-      // Load bank accounts
-      const { data: banks } = await supabase
-        .from("bank_accounts")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .order("account_name");
-      setBankAccounts(banks || []);
-
-      const { data: assetsData } = await supabase
-        .from("fixed_assets")
-        .select("id, description, cost, purchase_date, useful_life_years, accumulated_depreciation")
-        .eq("company_id", profile.company_id)
-        .order("purchase_date", { ascending: false });
-      setFixedAssets(assetsData || []);
-
-      // Load active loans for loan transactions
-      const { data: loansData } = await supabase
-        .from("loans")
-        .select("id, reference, outstanding_balance, status, loan_type, interest_rate")
-        .eq("company_id", profile.company_id)
-        .eq("status", "active")
-        .order("reference");
-      setLoans(loansData || []);
-
-      // Load chart of accounts
-      const { data: accts, error } = await supabase
-        .from("chart_of_accounts")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .eq("is_active", true)
-        .order("account_code");
-
-      if (error) throw error;
-      
-      if (!accts || accts.length === 0) {
-        setChartMissing(true);
-        toast({ 
-          title: "Chart of Accounts missing", 
-          description: "Please set up your Chart of Accounts before creating transactions.",
-          variant: "destructive" 
-        });
-      } else {
-        setChartMissing(false);
-      }
-      
-      setAccounts(accts || []);
-
-      if (lockAccounts && accts && accts.length > 0) {
-        const lower = accts.map(a => ({
-          ...a,
-          account_type: (a.account_type || '').toLowerCase(),
-          account_name: (a.account_name || '').toLowerCase(),
-          account_code: (a.account_code || '').toString(),
-        }));
-        const pick = (type: string, codes: string[], names: string[]) => {
-          const byCode = lower.find(a => codes.includes(a.account_code) && a.account_type === type.toLowerCase());
-          if (byCode) return byCode.id;
-          const byName = lower.find(a => a.account_type === type.toLowerCase() && names.some(n => a.account_name.includes(n)));
-          if (byName) return byName.id;
-          const byType = lower.find(a => a.account_type === type.toLowerCase());
-          return byType?.id || '';
-        };
-        if (lockType === 'sent') {
-          const arId = form.debitAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
-          const revId = form.creditAccount || pick('income', ['4000'], ['revenue','sales','income']);
-          setForm(prev => ({ ...prev, debitAccount: arId, creditAccount: revId }));
-        } else if (lockType === 'paid') {
-          const bankId = form.debitAccount || pick('asset', ['1100'], ['bank','cash']);
-          const arId = form.creditAccount || pick('asset', ['1200'], ['receiv','debtors','accounts receiv']);
-          setForm(prev => ({ ...prev, debitAccount: bankId, creditAccount: arId }));
-        } else if (lockType === 'po_sent') {
-          const invId = form.debitAccount || pick('asset', ['1300'], ['inventory','stock']);
-          const apId = form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']);
-          setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: apId }));
-        }
-      }
-    } catch (error: any) {
-      toast({ title: "Error loading data", description: error.message, variant: "destructive" });
-    }
-  };
-
-  const autoClassifyTransaction = async (description: string) => {
+  const autoClassifyTransaction = useCallback(async (description: string) => {
     try {
       const { data, error } = await supabase.rpc('auto_classify_transaction', {
         _description: description
@@ -656,9 +643,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     } catch (error: any) {
       console.error("Auto-classification error:", error);
     }
-  };
+  }, []);
 
-  const checkDuplicate = async () => {
+  const checkDuplicate = useCallback(async () => {
     try {
       // Convert empty string to null for bank_account_id
       const bankAccountId = form.bankAccountId && form.bankAccountId.trim() !== "" ? form.bankAccountId : null;
@@ -675,9 +662,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     } catch (error: any) {
       console.error("Duplicate check error:", error);
     }
-  };
+  }, [companyId, form.bankAccountId, form.date, form.amount, form.description]);
 
-  const autoSelectAccounts = (config: typeof ACCOUNTING_ELEMENTS[0], debits: Account[], credits: Account[]) => {
+  function autoSelectAccounts(config: typeof ACCOUNTING_ELEMENTS[0], debits: Account[], credits: Account[]) {
     if (!config || debits.length === 0 || credits.length === 0) return;
 
     const paymentMethod = PAYMENT_METHODS.find(m => m.value === form.paymentMethod);
@@ -772,9 +759,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     } catch (error) {
       console.error("Auto-select accounts error:", error);
     }
-  };
+  }
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -888,7 +875,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           return;
         }
         // Create VAT-aware entries for edit path (similar to create path)
-        let entries: any[] = [];
+        const entries: any[] = [];
         
         if (vatAmount > 0 && vatAccount && vatAccount.id) {
           // VAT-inclusive transaction
@@ -1051,7 +1038,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if (entriesErr) throw entriesErr;
 
         // Also insert into ledger_entries so AFS/Trial Balance sees the amounts (VAT-aware)
-        let ledgerRows: any[] = [];
+        const ledgerRows: any[] = [];
         
         if (vatAmount > 0 && vatAccount && vatAccount.id) {
           // VAT-inclusive ledger entries
@@ -2137,7 +2124,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     } finally {
       setLoading(false);
     }
-  };
+  }, [form, accounts, bankAccounts, companyId, inventoryAccount, cogsAccount, cogsTotal, invoiceIdForRef, lockType, toast, depreciationMethod, autoClassification, assetUsefulLifeYears, chartMissing, editData, fixedAssets, onOpenChange, onSuccess, selectedAssetId, showFixedAssetsUI]);
 
   const selectedElement = ACCOUNTING_ELEMENTS.find(e => e.value === form.element);
   const debitAccountName = accounts.find(a => a.id === form.debitAccount)?.account_name;

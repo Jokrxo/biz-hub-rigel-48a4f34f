@@ -10,7 +10,7 @@ import { PurchaseOrders } from "@/components/Purchase/PurchaseOrders";
 import { Suppliers } from "@/components/Purchase/Suppliers";
 import { PurchaseTransactions } from "@/components/Purchase/PurchaseTransactions";
 import { APDashboard } from "@/components/Purchase/APDashboard";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 
 export default function PurchasePage() {
   const [activeTab, setActiveTab] = useState("ap-dashboard");
@@ -90,3 +90,4 @@ export default function PurchasePage() {
     </>
   );
 }
+import React from "react";

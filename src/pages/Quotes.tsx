@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import { addLogoToPDF, fetchLogoDataUrl } from '@/lib/invoice-export';
 import { formatDate } from '@/lib/utils';
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 
 interface Quote {
@@ -164,28 +164,7 @@ export default function QuotesPage() {
     }
   };
 
-  useEffect(() => {
-    loadQuotes();
-  }, []);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('appSettings');
-    if (saved) {
-      try { setDateFormat(JSON.parse(saved).dateFormat || 'DD/MM/YYYY'); } catch {}
-    }
-  }, []);
-
-  useEffect(() => {
-    const uid = user?.id ? String(user.id) : "anonymous";
-    const key = `tutorial_shown_quotes_${uid}`;
-    const already = localStorage.getItem(key);
-    if (!already) {
-      setTutorialOpen(true);
-      localStorage.setItem(key, "true");
-    }
-  }, [user]);
-
-  const loadQuotes = async () => {
+  const loadQuotes = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
@@ -208,7 +187,30 @@ export default function QuotesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, toast]);
+
+  useEffect(() => {
+    loadQuotes();
+  }, [loadQuotes]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('appSettings');
+    if (saved) {
+      try { setDateFormat(JSON.parse(saved).dateFormat || 'DD/MM/YYYY'); } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_quotes_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user?.id]);
+
+  
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -456,3 +458,4 @@ export default function QuotesPage() {
     </>
   );
 }
+import React from "react";

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Shield, UserPlus, Trash2, Edit } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 
 interface User {
@@ -42,43 +42,25 @@ export const AdministrationSettings = () => {
   const { isAdmin, isAccountant } = useRoles();
   const canManageUsers = isAdmin || isAccountant;
 
-  useEffect(() => {
-    if (canManageUsers) {
-      loadUsers();
-      loadInvites();
-    }
-  }, [canManageUsers]);
-
-  const loadUsers = async () => {
+  const loadUsers = useCallback(async () => {
     try {
       setLoading(true);
-      
-      // Get current user's company
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", currentUser?.id)
         .single();
-
       if (!profile) return;
-
-      // Get all users in the company
       const { data: profiles, error: profilesError } = await supabase
         .from("profiles")
         .select("user_id, first_name, last_name, email")
         .eq("company_id", profile.company_id);
-
       if (profilesError) throw profilesError;
-
-      // Get roles for all users
       const { data: userRoles, error: rolesError } = await supabase
         .from("user_roles")
         .select("user_id, role")
         .eq("company_id", profile.company_id);
-
       if (rolesError) throw rolesError;
-
-      // Combine data
       const usersWithRoles = profiles?.map(p => ({
         id: p.user_id,
         email: p.email || "",
@@ -86,18 +68,15 @@ export const AdministrationSettings = () => {
         last_name: p.last_name || "",
         roles: userRoles?.filter(r => r.user_id === p.user_id).map(r => r.role) || [],
       })) || [];
-
       setUsers(usersWithRoles);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
-  };
-
-  const loadInvites = async () => {
+  }, [currentUser?.id, toast]);
+  const loadInvites = useCallback(async () => {
     try {
-      // Get current company
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
@@ -111,7 +90,14 @@ export const AdministrationSettings = () => {
         .order('expires_at', { ascending: true });
       setPendingInvites(data || []);
     } catch {}
-  };
+  }, [currentUser?.id]);
+  useEffect(() => {
+    if (canManageUsers) {
+      loadUsers();
+      loadInvites();
+    }
+  }, [canManageUsers, loadUsers, loadInvites]);
+
 
   const handleCreateUser = async () => {
     try {

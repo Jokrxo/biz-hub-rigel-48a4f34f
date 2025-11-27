@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, Suspense, lazy } from "react";
+import React, { useEffect, useMemo, useState, Suspense, lazy } from "react";
 import { useLocation } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
  
@@ -48,7 +48,7 @@ export const TransactionManagement = () => {
   const [pageSize, setPageSize] = useState(25);
   const [totalCount, setTotalCount] = useState(0);
 
-  const load = async () => {
+  const load = React.useCallback(async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
@@ -148,20 +148,47 @@ export const TransactionManagement = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, pageSize, searchTerm, filterType, filterStatus, sourceTab, toast]);
 
-  useEffect(() => { load(); }, [page, pageSize, searchTerm, filterType, filterStatus, sourceTab]);
+  useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(0); }, [searchTerm, filterType, filterStatus, sourceTab, pageSize]);
 
   useEffect(() => {
     try {
       const params = new URLSearchParams(location.search || "");
       const flow = params.get("flow") || "";
+      if (flow.toLowerCase() === "depreciation") {
+        const assetId = params.get("asset_id") || "";
+        const date = params.get("date") || new Date().toISOString().slice(0,10);
+        const amount = params.get("amount") || "";
+        const debitAccountId = params.get("debit_account_id") || "";
+        const creditAccountId = params.get("credit_account_id") || "";
+        const description = params.get("description") || "Depreciation";
+
+        const prefill = {
+          element: "depreciation",
+          description,
+          date,
+          amount,
+          debitAccount: debitAccountId,
+          creditAccount: creditAccountId,
+          vatRate: "0",
+          paymentMethod: "accrual",
+          assetId,
+          depreciationMethod: params.get("depreciation_method") || "straight_line",
+          usefulLifeYears: params.get("useful_life_years") || "5"
+        };
+        setPrefillData(prefill);
+        setEditData(null);
+        setHeadless(false);
+        setOpen(true);
+        return;
+      }
       if (flow.toLowerCase() === "asset_disposal") {
         const assetId = params.get("asset_id") || "";
         const date = params.get("date") || new Date().toISOString().slice(0,10);
         const amount = params.get("amount") || "";
-        const bankLedgerId = params.get("bank_id") || "";
+        const bankLedgerId = params.get("bank_ledger_id") || "";
         const assetAccountId = params.get("asset_account_id") || "";
         const description = params.get("description") || "Asset Disposal";
 
@@ -201,7 +228,7 @@ export const TransactionManagement = () => {
           description,
           date,
           amount,
-          bankAccountId: "",
+          bankAccountId: params.get("bank_id") || "",
           debitAccount: bankLedgerId || "",
           creditAccount: assetAccountId || "",
           vatRate: "0",
@@ -210,7 +237,39 @@ export const TransactionManagement = () => {
         };
         setPrefillData(prefill);
         setEditData(null);
-        setHeadless(true);
+        setHeadless(false);
+        setOpen(true);
+        return;
+      }
+      if (flow.toLowerCase() === "asset_purchase") {
+        const date = params.get("date") || new Date().toISOString().slice(0,10);
+        const amount = params.get("amount") || "";
+        const debitAccountId = params.get("debit_account_id") || "";
+        const bankLedgerId = params.get("bank_ledger_id") || "";
+        const loanLedgerId = params.get("loan_ledger_id") || "";
+        const bankId = params.get("bank_id") || "";
+        const description = params.get("description") || "Asset Purchase";
+        const usefulLifeYears = params.get("useful_life_years") || "5";
+        const depreciationMethod = params.get("depreciation_method") || "straight_line";
+
+        const creditAccount = bankLedgerId || loanLedgerId || "";
+        const paymentMethod = bankLedgerId ? "bank" : "accrual";
+        const prefill = {
+          element: "asset",
+          description,
+          date,
+          amount,
+          bankAccountId: bankId,
+          debitAccount: debitAccountId,
+          creditAccount,
+          vatRate: "0",
+          paymentMethod,
+          depreciationMethod,
+          usefulLifeYears
+        };
+        setPrefillData(prefill);
+        setEditData(null);
+        setHeadless(false);
         setOpen(true);
         return;
       }
@@ -327,11 +386,12 @@ export const TransactionManagement = () => {
         if (!transaction) throw new Error("Transaction not found");
 
         // Load existing entries
-        let { data: entries, error: entriesError } = await supabase
+        const { data: entries, error: entriesError } = await supabase
           .from("transaction_entries")
           .select("account_id, debit, credit, description")
           .eq("transaction_id", id);
         if (entriesError) throw entriesError;
+        let computedEntries = entries || [];
 
         // If no entries exist, try to auto-create from header debit/credit accounts.
         // If missing, fall back to transaction_type_mappings, then heuristic chart_of_accounts.
@@ -499,7 +559,7 @@ export const TransactionManagement = () => {
             .from("transaction_entries")
             .insert(newEntries);
           if (insertEntriesError) throw insertEntriesError;
-          entries = newEntries.map(e => ({
+          computedEntries = newEntries.map(e => ({
             account_id: e.account_id,
             debit: e.debit,
             credit: e.credit,
@@ -508,8 +568,8 @@ export const TransactionManagement = () => {
         }
 
         // Validate double-entry balance
-        const totalDebits = (entries || []).reduce((sum: number, e: any) => sum + (Number(e.debit) || 0), 0);
-        const totalCredits = (entries || []).reduce((sum: number, e: any) => sum + (Number(e.credit) || 0), 0);
+        const totalDebits = (computedEntries || []).reduce((sum: number, e: any) => sum + (Number(e.debit) || 0), 0);
+        const totalCredits = (computedEntries || []).reduce((sum: number, e: any) => sum + (Number(e.credit) || 0), 0);
         if (Number(totalDebits.toFixed(2)) !== Number(totalCredits.toFixed(2))) {
           throw new Error("Unbalanced transaction entries; approval blocked. Please fix entries.");
         }
@@ -527,7 +587,7 @@ export const TransactionManagement = () => {
         await supabase.from("ledger_entries").delete().eq("reference_id", id);
 
         // Insert into ledger_entries
-        const ledgerEntries = (entries || []).map((e: any) => ({
+        const ledgerEntries = (computedEntries || []).map((e: any) => ({
           company_id: profile.company_id,
           account_id: e.account_id,
           entry_date: transaction.transaction_date,
@@ -545,26 +605,26 @@ export const TransactionManagement = () => {
 
         if ((transaction as any).bank_account_id) {
           const bankAccountId = (transaction as any).bank_account_id as string;
-          const accountIds = (entries || []).map((e: any) => e.account_id);
+          const accountIds = (computedEntries || []).map((e: any) => e.account_id);
           let { data: acctInfos } = await supabase
             .from("chart_of_accounts")
             .select("id, account_type, account_name")
             .in("id", accountIds as any);
           acctInfos = acctInfos || [];
-          const isDebitBank = (entries || []).some((e: any) => {
+          const isDebitBank = (computedEntries || []).some((e: any) => {
             const a = acctInfos.find((x: any) => x.id === e.account_id);
             return a && String(a.account_type || '').toLowerCase() === 'asset' && String(a.account_name || '').toLowerCase().includes('bank') && Number(e.debit || 0) > 0;
           });
-          const isCreditBank = (entries || []).some((e: any) => {
+          const isCreditBank = (computedEntries || []).some((e: any) => {
             const a = acctInfos.find((x: any) => x.id === e.account_id);
             return a && String(a.account_type || '').toLowerCase() === 'asset' && String(a.account_name || '').toLowerCase().includes('bank') && Number(e.credit || 0) > 0;
           });
-          const bankDebitAmount = (entries || []).reduce((sum: number, e: any) => {
+          const bankDebitAmount = (computedEntries || []).reduce((sum: number, e: any) => {
             const a = acctInfos.find((x: any) => x.id === e.account_id);
             const isBank = a && String(a.account_type || '').toLowerCase() === 'asset' && String(a.account_name || '').toLowerCase().includes('bank');
             return sum + (isBank ? Number(e.debit || 0) : 0);
           }, 0);
-          const bankCreditAmount = (entries || []).reduce((sum: number, e: any) => {
+          const bankCreditAmount = (computedEntries || []).reduce((sum: number, e: any) => {
             const a = acctInfos.find((x: any) => x.id === e.account_id);
             const isBank = a && String(a.account_type || '').toLowerCase() === 'asset' && String(a.account_name || '').toLowerCase().includes('bank');
             return sum + (isBank ? Number(e.credit || 0) : 0);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FileText, AlertCircle, CheckCircle, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -20,6 +20,47 @@ export const PurchaseOverview = () => {
     overdue: 0
   });
 
+  const loadPurchaseData = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+      if (!profile) return;
+      const { data: bills } = await supabase
+        .from("bills")
+        .select("*")
+        .eq("company_id", profile.company_id);
+      const today = new Date();
+      let unpaid = 0, unpaidCount = 0;
+      let overdue = 0, overdueCount = 0;
+      let paid = 0, paidCount = 0;
+      let current = 0, days31to60 = 0, days61to90 = 0, overdueAnalysis = 0;
+      bills?.forEach(bill => {
+        const amount = Number(bill.total_amount);
+        if (bill.status === 'paid') { paid += amount; paidCount++; }
+        else {
+          unpaid += amount; unpaidCount++;
+          if (bill.due_date) {
+            const dueDate = new Date(bill.due_date);
+            const daysOverdue = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysOverdue > 0) { overdue += amount; overdueCount++; }
+            if (daysOverdue <= 30) current += amount;
+            else if (daysOverdue <= 60) days31to60 += amount;
+            else if (daysOverdue <= 90) days61to90 += amount;
+            else overdueAnalysis += amount;
+          } else { current += amount; }
+        }
+      });
+      setStats({ unpaidBills: { value: unpaid, count: unpaidCount }, overdueBills: { value: overdue, count: overdueCount }, paidBills: { value: paid, count: paidCount }, totalOutstanding: { value: unpaid, count: unpaidCount } });
+      setAgeAnalysis({ current, days31to60, days61to90, overdue: overdueAnalysis });
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  }, [toast]);
   useEffect(() => {
     loadPurchaseData();
 
@@ -37,7 +78,7 @@ export const PurchaseOverview = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [loadPurchaseData]);
 
   const loadPurchaseData = async () => {
     try {

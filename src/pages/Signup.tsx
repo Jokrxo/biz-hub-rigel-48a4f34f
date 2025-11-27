@@ -5,7 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import SEO from "@/components/SEO";
 import { useToast } from "@/components/ui/use-toast";
@@ -17,7 +17,7 @@ const passwordSchema = z
   .regex(/[a-z]/, "Password must contain at least one lowercase letter")
   .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
   .regex(/[0-9]/, "Password must contain at least one number")
-  .regex(/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/, "Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?)");
+  .regex(/[^A-Za-z0-9]/, "Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:,.<>?)");
 
 const schema = z
   .object({
@@ -100,7 +100,7 @@ export default function Signup() {
     hasLowercase: /[a-z]/.test(password),
     hasUppercase: /[A-Z]/.test(password),
     hasNumber: /[0-9]/.test(password),
-    hasSpecial: /[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/.test(password),
+    hasSpecial: /[^A-Za-z0-9]/.test(password),
   };
 
   return (

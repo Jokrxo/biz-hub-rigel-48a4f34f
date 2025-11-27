@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { transactionsApi } from "@/lib/transactions-api";
 import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
 import { Download, Mail, Plus, Trash2, FileText } from "lucide-react";
@@ -83,6 +83,51 @@ export const SalesInvoices = () => {
   const [journalOpen, setJournalOpen] = useState(false);
   const [journalEditData, setJournalEditData] = useState<any>(null);
 
+  const loadData = useCallback(async () => {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .maybeSingle();
+      if (!profile) return;
+      const { data: customersData } = await supabase
+        .from("customers")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("name");
+      setCustomers(customersData || []);
+      const { data: productsData } = await supabase
+        .from("items")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .eq("item_type", "product")
+        .order("name");
+      setProducts(productsData || []);
+      const { data: servicesData } = await supabase
+        .from("items")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .eq("item_type", "service")
+        .order("name");
+      setServices(servicesData || []);
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("invoice_date", { ascending: false });
+      if (error) throw error;
+      setInvoices(data || []);
+      try {
+        await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id });
+        await (supabase as any).rpc('refresh_afs_cache', { _company_id: profile.company_id });
+      } catch {}
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id, toast]);
   useEffect(() => {
     loadData();
 
@@ -97,7 +142,7 @@ export const SalesInvoices = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [loadData]);
 
   useEffect(() => {
     const loadCompanyEmail = async () => {
@@ -119,61 +164,7 @@ export const SalesInvoices = () => {
     loadCompanyEmail();
   }, []);
 
-  const loadData = async () => {
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user?.id)
-        .maybeSingle();
-
-      if (!profile) return;
-
-      // Load customers
-      const { data: customersData } = await supabase
-        .from("customers")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .order("name");
-
-      setCustomers(customersData || []);
-
-      // Load products from items table
-      const { data: productsData } = await supabase
-        .from("items")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .eq("item_type", "product")
-        .order("name");
-      setProducts(productsData || []);
-      const { data: servicesData } = await supabase
-        .from("items")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .eq("item_type", "service")
-        .order("name");
-      setServices(servicesData || []);
-
-      // Load invoices
-      const { data, error } = await supabase
-        .from("invoices")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .order("invoice_date", { ascending: false });
-
-      if (error) throw error;
-      setInvoices(data || []);
-
-      try {
-        await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id });
-        await (supabase as any).rpc('refresh_afs_cache', { _company_id: profile.company_id });
-      } catch {}
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  };
+  
 
   const handleConfirmSent = async () => {
     if (!sentInvoice) return;

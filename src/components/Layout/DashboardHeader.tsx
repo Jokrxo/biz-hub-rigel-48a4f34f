@@ -2,9 +2,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { Bell, Menu, Search, Plus, LogOut, Building2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 
@@ -16,31 +16,25 @@ const UserMenu = () => {
   const { user, logout } = useAuth();
   const [companyName, setCompanyName] = useState("");
 
-  useEffect(() => {
-    loadCompanyInfo();
-  }, []);
-
-  const loadCompanyInfo = async () => {
+  const loadCompanyInfo = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user?.id)
         .single();
-
       if (profile) {
         const { data: company } = await supabase
           .from("companies")
           .select("name")
           .eq("id", profile.company_id)
           .single();
-
         if (company) setCompanyName(company.name);
       }
-    } catch (error) {
-      console.error("Error loading company:", error);
-    }
-  };
+    } catch (error) { console.error("Error loading company:", error); }
+  }, [user?.id]);
+  useEffect(() => { loadCompanyInfo(); }, [loadCompanyInfo]);
+
 
   return (
     <DropdownMenu>

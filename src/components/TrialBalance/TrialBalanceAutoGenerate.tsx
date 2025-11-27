@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -48,11 +48,7 @@ export const TrialBalanceAutoGenerate = () => {
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
-  useEffect(() => {
-    generateTrialBalance();
-  }, [selectedMonth, selectedYear]);
-
-  const generateTrialBalance = async () => {
+  const generateTrialBalance = useCallback(async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
@@ -141,7 +137,6 @@ export const TrialBalanceAutoGenerate = () => {
         if (account.account_code === '1300') {
           totalDebit = totalInventoryValue;
           totalCredit = 0;
-          console.log(`Inventory account ${account.account_code} - Using total product value: R ${totalInventoryValue}`);
         }
 
         // Only include accounts with non-zero balances
@@ -160,15 +155,15 @@ export const TrialBalanceAutoGenerate = () => {
 
       setEntries(trialBalanceData);
     } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive"
-      });
+      toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedMonth, selectedYear, toast]);
+
+  useEffect(() => {
+    generateTrialBalance();
+  }, [generateTrialBalance]);
 
   const getTotals = () => {
     const totalDebits = entries.reduce((sum, e) => sum + e.debit, 0);

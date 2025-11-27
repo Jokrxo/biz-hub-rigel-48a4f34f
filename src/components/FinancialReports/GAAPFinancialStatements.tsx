@@ -68,22 +68,19 @@ export const GAAPFinancialStatements = () => {
     net_change_in_cash: number;
   } | null>(null);
   const [ppeBookValue, setPpeBookValue] = useState<number>(0);
+  const [openingEquityTotal, setOpeningEquityTotal] = useState<number>(0);
   const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
   const [vatNet, setVatNet] = useState<number>(0);
   const [ppeDisposalProceeds, setPpeDisposalProceeds] = useState<number>(0);
   const [showFilters, setShowFilters] = useState(false);
 
-  useEffect(() => {
-    loadFinancialData();
-  }, [periodStart, periodEnd]);
+  useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd]);
 
   useEffect(() => {
-    // Recompute period range when mode/month/year changes
     if (periodMode === 'monthly') {
-      // selectedMonth format YYYY-MM
       const [y, m] = selectedMonth.split('-').map((v) => parseInt(v, 10));
       const start = new Date(y, m - 1, 1);
-      const end = new Date(y, m, 0); // last day of month
+      const end = new Date(y, m, 0);
       setPeriodStart(start.toISOString().split('T')[0]);
       setPeriodEnd(end.toISOString().split('T')[0]);
     } else {
@@ -95,13 +92,9 @@ export const GAAPFinancialStatements = () => {
   }, [periodMode, selectedMonth, selectedYear]);
 
   // Load cash flow whenever cash-flow tab is active or period changes
-  useEffect(() => {
-    if (activeTab === 'cash-flow') {
-      loadCashFlow();
-    }
-  }, [activeTab, periodStart, periodEnd]);
+  useEffect(() => { if (activeTab === 'cash-flow') { loadCashFlow(); } }, [activeTab, periodStart, periodEnd]);
 
-  const loadFinancialData = async () => {
+  async function loadFinancialData() {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -140,6 +133,35 @@ export const GAAPFinancialStatements = () => {
         .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
         .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
       setPpeBookValue(ppeSum);
+
+      // Aggregate opening balances into 3900: Opening Balance Equity
+      let bankOpening = 0;
+      let openingAssetsBook = 0;
+      const { data: openingCoa } = await supabase
+        .from('chart_of_accounts')
+        .select('id')
+        .eq('company_id', companyProfile.company_id)
+        .eq('account_code', '3900')
+        .maybeSingle();
+      const openingAccountId = openingCoa ? (openingCoa as any).id as string : null;
+      if (openingAccountId) {
+        const { data: openingEntries } = await supabase
+          .from('transaction_entries')
+          .select(`credit, transactions!inner ( transaction_date, description, transaction_type, company_id )`)
+          .eq('account_id', openingAccountId)
+          .eq('transactions.company_id', companyProfile.company_id)
+          .lte('transactions.transaction_date', periodEnd);
+        bankOpening = (openingEntries || []).reduce((sum: number, e: any) => sum + Number(e.credit || 0), 0);
+      }
+      const { data: openingAssets } = await supabase
+        .from('fixed_assets')
+        .select('cost, accumulated_depreciation, status, description')
+        .eq('company_id', companyProfile.company_id);
+      openingAssetsBook = (openingAssets || [])
+        .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
+        .filter((a: any) => String(a.description || '').toLowerCase().includes('[opening]'))
+        .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
+      setOpeningEquityTotal(bankOpening + openingAssetsBook);
 
       const { data: profileVatTx } = await supabase
         .from('transactions')
@@ -203,7 +225,7 @@ export const GAAPFinancialStatements = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   const handleRefresh = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -298,7 +320,7 @@ export const GAAPFinancialStatements = () => {
         const totalExpenses = expenseRows.reduce((sum, r) => sum + r.balance, 0);
         const netProfitForPeriod = totalRevenue - totalExpenses;
         const retainedIndex = equity.findIndex(r => r.account_name.toLowerCase().includes('retained earning'));
-        let equityDisplay: any[] = [...equity];
+        const equityDisplay: any[] = [...equity];
         if (retainedIndex >= 0) {
           const retained = equity[retainedIndex];
           const adjusted = { ...retained, balance: retained.balance + netProfitForPeriod } as any;
@@ -416,7 +438,7 @@ export const GAAPFinancialStatements = () => {
     }
   };
 
-  const loadCashFlow = async () => {
+  async function loadCashFlow() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -519,7 +541,7 @@ export const GAAPFinancialStatements = () => {
       console.error('Cash flow load error', e);
       toast({ title: 'Cash flow error', description: e.message || 'Could not load cash flow', variant: 'destructive' });
     }
-  };
+  }
 
   const handleDrilldown = async (accountId: string, accountName: string) => {
     setDrilldownAccount(accountName);
@@ -599,7 +621,7 @@ export const GAAPFinancialStatements = () => {
 
     // Prepare equity display rows with retained earnings adjusted by net profit
     const retainedIndex = equity.findIndex(r => r.account_name.toLowerCase().includes('retained earning'));
-    let equityDisplay: any[] = [...equity];
+    const equityDisplay: any[] = [...equity];
     if (retainedIndex >= 0) {
       const retained = equity[retainedIndex];
       const adjusted = { ...retained, balance: retained.balance + netProfitForPeriod };
@@ -616,6 +638,23 @@ export const GAAPFinancialStatements = () => {
         balance: netProfitForPeriod,
       };
       equityDisplay.push(syntheticRetained);
+    }
+
+    const openingIdx = equityDisplay.findIndex(r => String(r.account_code || '') === '3900' || String(r.account_name || '').toLowerCase().includes('opening balance equity'));
+    if (openingIdx >= 0) {
+      const row = equityDisplay[openingIdx];
+      equityDisplay.splice(openingIdx, 1, { ...row, account_code: '3900', account_name: 'Opening Balance Equity', balance: openingEquityTotal });
+    } else {
+      equityDisplay.push({
+        account_id: 'opening-equity-synthetic',
+        account_code: '3900',
+        account_name: 'Opening Balance Equity',
+        account_type: 'equity',
+        normal_balance: 'credit',
+        total_debits: 0,
+        total_credits: 0,
+        balance: openingEquityTotal,
+      });
     }
 
     const vatPayable = Math.max(0, vatNet);

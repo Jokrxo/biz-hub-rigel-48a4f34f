@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -42,11 +42,11 @@ export const SalesOverviewReal = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [loadSalesData]);
 
-  useEffect(() => { loadSalesData(); }, [statusScope]);
+  useEffect(() => { loadSalesData(); }, [loadSalesData]);
 
-  const loadSalesData = async () => {
+  const loadSalesData = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -69,9 +69,9 @@ export const SalesOverviewReal = () => {
 
       // Calculate stats
       const today = new Date();
-      let unpaid = { value: 0, count: 0 };
-      let overdue = { value: 0, count: 0 };
-      let paid = { value: 0, count: 0 };
+      const unpaid = { value: 0, count: 0 };
+      const overdue = { value: 0, count: 0 };
+      const paid = { value: 0, count: 0 };
       
       let current = 0, days31to60 = 0, days61to90 = 0, days90plus = 0;
 
@@ -129,7 +129,7 @@ export const SalesOverviewReal = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [statusScope, toast]);
 
   const formatCurrency = (value: number) => {
     return `R ${value.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Receipt, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 
 interface Expense {
@@ -40,6 +40,27 @@ export const ExpensesManagement = () => {
     reference: "",
   });
 
+  const loadExpenses = useCallback(async () => {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .maybeSingle();
+      if (!profile) return;
+      const { data, error } = await supabase
+        .from("expenses")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("expense_date", { ascending: false });
+      if (error) throw error;
+      setExpenses(data || []);
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.id, toast]);
   useEffect(() => {
     loadExpenses();
 
@@ -54,7 +75,7 @@ export const ExpensesManagement = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [loadExpenses]);
 
   const loadExpenses = async () => {
     try {

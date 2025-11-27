@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
 import { ArrowRight, Plus, Trash2, FileText, Download, Mail } from "lucide-react";
@@ -60,45 +60,20 @@ export const SalesQuotes = () => {
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
 
-  useEffect(() => {
-    loadData();
-
-    const channel = supabase
-      .channel('quotes-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => {
-        loadData();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('appSettings');
-    if (saved) {
-      try { setDateFormat(JSON.parse(saved).dateFormat || 'DD/MM/YYYY'); } catch {}
-    }
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user?.id)
         .maybeSingle();
-
       if (!profile) return;
-
       const { data: customersData } = await supabase
         .from("customers")
         .select("*")
         .eq("company_id", profile.company_id)
         .order("name");
       setCustomers(customersData || []);
-
       const { data: productsData } = await supabase
         .from("items")
         .select("*")
@@ -113,13 +88,11 @@ export const SalesQuotes = () => {
         .eq("item_type", "service")
         .order("name");
       setServices(servicesData || []);
-
       const { data, error } = await supabase
         .from("quotes")
         .select("*")
         .eq("company_id", profile.company_id)
         .order("quote_date", { ascending: false });
-
       if (error) throw error;
       setQuotes(data || []);
     } catch (error: any) {
@@ -127,7 +100,30 @@ export const SalesQuotes = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, toast]);
+  useEffect(() => {
+    loadData();
+
+    const channel = supabase
+      .channel('quotes-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => {
+        loadData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadData]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('appSettings');
+    if (saved) {
+      try { setDateFormat(JSON.parse(saved).dateFormat || 'DD/MM/YYYY'); } catch {}
+    }
+  }, []);
+
+  
 
   const addItem = () => {
     setFormData({

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,27 +34,11 @@ export const ARDashboard = () => {
   const [customerFilter, setCustomerFilter] = useState<string>("all");
   const [statusScope, setStatusScope] = useState<StatusScope>('include_draft');
 
-  useEffect(() => { loadData(); }, [periodStart, periodEnd, customerFilter, statusScope]);
-  useEffect(() => {
-    const today = new Date().toISOString().split('T')[0];
-    if (periodEnd !== today) setPeriodEnd(today);
-  }, [periodEnd]);
-  useEffect(() => {
-    const channel = supabase
-      .channel('ar-dashboard-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
-        loadData();
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
-
       const { data: companyProfile, error: profErr } = await supabase
         .from("profiles")
         .select("company_id")
@@ -62,7 +46,6 @@ export const ARDashboard = () => {
         .single();
       if (profErr) throw profErr;
       if (!companyProfile?.company_id) throw new Error("Company not found");
-
       const { data, error } = await supabase
         .from("invoices")
         .select("id, customer_name, invoice_number, invoice_date, due_date, total_amount, status")
@@ -70,9 +53,7 @@ export const ARDashboard = () => {
         .gte("invoice_date", periodStart)
         .lte("invoice_date", periodEnd)
         .order("invoice_date", { ascending: false });
-
       if (error) throw error;
-
       let rowsRaw: any[] = data || [];
       rowsRaw = rowsRaw.filter(r => {
         if (statusScope === 'sent_overdue') {
@@ -80,7 +61,6 @@ export const ARDashboard = () => {
         }
         return r.status !== 'paid' && r.status !== 'cancelled';
       });
-
       let rows: InvoiceRow[] = rowsRaw.map((r: any) => ({
         id: r.id,
         customer_name: r.customer_name,
@@ -99,7 +79,22 @@ export const ARDashboard = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [periodStart, periodEnd, customerFilter, statusScope]);
+  useEffect(() => { loadData(); }, [periodStart, periodEnd, customerFilter, statusScope, loadData]);
+  useEffect(() => {
+    const today = new Date().toISOString().split('T')[0];
+    if (periodEnd !== today) setPeriodEnd(today);
+  }, [periodEnd]);
+  useEffect(() => {
+    const channel = supabase
+      .channel('ar-dashboard-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
+        loadData();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
 
   const customers = useMemo(() => {
     const uniq = new Map<string, string>();

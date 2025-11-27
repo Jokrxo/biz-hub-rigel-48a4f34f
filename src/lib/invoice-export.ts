@@ -185,7 +185,7 @@ export const buildInvoicePDFTemplate2 = (
     headStyles: { fillColor: [0, 0, 0], textColor: 255 },
     columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } }
   });
-  let y = (doc as any).lastAutoTable.finalY + 8;
+  const y = (doc as any).lastAutoTable.finalY + 8;
   doc.setDrawColor(0);
   doc.rect(130, y, 70, 30);
   doc.setFontSize(10);

@@ -88,7 +88,7 @@ export const TaxReturns = () => {
         status: "active"
       } as any;
       payload.status = "draft";
-      let { error } = await supabase.from("tax_periods").insert(payload);
+      const { error } = await supabase.from("tax_periods").insert(payload);
       if (error) {
         const payloadAlt = {
           company_id: companyId,
@@ -98,7 +98,7 @@ export const TaxReturns = () => {
           period_end: form.end_date,
           status: "draft"
         } as any;
-        let { error: err2 } = await supabase.from("tax_periods").insert(payloadAlt);
+        const { error: err2 } = await supabase.from("tax_periods").insert(payloadAlt);
         if (err2) {
           payloadAlt.status = "active";
           const { error: err3 } = await supabase.from("tax_periods").insert(payloadAlt);

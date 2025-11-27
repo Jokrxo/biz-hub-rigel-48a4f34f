@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -78,11 +78,62 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
   const [companyId, setCompanyId] = useState<string>("");
   const [validationError, setValidationError] = useState<string>("");
 
+  const loadData = useCallback(async () => {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+        .single();
+
+      if (!profile) return;
+
+      const { data: accountsData, error: accountsError } = await supabase
+        .from("chart_of_accounts")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .eq("is_active", true)
+        .order("account_code");
+      if (accountsError) throw accountsError;
+
+      const { data: bankData, error: bankError } = await supabase
+        .from("bank_accounts")
+        .select("*")
+        .eq("company_id", profile.company_id)
+        .order("bank_name");
+      if (bankError) throw bankError;
+
+      const { data: loansData, error: loansError } = await supabase
+        .from("loans")
+        .select("id, reference, loan_type, outstanding_balance, status")
+        .eq("company_id", profile.company_id)
+        .eq("status", "active")
+        .order("reference");
+      if (loansError) throw loansError;
+
+      setAccounts(accountsData || []);
+      setDebitAccounts(accountsData || []);
+      setCreditAccounts(accountsData || []);
+      setBankAccounts(bankData || []);
+      setLoans(loansData || []);
+
+      if (!bankData || bankData.length === 0) {
+        toast({
+          title: "No Bank Accounts",
+          description: "Please set up bank accounts first in the Bank module.",
+          variant: "destructive"
+        });
+      }
+    } catch (error: any) {
+      toast({ title: "Error loading data", description: error.message, variant: "destructive" });
+    }
+  }, [toast]);
+
   useEffect(() => {
     if (open) {
       loadData();
     }
-  }, [open]);
+  }, [open, loadData]);
 
   useEffect(() => {
     if (editData) {
@@ -129,64 +180,9 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     } else {
       setDuplicateWarning(false);
     }
-  }, [form.description, form.amount, form.date, form.bankAccount]);
+  }, [form.description, form.amount, form.date, form.bankAccount, checkDuplicate]);
 
-  const loadData = async () => {
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
-        .single();
-
-      if (!profile) return;
-
-      // Load chart of accounts
-      const { data: accountsData, error: accountsError } = await supabase
-        .from("chart_of_accounts")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .eq("is_active", true)
-        .order("account_code");
-
-      if (accountsError) throw accountsError;
-
-      // Load bank accounts
-      const { data: bankData, error: bankError } = await supabase
-        .from("bank_accounts")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .order("bank_name");
-
-      if (bankError) throw bankError;
-
-      // Load active loans for loan transactions
-      const { data: loansData, error: loansError } = await supabase
-        .from("loans")
-        .select("id, reference, loan_type, outstanding_balance, status")
-        .eq("company_id", profile.company_id)
-        .eq("status", "active")
-        .order("reference");
-
-      if (loansError) throw loansError;
-
-      setAccounts(accountsData || []);
-      setDebitAccounts(accountsData || []);
-      setCreditAccounts(accountsData || []);
-      setBankAccounts(bankData || []);
-      setLoans(loansData || []);
-
-      if (!bankData || bankData.length === 0) {
-        toast({
-          title: "No Bank Accounts",
-          description: "Please set up bank accounts first in the Bank module.",
-          variant: "destructive"
-        });
-      }
-    } catch (error: any) {
-      toast({ title: "Error loading data", description: error.message, variant: "destructive" });
-    }
-  };
+  
 
   const classifyTransaction = async (description: string) => {
     try {
@@ -206,7 +202,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     }
   };
 
-  const checkDuplicate = async () => {
+  const checkDuplicate = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
@@ -232,7 +228,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     } catch (error: any) {
       console.error("Duplicate check error:", error);
     }
-  };
+  }, [form.description, form.amount, form.date, form.bankAccount]);
 
   const handleTransactionTypeChange = async (txType: string) => {
     setForm({ 

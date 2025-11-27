@@ -47,7 +47,7 @@ export const RealAnalytics = () => {
           )
         `)
         .eq("company_id", profile.company_id)
-        .eq("status", "approved")
+        .in("status", ["pending", "approved", "posted"]) 
         .order("transaction_date", { ascending: true });
 
       // Process data for charts

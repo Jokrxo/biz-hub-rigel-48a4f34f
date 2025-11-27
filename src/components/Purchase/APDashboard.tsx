@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ export const APDashboard = () => {
     return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const loadData = async () => {
+  async function loadData() {
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -68,7 +68,7 @@ export const APDashboard = () => {
           .order("bill_date", { ascending: false });
 
         const supplierIds = Array.from(new Set((billsData || []).map((b: any) => b.supplier_id).filter(Boolean)));
-        let nameMap: Record<string, string> = {};
+        const nameMap: Record<string, string> = {};
         if (supplierIds.length > 0) {
           const { data: supps } = await supabase
             .from("suppliers")
@@ -102,7 +102,7 @@ export const APDashboard = () => {
           .lte("po_date", periodEnd)
           .order("po_date", { ascending: false });
         const supplierIds = Array.from(new Set((poData || []).map((p: any) => p.supplier_id).filter(Boolean)));
-        let nameMap: Record<string, string> = {};
+        const nameMap: Record<string, string> = {};
         if (supplierIds.length > 0) {
           const { data: supps } = await supabase
             .from("suppliers")
@@ -111,7 +111,7 @@ export const APDashboard = () => {
           (supps || []).forEach((s: any) => { nameMap[s.id] = s.name; });
         }
         const poNumbers = (poData || []).map((p: any) => p.po_number).filter(Boolean);
-        let payMap: Record<string, number> = {};
+        const payMap: Record<string, number> = {};
         if (poNumbers.length > 0) {
           const { data: pays } = await supabase
             .from("transactions")
@@ -150,7 +150,7 @@ export const APDashboard = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   function diffDays(from?: string | null, to?: string | null) {
     if (!from || !to) return 0;

@@ -10,7 +10,7 @@ import { ARDashboard } from "@/components/Sales/ARDashboard";
 import { SalesInvoices } from "@/components/Sales/SalesInvoices";
 import { SalesQuotes } from "@/components/Sales/SalesQuotes";
 import { SalesProducts } from "@/components/Sales/SalesProducts";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 
 export default function SalesPage() {
   const location = useLocation();
@@ -26,7 +26,7 @@ export default function SalesPage() {
     if (tabParam && tabParam !== activeTab) {
       setActiveTab(tabParam);
     }
-  }, [location.search]);
+  }, [location.search, activeTab]);
 
   useEffect(() => {
     const uid = user?.id ? String(user.id) : "anonymous";
@@ -99,3 +99,4 @@ export default function SalesPage() {
     </>
   );
 }
+import React from "react";

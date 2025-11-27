@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Info } from "lucide-react";
 import { CreditCard, BarChart3 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 
 type Loan = { id: string; company_id: string; reference: string; loan_type: "short" | "long"; principal: number; interest_rate: number; start_date: string; term_months: number; monthly_repayment: number | null; status: string; outstanding_balance: number };
@@ -149,7 +149,7 @@ function LoanList({ companyId }: { companyId: string }) {
   const [filterType, setFilterType] = useState<string>("all");
   const [sortKey, setSortKey] = useState<string>("start_date");
 
-  const load = async () => {
+  const load = React.useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase.from("loans" as any).select("*").eq("company_id", companyId).order("start_date", { ascending: false });
@@ -160,8 +160,8 @@ function LoanList({ companyId }: { companyId: string }) {
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { if (companyId) load(); }, [companyId]);
+  }, [companyId, toast]);
+  useEffect(() => { if (companyId) load(); }, [companyId, load]);
 
   const derived = useMemo(() => {
     const filtered = items.filter((l) => {
@@ -246,8 +246,7 @@ function LoanPayments({ companyId }: { companyId: string }) {
   const [payments, setPayments] = useState<LoanPayment[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const load = async () => {
+  const loadPayments = React.useCallback(async () => {
       setLoading(true);
       try {
         const { data, error } = await supabase
@@ -266,9 +265,8 @@ function LoanPayments({ companyId }: { companyId: string }) {
       } finally {
         setLoading(false);
       }
-    };
-    if (companyId) load();
-  }, [companyId]);
+  }, [companyId, toast]);
+  useEffect(() => { if (companyId) loadPayments(); }, [companyId, loadPayments]);
 
   return (
     <Card>
@@ -312,15 +310,13 @@ function LoanPayments({ companyId }: { companyId: string }) {
 function LoanReports({ companyId }: { companyId: string }) {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [payments, setPayments] = useState<LoanPayment[]>([]);
-  useEffect(() => {
-    const load = async () => {
+  const loadReports = React.useCallback(async () => {
       const { data: lns } = await supabase.from("loans" as any).select("*").eq("company_id", companyId);
       const { data: pays } = await supabase.from("loan_payments" as any).select("*");
       setLoans((lns || []) as any);
       setPayments((pays || []) as any);
-    };
-    if (companyId) load();
   }, [companyId]);
+  useEffect(() => { if (companyId) loadReports(); }, [companyId, loadReports]);
   const totals = {
     active: loans.filter(l => l.status === 'active').length,
     completed: loans.filter(l => l.status !== 'active').length,
@@ -361,3 +357,4 @@ function LoanReports({ companyId }: { companyId: string }) {
     </Card>
   );
 }
+import React from "react";

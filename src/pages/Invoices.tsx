@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,7 @@ import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, ty
 import { exportInvoicesToExcel } from '@/lib/export-utils';
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 
 interface Invoice {
@@ -68,21 +68,7 @@ export default function InvoicesPage() {
     exportInvoicesToExcel(filteredInvoices as any, filename);
   };
 
-  useEffect(() => {
-    loadInvoices();
-  }, []);
-
-  useEffect(() => {
-    const uid = user?.id ? String(user.id) : "anonymous";
-    const key = `tutorial_shown_invoices_${uid}`;
-    const already = localStorage.getItem(key);
-    if (!already) {
-      setTutorialOpen(true);
-      localStorage.setItem(key, "true");
-    }
-  }, [user]);
-
-  const loadInvoices = async () => {
+  const loadInvoices = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
@@ -105,7 +91,23 @@ export default function InvoicesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, toast]);
+
+  useEffect(() => {
+    loadInvoices();
+  }, [loadInvoices]);
+
+  useEffect(() => {
+    const uid = user?.id ? String(user.id) : "anonymous";
+    const key = `tutorial_shown_invoices_${uid}`;
+    const already = localStorage.getItem(key);
+    if (!already) {
+      setTutorialOpen(true);
+      localStorage.setItem(key, "true");
+    }
+  }, [user?.id]);
+
+  
 
 
   const handleDelete = async (id: string) => {

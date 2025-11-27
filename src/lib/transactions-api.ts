@@ -410,7 +410,7 @@ export const transactionsApi = {
     const arId = findBy('asset', ['1200'], ['receiv', 'accounts receiv']);
     if (!arId) throw new Error('Accounts Receivable account missing');
 
-    let bankId = findBy('asset', ['1100'], ['bank', 'cash']);
+    const bankId = findBy('asset', ['1100'], ['bank', 'cash']);
 
     if (!bankId) throw new Error('Bank ledger account missing');
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { Plus, Trash2, Edit, TrendingUp, TrendingDown, DollarSign, AlertCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 import { CommandDialog, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 
@@ -58,6 +58,62 @@ export const BudgetManagement = () => {
   const [selectedYear, setSelectedYear] = useState(currentYear.toString());
   const [selectedMonth, setSelectedMonth] = useState(currentMonth.toString());
 
+  const loadBudgets = useCallback(async () => {
+    try {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user?.id)
+        .maybeSingle();
+      if (!profile) return;
+      const { data, error } = await supabase
+        .from("budgets")
+        .select("id, account_id, budget_name, budget_year, budget_month, category, budgeted_amount, actual_amount, variance, status, notes")
+        .eq("company_id", profile.company_id)
+        .eq("budget_year", parseInt(selectedYear))
+        .eq("budget_month", parseInt(selectedMonth))
+        .order("budget_name");
+      if (error) throw error;
+      const { data: accs } = await supabase
+        .from("chart_of_accounts")
+        .select("id, account_name, account_type, normal_balance")
+        .eq("company_id", profile.company_id)
+        .eq("is_active", true);
+      const acct = (accs || []).filter((a: any) => ["expense", "income"].includes(String(a.account_type || '').toLowerCase()));
+      setAccounts(acct.map((a: any) => ({ id: a.id, account_name: a.account_name, account_type: a.account_type, normal_balance: a.normal_balance })));
+      const start = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-01`;
+      const y = parseInt(selectedYear);
+      const m = parseInt(selectedMonth);
+      const lastDay = new Date(y, m, 0).getDate();
+      const end = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+      const { data: te, error: teError } = await supabase
+        .from("transaction_entries")
+        .select("account_id, debit, credit, status, transactions!inner(transaction_date, company_id, status)")
+        .eq("transactions.company_id", profile.company_id)
+        .eq("transactions.status", "posted")
+        .gte("transactions.transaction_date", start)
+        .lte("transactions.transaction_date", end)
+        .eq("status", "approved");
+      if (teError) throw teError;
+      const actualMap: Record<string, number> = {};
+      (te || []).forEach((row: any) => {
+        const accId = String(row.account_id || '');
+        const acc = acct.find((a: any) => a.id === accId);
+        const nb = String(acc?.normal_balance || '').toLowerCase();
+        const val = nb === 'credit' ? Number(row.credit || 0) - Number(row.debit || 0) : Number(row.debit || 0) - Number(row.credit || 0);
+        actualMap[accId] = (actualMap[accId] || 0) + val;
+      });
+      const budgetsWithActuals = (data || []).map((budget: any) => {
+        const actualAmount = actualMap[String(budget.account_id || '')] || 0;
+        const variance = Number(budget.budgeted_amount || 0) - actualAmount;
+        return { ...budget, actual_amount: actualAmount, variance } as Budget;
+      });
+      setBudgets(budgetsWithActuals);
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  }, [user?.id, selectedYear, selectedMonth, toast]);
+  function updateBudgetActuals() { return loadBudgets(); }
   useEffect(() => {
     loadBudgets();
 
@@ -85,76 +141,10 @@ export const BudgetManagement = () => {
     return () => {
       if (channel) supabase.removeChannel(channel);
     };
-  }, [selectedYear, selectedMonth]);
+  }, [selectedYear, selectedMonth, loadBudgets, user?.id]);
 
-  const loadBudgets = async () => {
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user?.id)
-        .maybeSingle();
 
-      if (!profile) return;
-
-      const { data, error } = await supabase
-        .from("budgets")
-        .select("id, account_id, budget_name, budget_year, budget_month, category, budgeted_amount, actual_amount, variance, status, notes")
-        .eq("company_id", profile.company_id)
-        .eq("budget_year", parseInt(selectedYear))
-        .eq("budget_month", parseInt(selectedMonth))
-        .order("budget_name");
-
-      if (error) throw error;
-
-      const { data: accs } = await supabase
-        .from("chart_of_accounts")
-        .select("id, account_name, account_type, normal_balance")
-        .eq("company_id", profile.company_id)
-        .eq("is_active", true);
-      const acct = (accs || []).filter((a: any) => ["expense", "income"].includes(String(a.account_type || '').toLowerCase()));
-      setAccounts(acct.map((a: any) => ({ id: a.id, account_name: a.account_name, account_type: a.account_type, normal_balance: a.normal_balance })));
-
-      const start = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-01`;
-      const y = parseInt(selectedYear);
-      const m = parseInt(selectedMonth);
-      const lastDay = new Date(y, m, 0).getDate();
-      const end = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
-      const { data: te, error: teError } = await supabase
-        .from("transaction_entries")
-        .select("account_id, debit, credit, status, transactions!inner(transaction_date, company_id, status)")
-        .eq("transactions.company_id", profile.company_id)
-        .eq("transactions.status", "posted")
-        .gte("transactions.transaction_date", start)
-        .lte("transactions.transaction_date", end)
-        .eq("status", "approved");
-      if (teError) throw teError;
-      const actualMap: Record<string, number> = {};
-      (te || []).forEach((row: any) => {
-        const accId = String(row.account_id || '');
-        const acc = acct.find((a: any) => a.id === accId);
-        const nb = String(acc?.normal_balance || '').toLowerCase();
-        const val = nb === 'credit' ? Number(row.credit || 0) - Number(row.debit || 0) : Number(row.debit || 0) - Number(row.credit || 0);
-        actualMap[accId] = (actualMap[accId] || 0) + val;
-      });
-
-      const budgetsWithActuals = (data || []).map((budget: any) => {
-        const actualAmount = actualMap[String(budget.account_id || '')] || 0;
-        const variance = Number(budget.budgeted_amount || 0) - actualAmount;
-        return { ...budget, actual_amount: actualAmount, variance } as Budget;
-      });
-
-      setBudgets(budgetsWithActuals);
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const updateBudgetActuals = async () => {
-    await loadBudgets();
-  };
+  
 
   const openDialog = (budget?: Budget) => {
     if (budget) {

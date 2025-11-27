@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,78 +50,43 @@ export const EnhancedFinancialReports = () => {
 
   const { toast } = useToast();
 
-  useEffect(() => {
-    loadFinancialData();
-  }, [periodStart, periodEnd]);
-
-  const loadFinancialData = async () => {
+  const loadFinancialData = useCallback(async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-
       const { data: profile } = await supabase
         .from('profiles')
         .select('company_id')
         .eq('user_id', user.id)
         .maybeSingle();
-
       if (!profile?.company_id) return;
       setCompanyId(profile.company_id);
-
-      // Backfill any missing postings from existing invoices to ledger
-      try {
-        await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id });
-      } catch (bfErr: any) {
-        console.warn('Backfill failed or function missing:', bfErr?.message || bfErr);
-      }
-
-      // Defensive data check: warn on transactions with NULL dates (excluded from reports)
+      try { await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id }); } catch {}
       try {
         const { count: nullTxCount } = await supabase
           .from('transactions')
           .select('id', { count: 'exact', head: true })
           .eq('company_id', profile.company_id)
           .is('transaction_date', null);
-
         if ((nullTxCount || 0) > 0) {
-          toast({
-            title: 'Missing transaction dates detected',
-            description: `${nullTxCount} transaction(s) have no date and were excluded from period reports. Please update their dates for accurate reporting.`,
-            variant: 'default'
-          });
+          toast({ title: 'Missing transaction dates detected', description: `${nullTxCount} transaction(s) have no date and were excluded from period reports. Please update their dates for accurate reporting.`, variant: 'default' });
         }
-      } catch (warnErr) {
-        // Non-blocking warning check
-        console.warn('Null-date check failed:', warnErr);
-      }
-
-      // Build trial balance for the selected period from ledger entries
-    const trialBalance = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
-
+      } catch {}
+      const trialBalance = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
       const cogsFallback = await calculateCOGSFromInvoices(profile.company_id, periodStart, periodEnd);
       setFallbackCOGS(cogsFallback);
       const pl = generateProfitLoss(trialBalance);
       const bs = generateBalanceSheet(trialBalance);
       const cf = await generateCashFlow(profile.company_id);
-      
-      setReportData({
-        profitLoss: pl,
-        balanceSheet: bs,
-        cashFlow: cf,
-        trialBalance
-      });
+      setReportData({ profitLoss: pl, balanceSheet: bs, cashFlow: cf, trialBalance });
     } catch (error: any) {
       console.error('Error loading financial data:', error);
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive"
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  }, [periodStart, periodEnd, toast, fetchTrialBalanceForPeriod, generateBalanceSheet, generateCashFlow, generateProfitLoss]);
+  useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd, loadFinancialData]);
+
 
   // Function to calculate total inventory value from products
 const calculateTotalInventoryValue = async (companyId: string) => {

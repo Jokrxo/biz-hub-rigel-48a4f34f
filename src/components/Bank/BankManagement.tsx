@@ -219,7 +219,7 @@ export const BankManagement = () => {
             .from("chart_of_accounts")
             .insert({
               company_id: profile.company_id,
-              account_code: nextCode('3000'),
+              account_code: '3900',
               account_name: 'Opening Balance Equity',
               account_type: 'equity',
               is_active: true,

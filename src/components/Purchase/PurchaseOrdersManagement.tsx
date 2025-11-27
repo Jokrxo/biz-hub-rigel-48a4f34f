@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Plus, Trash2, FileText, Download } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -66,49 +66,35 @@ export const PurchaseOrdersManagement = () => {
     items: [{ description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
   });
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setOrders([]); setSuppliers([]); return; }
-
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user.id)
         .maybeSingle();
-
       if (!profile) { setOrders([]); setSuppliers([]); return; }
-
-      // Load suppliers
       const { data: suppliersData } = await supabase
         .from("suppliers")
         .select("id, name")
         .eq("company_id", profile.company_id)
         .order("name");
-
       setSuppliers(suppliersData || []);
       const supplierNameMap = new Map<string, string>();
       (suppliersData || []).forEach((s: any) => supplierNameMap.set(s.id, s.name));
-
-      // Load purchase orders
       const { data: ordersData, error: ordersErr } = await supabase
         .from("purchase_orders")
         .select("id, po_number, po_date, status, subtotal, tax_amount, total_amount, supplier_id")
         .eq("company_id", (profile as any).company_id)
         .order("po_date", { ascending: false });
       if (ordersErr) throw ordersErr;
-
-      // Map the data to match expected structure
       const mappedOrders = (ordersData || []).map((order: any) => ({
         ...order,
         supplierName: supplierNameMap.get(order.supplier_id) || "N/A",
       }));
-
       setOrders(mappedOrders as any);
       const poNumbers = mappedOrders.map((o: any) => o.po_number).filter(Boolean);
       if (poNumbers.length > 0) {
@@ -132,7 +118,12 @@ export const PurchaseOrdersManagement = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  
 
   const addItem = () => {
     setForm({

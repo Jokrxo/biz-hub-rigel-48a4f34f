@@ -87,7 +87,7 @@ export const buildPayslipPDF = (
   doc.text('—', boxX + boxW - 4, boxY + 9 * rowH + 5, { align: 'right' });
 
   // Employee information panel
-  let infoY = boxY + 10 * rowH + 10;
+  const infoY = boxY + 10 * rowH + 10;
   doc.setFillColor(200, 220, 240);
   doc.rect(14, infoY - 8, 90, 8, 'F');
   doc.setFontSize(10);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Download, FileSpreadsheet, FileText, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,7 +26,7 @@ export const TrialBalanceGenerated: React.FC = () => {
   });
   const { toast } = useToast();
 
-  const generateTrialBalance = async () => {
+  const generateTrialBalance = useCallback(async () => {
     try {
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
@@ -103,11 +103,11 @@ export const TrialBalanceGenerated: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
     generateTrialBalance();
-  }, []);
+  }, [generateTrialBalance]);
 
   const handleExportExcel = () => {
     const exportData = entries.map(e => ({

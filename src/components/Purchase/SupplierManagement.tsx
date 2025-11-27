@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Building2, Plus, Mail, Phone } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 
 interface Supplier {
@@ -36,26 +36,19 @@ export const SupplierManagement = () => {
     tax_number: "",
   });
 
-  useEffect(() => {
-    loadSuppliers();
-  }, []);
-
-  const loadSuppliers = async () => {
+  const loadSuppliers = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user?.id)
         .single();
-
       if (!profile) throw new Error("Profile not found");
-
       const { data, error } = await supabase
         .from("suppliers")
         .select("*")
         .eq("company_id", profile.company_id)
         .order("name");
-
       if (error) throw error;
       setSuppliers(data || []);
     } catch (error: any) {
@@ -63,7 +56,11 @@ export const SupplierManagement = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, toast]);
+  useEffect(() => {
+    loadSuppliers();
+  }, [loadSuppliers]);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

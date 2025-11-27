@@ -15,7 +15,7 @@ import { Users, FileText, Calculator, Plus, Check, BarChart, Info, ArrowRight, T
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 import { buildPayslipPDF, type PayslipForPDF } from "@/lib/payslip-export";
 import { addLogoToPDF, fetchLogoDataUrl } from "@/lib/invoice-export";
@@ -607,11 +607,11 @@ function PayrollPeriods({ companyId, canEdit }: { companyId: string; canEdit: bo
   const { toast } = useToast();
   const [periods, setPeriods] = useState<any[]>([]);
   const [form, setForm] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
-  const load = async () => {
+  const load = React.useCallback(async () => {
     const { data } = await supabase.from("payroll_periods" as any).select("*").eq("company_id", companyId).order("start_date", { ascending: false });
     setPeriods(data || []);
-  };
-  useEffect(() => { if (companyId) load(); }, [companyId]);
+  }, [companyId]);
+  useEffect(() => { if (companyId) load(); }, [companyId, load]);
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
     const start = new Date(form.year, form.month - 1, 1);
@@ -1177,7 +1177,7 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState({ first_name: "", last_name: "", email: "", id_number: "", start_date: "", salary_type: "monthly", salary_amount: "", bank_name: "", bank_branch_code: "", bank_account_number: "", bank_account_type: "checking" });
 
-  const load = async () => {
+  const load = React.useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -1192,9 +1192,8 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => { if (companyId) load(); }, [companyId]);
+  }, [companyId, toast]);
+  useEffect(() => { if (companyId) load(); }, [companyId, load]);
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1472,7 +1471,7 @@ function PayItemsTab({ companyId, canEdit }: { companyId: string; canEdit: boole
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<{ code: string; name: string; type: "earning" | "deduction" | "employer"; taxable: boolean }>({ code: "", name: "", type: "earning", taxable: true });
 
-  const load = async () => {
+  const load = React.useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -1487,9 +1486,8 @@ function PayItemsTab({ companyId, canEdit }: { companyId: string; canEdit: boole
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => { if (companyId) load(); }, [companyId]);
+  }, [companyId, toast]);
+  useEffect(() => { if (companyId) load(); }, [companyId, load]);
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1603,7 +1601,9 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
   const [sending, setSending] = useState<boolean>(false);
   const [selectedLine, setSelectedLine] = useState<PayRunLine | null>(null);
 
-  const loadRuns = async () => {
+  
+
+  const loadRuns = React.useCallback(async () => {
     setLoading(true);
     try {
       const { data, error } = await supabase
@@ -1618,19 +1618,19 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
     } finally {
       setLoading(false);
     }
-  };
+  }, [companyId, toast]);
 
-  const loadEmployees = async () => {
+  const loadEmployees = React.useCallback(async () => {
     const { data } = await supabase.from("employees" as any).select("*").eq("company_id", companyId).order("first_name", { ascending: true });
     setEmployees((data || []) as any);
-  };
+  }, [companyId]);
 
-  const loadLines = async (runId: string) => {
+  const loadLines = React.useCallback(async (runId: string) => {
     const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", runId);
     setLines((data || []) as any);
-  };
+  }, []);
 
-  useEffect(() => { if (companyId) { loadRuns(); loadEmployees(); } }, [companyId]);
+  useEffect(() => { if (companyId) { loadRuns(); loadEmployees(); } }, [companyId, loadRuns, loadEmployees]);
 
   const createRun = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2067,12 +2067,12 @@ function RunPayrollWizard({ companyId, canEdit }: { companyId: string; canEdit: 
     toast({ title: "Processed", description: "Calculations updated" });
     setStep(4);
   };
-  const loadLines = async () => {
+  const loadLinesLocal = React.useCallback(async () => {
     if (!run) return;
     const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", (run as any).id);
     setLines((data || []) as any);
-  };
-  useEffect(() => { loadLines(); }, [run?.id]);
+  }, [run?.id]);
+  useEffect(() => { loadLinesLocal(); }, [run?.id, loadLinesLocal]);
   const totals = useMemo(() => ({
     gross: lines.reduce((s, l: any) => s + (l.gross || 0), 0),
     paye: lines.reduce((s, l: any) => s + (l.paye || 0), 0),
@@ -2688,3 +2688,4 @@ function PayrollHistory({ companyId }: { companyId: string }) {
     </div>
   );
 }
+import React from "react";

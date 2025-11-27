@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,8 +7,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Building2, Save, Upload, Image as ImageIcon, Mail, Phone, MapPin, Tag, Globe } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { toast as notify } from "@/components/ui/sonner";
-import { useAuth } from "@/context/AuthContext";
+import { toast as notify } from "sonner";
+import { useAuth } from "@/context/useAuth";
 
 interface CompanyData {
   name: string;
@@ -38,37 +38,29 @@ export const CompanySettings = () => {
   const { toast } = useToast();
   const { user } = useAuth();
 
-  useEffect(() => {
-    loadCompanyData();
-  }, []);
-
-  const loadCompanyData = async () => {
+  const loadCompanyData = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user?.id)
         .single();
-
       if (!profile) throw new Error("Profile not found");
-
       const { data, error } = await supabase
         .from("companies")
         .select("*")
         .eq("id", profile.company_id)
         .single();
-
       if (error) throw error;
-      if (data) {
-        setCompanyData(data);
-        setLogoUrl(data.logo_url);
-      }
+      if (data) { setCompanyData(data); setLogoUrl(data.logo_url); }
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  };
+    } finally { setLoading(false); }
+  }, [user?.id, toast]);
+  useEffect(() => {
+    loadCompanyData();
+  }, [loadCompanyData]);
+
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {

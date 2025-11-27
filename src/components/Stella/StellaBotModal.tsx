@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useNavigate } from "react-router-dom";
 import { Sparkles, Activity, Link as LinkIcon, ShieldCheck } from "lucide-react";
 import { systemOverview, accountingPrimer } from "./knowledge";
@@ -55,9 +55,9 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
     };
     init();
     return () => { ac.abort(); };
-  }, [open]);
+  }, [open, user?.id]);
 
-  const loadMetrics = async (cid: string, signal?: AbortSignal) => {
+  const loadMetrics = useCallback(async (cid: string, signal?: AbortSignal) => {
     try {
       const [tx, inv, po, bills, budgets, bank, customers, items] = await Promise.all([
         supabase.from("transactions").select("id", { count: "exact" }).eq("company_id", cid).limit(1).abortSignal(signal as any),
@@ -80,9 +80,9 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
         items: (items.count as number) || 0
       });
     } catch {}
-  };
+  }, []);
 
-  const wireRealtime = (cid: string) => {
+  const wireRealtime = useCallback((cid: string) => {
     const channel = (supabase as any)
       .channel("stella")
       .on("postgres_changes", { event: "*", schema: "public", table: "transactions", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("Transaction", payload))
@@ -96,16 +96,16 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
       .on("postgres_changes", { event: "*", schema: "public", table: "customers", filter: `company_id=eq.${cid}` }, (payload: any) => pushFeed("Customer", payload))
       .subscribe();
     return () => { (supabase as any).removeChannel(channel) };
-  };
+  }, [companyId]);
 
-  const pushFeed = (kind: string, payload: any) => {
+  const pushFeed = useCallback((kind: string, payload: any) => {
     const row: any = payload?.new || payload?.old || {};
     if (row.company_id && companyId && row.company_id !== companyId) return;
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const title = `${kind} ${payload.eventType || payload.event || "update"}`;
     const description = row.description || row.invoice_number || row.reference_number || row.account_name || row.name || String(row.id || "");
     setFeed(prev => [{ id, title, description, ts: new Date().toISOString() }, ...prev].slice(0, 50));
-  };
+  }, [companyId]);
 
   const respond = (q: string) => {
     const lower = q.trim().toLowerCase();

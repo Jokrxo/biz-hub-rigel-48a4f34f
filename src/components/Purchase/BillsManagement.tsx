@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, FileText, Trash2, Edit } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 import { transactionsApi } from "@/lib/transactions-api";
 
@@ -52,62 +52,20 @@ export const BillsManagement = () => {
     items: [{ description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
   });
 
-  useEffect(() => {
-    loadData();
-
-    // Real-time updates
-    const channel = supabase
-      .channel('bills-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bills' }, () => {
-        loadData();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  useEffect(() => {
-    const loadBanks = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (!profile) return;
-      const { data } = await supabase
-        .from("bank_accounts")
-        .select("id, account_name")
-        .eq("company_id", (profile as any).company_id)
-        .order("created_at", { ascending: false });
-      setBankAccounts((data || []).map((b: any) => ({ id: b.id, account_name: b.account_name })));
-    };
-    loadBanks();
-  }, []);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user?.id)
         .maybeSingle();
-
       if (!profile) return;
-
-      // Load suppliers
       const { data: suppliersData } = await supabase
         .from("suppliers")
         .select("*")
         .eq("company_id", profile.company_id)
         .order("name");
-
       setSuppliers(suppliersData || []);
-
-      // Load bills
       const { data, error } = await supabase
         .from("bills")
         .select(`
@@ -116,7 +74,6 @@ export const BillsManagement = () => {
         `)
         .eq("company_id", profile.company_id)
         .order("bill_date", { ascending: false });
-
       if (error) throw error;
       setBills(data as any || []);
       const billNumbers = (data || []).map((b: any) => b.bill_number).filter(Boolean);
@@ -141,7 +98,44 @@ export const BillsManagement = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id, toast]);
+  useEffect(() => {
+    loadData();
+
+    // Real-time updates
+    const channel = supabase
+      .channel('bills-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bills' }, () => {
+        loadData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadData]);
+
+  useEffect(() => {
+    const loadBanks = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!profile) return;
+      const { data } = await supabase
+        .from("bank_accounts")
+        .select("id, account_name")
+        .eq("company_id", (profile as any).company_id)
+        .order("created_at", { ascending: false });
+      setBankAccounts((data || []).map((b: any) => ({ id: b.id, account_name: b.account_name })));
+    };
+    loadBanks();
+  }, []);
+
+  
 
   const addItem = () => {
     setFormData({

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -8,7 +8,7 @@ import { Settings2, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { hasSupabaseEnv } from "@/integrations/supabase/client";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 
 export const GeneralSettings = () => {
   const [settings, setSettings] = useState({
@@ -28,7 +28,7 @@ export const GeneralSettings = () => {
     if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
   };
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from('profiles')
@@ -61,44 +61,42 @@ export const GeneralSettings = () => {
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to save settings', variant: 'destructive' });
     }
-  };
+  }, [settings, user?.id, toast]);
 
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('company_id')
-          .eq('user_id', user?.id)
+  const init = useCallback(async () => {
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      const savedLocal = localStorage.getItem('appSettings');
+      let next = settings;
+      if (profile?.company_id) {
+        const { data } = await supabase
+          .from('app_settings')
+          .select('*')
+          .eq('company_id', profile.company_id)
           .maybeSingle();
-        const savedLocal = localStorage.getItem('appSettings');
-        let next = settings;
-        if (profile?.company_id) {
-          const { data } = await supabase
-            .from('app_settings')
-            .select('*')
-            .eq('company_id', profile.company_id)
-            .maybeSingle();
-        if (data) {
-          next = {
-            theme: (data as any).theme || 'light',
-            dateFormat: (data as any).date_format || 'DD/MM/YYYY',
-            fiscalYearStart: String((data as any).fiscal_year_start || 1),
-            enableNotifications: !!(data as any).enable_notifications,
-            enableAutoBackup: !!(data as any).enable_auto_backup,
-            language: (data as any).language || 'en',
-            invoiceTemplate: (JSON.parse(localStorage.getItem('appSettings') || '{}')?.invoiceTemplate) || 'template1',
-          };
-        }
-        } else if (savedLocal) {
-          next = JSON.parse(savedLocal);
-        }
-        setSettings(next);
-        applyTheme(next.theme);
-      } catch {}
-    };
-    init();
-  }, []);
+      if (data) {
+        next = {
+          theme: (data as any).theme || 'light',
+          dateFormat: (data as any).date_format || 'DD/MM/YYYY',
+          fiscalYearStart: String((data as any).fiscal_year_start || 1),
+          enableNotifications: !!(data as any).enable_notifications,
+          enableAutoBackup: !!(data as any).enable_auto_backup,
+          language: (data as any).language || 'en',
+          invoiceTemplate: (JSON.parse(localStorage.getItem('appSettings') || '{}')?.invoiceTemplate) || 'template1',
+        };
+      }
+      } else if (savedLocal) {
+        next = JSON.parse(savedLocal);
+      }
+      setSettings(next);
+      applyTheme(next.theme);
+    } catch {}
+  }, [settings, user?.id]);
+  useEffect(() => { init(); }, [init]);
 
   const [supUrl, setSupUrl] = useState("");
   const [supKey, setSupKey] = useState("");

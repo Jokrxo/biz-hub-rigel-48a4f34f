@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Trash2, BookOpen, Search, RefreshCw } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 
 interface Account {
   id: string;
@@ -198,103 +198,54 @@ export const ChartOfAccountsManagement = () => {
     account_type: "asset",
   });
 
-  useEffect(() => {
-    loadAccounts();
-    loadMappings();
-  }, []);
-
-  const loadAccounts = async () => {
+  const loadAccounts = useCallback(async () => {
     try {
-      setLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        toast({ title: "Error", description: "Not authenticated", variant: "destructive" });
+        return;
+      }
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
-        .eq("user_id", user?.id)
+        .eq("user_id", user.id)
         .single();
-
-      if (!profile) return;
-      setCompanyId(profile.company_id);
-
-      const { data, error } = await supabase
+      if (!profile) {
+        toast({ title: "Error", description: "Company profile not found", variant: "destructive" });
+        return;
+      }
+      setCompanyId(String((profile as any).company_id || ""));
+      const { data } = await supabase
         .from("chart_of_accounts")
         .select("*")
         .eq("company_id", profile.company_id)
         .order("account_code");
-
-      if (error) throw error;
-
-      // Ensure SA Chart of Accounts defaults exist for all companies: insert any missing ones
-      const existingCodes = new Set((data || []).map(acc => acc.account_code));
-      const missingDefaults = SA_CHART_OF_ACCOUNTS.filter(acc => !existingCodes.has(acc.code));
-
-      if (missingDefaults.length > 0) {
-        const accountsToInsert = missingDefaults.map(acc => ({
-          company_id: profile.company_id,
-          account_code: acc.code,
-          account_name: acc.name,
-          account_type: acc.type,
-          is_active: true,
-        }));
-
-        const { error: insertError } = await supabase
-          .from("chart_of_accounts")
-          .insert(accountsToInsert);
-
-        if (insertError) throw insertError;
-
-        const { data: seeded } = await supabase
-          .from("chart_of_accounts")
-          .select("*")
-          .eq("company_id", profile.company_id)
-          .order("account_code");
-
-        setAccounts(seeded || []);
-        toast({ title: "Defaults Loaded", description: `Added ${accountsToInsert.length} missing SA accounts` });
-      } else {
-        setAccounts(data || []);
-      }
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadMappings = async () => {
+      setAccounts(data || []);
+    } catch {}
+  }, []);
+  const loadMappings = useCallback(async () => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
-        .eq("user_id", user?.id)
+        .eq("user_id", user.id)
         .single();
       if (!profile) return;
-      setCompanyId(profile.company_id);
-
-      const { data, error } = await supabase
-        .from("transaction_type_mappings")
-        .select("transaction_type, debit_account_id, credit_account_id")
+      const { data } = await supabase
+        .from("account_mappings")
+        .select("*")
         .eq("company_id", profile.company_id);
+      setMappings(data || []);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    loadAccounts();
+    loadMappings();
+  }, [loadAccounts, loadMappings]);
 
-      if (error) {
-        // If table is missing, don’t crash — show info toast and use empty defaults
-        toast({ title: "Info", description: "Mapping table not found; using empty defaults.", variant: "secondary" });
-        setMappings({});
-        return;
-      }
-
-      const map: Record<string, { debit_account_id: string | null; credit_account_id: string | null }> = {};
-      (data || []).forEach((row: any) => {
-        map[row.transaction_type] = {
-          debit_account_id: row.debit_account_id || null,
-          credit_account_id: row.credit_account_id || null,
-        };
-      });
-      setMappings(map);
-    } catch (error: any) {
-      // Swallow errors to avoid blocking the rest of the page
-      console.warn("loadMappings error", error);
-    }
-  };
+  
 
   const saveMappings = async () => {
     try {
@@ -318,13 +269,21 @@ export const ChartOfAccountsManagement = () => {
 
   const loadSAChartOfAccounts = async () => {
     try {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) {
+        toast({ title: "Error", description: "Not authenticated", variant: "destructive" });
+        return;
+      }
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
-        .eq("user_id", user?.id)
+        .eq("user_id", authUser.id)
         .single();
 
-      if (!profile) return;
+      if (!profile) {
+        toast({ title: "Error", description: "Company profile not found", variant: "destructive" });
+        return;
+      }
 
       // Check if accounts already exist
       const { data: existing } = await supabase

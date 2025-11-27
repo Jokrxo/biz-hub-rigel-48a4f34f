@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Upload, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth } from "@/context/useAuth";
 import Papa from 'papaparse';
 
 interface BankAccount {
@@ -206,9 +206,9 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
         const str = String(s || '').trim();
         if (!str) return new Date().toISOString().split('T')[0];
         let d: Date | null = null;
-        const m = str.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})$/);
+        const m = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
         if (m) d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-        const m2 = str.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/);
+        const m2 = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/);
         if (!d && m2) {
           const day = Number(m2[1]);
           const month = Number(m2[2]) - 1;
