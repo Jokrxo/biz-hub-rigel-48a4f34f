@@ -232,6 +232,14 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     }
   }, [open, prefill]);
   useEffect(() => {
+    if (!open || !prefill) return;
+    const lt = String((prefill as any).lockType || '').trim();
+    if (lt) {
+      setLockAccounts(true);
+      setLockType(lt);
+    }
+  }, [open, prefill]);
+  useEffect(() => {
     if (open && prefill) {
       if (prefill.depreciationMethod) setDepreciationMethod(String(prefill.depreciationMethod));
       if (prefill.usefulLifeYears) setAssetUsefulLifeYears(String(prefill.usefulLifeYears));
@@ -254,9 +262,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     if (!form.bankAccountId || !form.element || accounts.length === 0) return;
     const bankLedger = accounts.find(a => (a.account_type || '').toLowerCase() === 'asset' && (a.account_name || '').toLowerCase().includes('bank'));
     if (!bankLedger) return;
-    if (form.element === 'income' || form.element === 'receipt' || form.element === 'asset_disposal') {
+    if (form.element === 'income' || form.element === 'receipt' || form.element === 'asset_disposal' || form.element === 'loan_received') {
       setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || bankLedger.id }));
-    } else if (form.element === 'expense' || form.element === 'asset' || form.element === 'product_purchase' || form.element === 'liability') {
+    } else if (form.element === 'expense' || form.element === 'asset' || form.element === 'product_purchase' || form.element === 'liability' || form.element === 'loan_repayment' || form.element === 'loan_interest') {
       setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || bankLedger.id }));
     }
   }, [form.bankAccountId, form.element, accounts]);
@@ -1961,39 +1969,39 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
       // Handle loan-specific operations
       if (form.element === 'loan_received') {
-        // Create a new loan record
         const interestRatePercent = form.interestRate && form.interestRate.trim() !== '' ? parseFloat(form.interestRate) : 0;
         const interestRateDecimal = interestRatePercent / 100;
         const termMonths = form.loanTerm && form.loanTerm.trim() !== '' ? parseInt(form.loanTerm) : 12;
         const monthlyRepayment = calculateMonthlyRepayment(amount, interestRateDecimal / 12, termMonths);
-
-        const { error: loanError } = await supabase
-          .from("loans")
-          .insert({
-            company_id: companyId,
-            reference: form.reference || `LOAN-${Date.now()}`,
-            loan_type: form.loanTermType,
-            principal: amount,
-            interest_rate: interestRateDecimal,
-            start_date: form.date,
-            term_months: termMonths,
-            monthly_repayment: monthlyRepayment,
-            status: 'active',
-            outstanding_balance: amount
-          });
-
-        if (loanError) {
-          console.error("Loan creation error:", loanError);
-          toast({ 
-            title: "Loan Creation Failed", 
-            description: "Transaction was posted but loan record could not be created: " + loanError.message, 
-            variant: "destructive" 
-          });
+        if (!form.loanId) {
+          const { error: loanError } = await supabase
+            .from("loans")
+            .insert({
+              company_id: companyId,
+              reference: form.reference || `LOAN-${Date.now()}`,
+              loan_type: form.loanTermType,
+              principal: amount,
+              interest_rate: interestRateDecimal,
+              start_date: form.date,
+              term_months: termMonths,
+              monthly_repayment: monthlyRepayment,
+              status: 'active',
+              outstanding_balance: amount
+            });
+          if (loanError) {
+            console.error("Loan creation error:", loanError);
+            toast({ title: "Loan Creation Failed", description: "Transaction was posted but loan record could not be created: " + loanError.message, variant: "destructive" });
+          } else {
+            toast({ title: "Loan Created Successfully", description: "New loan record created with monthly repayment of R " + monthlyRepayment.toFixed(2) });
+          }
         } else {
-          toast({ 
-            title: "Loan Created Successfully", 
-            description: "New loan record created with monthly repayment of R " + monthlyRepayment.toFixed(2) 
-          });
+          // Loan was already created via Loans module; optionally update monthly_repayment if empty
+          try {
+            await supabase
+              .from('loans')
+              .update({ monthly_repayment: monthlyRepayment, interest_rate: interestRateDecimal, term_months: termMonths, loan_type: form.loanTermType })
+              .eq('id', form.loanId);
+          } catch {}
         }
       } else if (form.element === 'loan_repayment' && form.loanId) {
         // Update loan outstanding balance

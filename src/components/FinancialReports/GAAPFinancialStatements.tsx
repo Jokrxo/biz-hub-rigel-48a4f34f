@@ -303,16 +303,24 @@ export const GAAPFinancialStatements = () => {
           const accTotal = related.reduce((sum: number, r: any) => sum + r.balance, 0);
           return assetRow.balance - accTotal;
         };
-    const currentLiabilities = trialBalance.filter(r =>
-      r.account_type.toLowerCase() === 'liability' &&
-      (r.account_name.toLowerCase().includes('payable') ||
-       r.account_name.toLowerCase().includes('sars')) &&
-      !r.account_name.toLowerCase().includes('vat')
-    );
+    const currentLiabilitiesBase = trialBalance.filter(r => {
+      const isLiab = r.account_type.toLowerCase() === 'liability';
+      const name = r.account_name.toLowerCase();
+      const code = String(r.account_code);
+      const isPayableOrTax = (name.includes('payable') || name.includes('sars'));
+      const isVat = name.includes('vat');
+      const isLoan = name.includes('loan');
+      const isLongLoan = isLoan && (code === '2400' || name.includes('long'));
+      return isLiab && isPayableOrTax && !isVat && !isLongLoan;
+    });
+    const isLoanLiability = (r: any) => r.account_type.toLowerCase() === 'liability' && r.account_name.toLowerCase().includes('loan');
+    const loanShort = trialBalance.filter(r => isLoanLiability(r) && (String(r.account_code) === '2300' || r.account_name.toLowerCase().includes('short')));
+    const currentLiabilities = [...currentLiabilitiesBase, ...loanShort.filter(ls => !currentLiabilitiesBase.some(b => b.account_id === ls.account_id))];
         const vatInputAsAssets = trialBalance.filter(r =>
           (r.account_name.toLowerCase().includes('vat input') || r.account_name.toLowerCase().includes('vat receivable'))
         );
-        const nonCurrentLiabilities = trialBalance.filter(r => r.account_type.toLowerCase() === 'liability' && !currentLiabilities.includes(r));
+        const currentSet = new Set(currentLiabilities.map(r => r.account_id));
+        const nonCurrentLiabilities = trialBalance.filter(r => r.account_type.toLowerCase() === 'liability' && !currentSet.has(r.account_id));
         const equity = trialBalance.filter(r => r.account_type.toLowerCase() === 'equity');
         const revenueRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
         const expenseRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat'));
@@ -603,12 +611,19 @@ export const GAAPFinancialStatements = () => {
       !String(r.account_name || '').toLowerCase().includes('vat') &&
       !['2100','2200'].includes(String(r.account_code || ''))
     );
-    const currentLiabilities = liabilitiesExVat.filter(r =>
-      r.account_name.toLowerCase().includes('payable') ||
-      r.account_name.toLowerCase().includes('sars') ||
-      parseInt(String(r.account_code || '0')) < 2300
-    );
-    const nonCurrentLiabilities = liabilitiesExVat.filter(r => !currentLiabilities.includes(r));
+    const currentLiabilities = liabilitiesExVat.filter(r => {
+      const name = String(r.account_name || '').toLowerCase();
+      const code = String(r.account_code || '');
+      const isLoan = name.includes('loan');
+      const isLongLoan = isLoan && (code === '2400' || name.includes('long'));
+      const isShortLoan = isLoan && (code === '2300' || name.includes('short'));
+      const isPayableOrSars = name.includes('payable') || name.includes('sars');
+      const isCodeCurrent = parseInt(code || '0', 10) < 2300;
+      if (code === '2400') return false; // pin long-term loans to non-current
+      return isShortLoan || ((isPayableOrSars || isCodeCurrent) && !isLongLoan);
+    });
+    const currentSet = new Set(currentLiabilities.map(r => r.account_id));
+    const nonCurrentLiabilities = liabilitiesExVat.filter(r => !currentSet.has(r.account_id));
     
     const equity = trialBalance.filter(r => r.account_type.toLowerCase() === 'equity');
 
