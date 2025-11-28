@@ -268,23 +268,58 @@ export default function Loans() {
                       const monthlyRate = (ratePct / 100) / 12;
                       const monthlyRepayment = monthlyRate === 0 ? (principal / termMonths) : (principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
                       const startDate = new Date().toISOString().slice(0, 10);
-                      const ref = (loanForm.reference && loanForm.reference.trim() !== "") ? loanForm.reference.trim() : `LN-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Date.now().toString().slice(-5)}`;
+                      const baseRef = (loanForm.reference && loanForm.reference.trim() !== "") ? loanForm.reference.trim() : `LN-${new Date().toISOString().slice(0,10).replace(/-/g,'')}`;
+                      let ref = baseRef;
+                      try {
+                        const { data: exists } = await supabase
+                          .from('loans' as any)
+                          .select('id')
+                          .eq('company_id', companyId)
+                          .eq('reference', ref)
+                          .maybeSingle();
+                        if (exists) {
+                          const { data: similar } = await supabase
+                            .from('loans' as any)
+                            .select('reference')
+                            .eq('company_id', companyId)
+                            .like('reference', `${baseRef}%`);
+                          const taken = new Set<string>((similar || []).map((r: any) => String(r.reference)));
+                          let i = 1;
+                          while (taken.has(`${baseRef}-${String(i).padStart(3,'0')}`)) i++;
+                          ref = `${baseRef}-${String(i).padStart(3,'0')}`;
+                        }
+                      } catch {}
                       const loanType = loanForm.classification || (termMonths >= 12 ? 'long' : 'short');
-                      const { error } = await supabase
-                        .from('loans' as any)
-                        .insert({
-                          company_id: companyId,
-                          reference: ref,
-                          loan_type: loanType,
-                          principal: principal,
-                          interest_rate: ratePct / 100,
-                          start_date: startDate,
-                          term_months: termMonths,
-                          monthly_repayment: monthlyRepayment,
-                          status: 'active',
-                          outstanding_balance: principal
-                        });
-                      if (error) throw error;
+                      {
+                        let errorOccured: any = null;
+                        for (let attempt = 0; attempt < 3; attempt++) {
+                          const { error } = await supabase
+                            .from('loans' as any)
+                            .insert({
+                              company_id: companyId,
+                              reference: ref,
+                              loan_type: loanType,
+                              principal: principal,
+                              interest_rate: ratePct / 100,
+                              start_date: startDate,
+                              term_months: termMonths,
+                              monthly_repayment: monthlyRepayment,
+                              status: 'active',
+                              outstanding_balance: principal
+                            });
+                          if (!error) { errorOccured = null; break; }
+                          const msg = String(error.message || '').toLowerCase();
+                          if (msg.includes('duplicate key') || msg.includes('unique')) {
+                            const suffix = String(Math.floor(Math.random() * 100000)).padStart(5, '0');
+                            ref = `${baseRef}-${suffix}`;
+                            continue;
+                          } else {
+                            errorOccured = error;
+                            break;
+                          }
+                        }
+                        if (errorOccured) throw errorOccured;
+                      }
                       const description = `Loan received ${ref}`;
                       setTransactionPrefill({
                         date: startDate,
