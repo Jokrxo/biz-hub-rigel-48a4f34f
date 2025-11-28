@@ -60,7 +60,7 @@ export const DashboardOverview = () => {
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean; hasProducts: boolean; hasCustomers: boolean; hasSuppliers: boolean; hasEmployees: boolean }>({ hasCoa: true, hasBank: true, hasProducts: true, hasCustomers: true, hasSuppliers: true, hasEmployees: true });
   const [userName, setUserName] = useState<string>("");
   const [companyId, setCompanyId] = useState<string>("");
-  const [chartMonths, setChartMonths] = useState<number>(3);
+  const [chartMonths, setChartMonths] = useState<number>(6);
   const [onboardingOpen, setOnboardingOpen] = useState<boolean>(false);
   const loadingRef = useRef(false);
   
@@ -191,7 +191,7 @@ export const DashboardOverview = () => {
       const startDate = new Date(selectedYear, selectedMonth - 1, 1);
       const endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
       const rangeStart = new Date(selectedYear, selectedMonth - chartMonths, 1);
-      const cacheKey = `db-cache-${String(profile.company_id)}-${selectedYear}-${selectedMonth}`;
+      const cacheKey = `db-cache-${String(profile.company_id)}-${selectedYear}-${selectedMonth}-${chartMonths}m`;
       try {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
@@ -292,7 +292,7 @@ export const DashboardOverview = () => {
       setExpenseWheelInner([{ name: 'Income', value: totals.income }, { name: 'Expenses', value: totals.expenses }]);
 
       const months: Array<{ start: Date; end: Date; label: string }> = [];
-      for (let i = 5; i >= 0; i--) {
+      for (let i = chartMonths - 1; i >= 0; i--) {
         const ms = new Date(selectedYear, selectedMonth - 1 - i, 1);
         const me = new Date(selectedYear, selectedMonth - 1 - i + 1, 0, 23, 59, 59, 999);
         const label = ms.toLocaleDateString('en-ZA', { month: 'short' });
@@ -301,13 +301,42 @@ export const DashboardOverview = () => {
       const monthlyData: any[] = [];
       const netTrend: any[] = [];
       const assetMonthly: any[] = [];
-      for (const m of months) {
-        const tb = await fetchTrialBalanceForPeriod(String(profile.company_id), m.start.toISOString(), m.end.toISOString());
-        const t = totalsFromTrialBalance(tb);
-        monthlyData.push({ month: m.label, income: t.income, expenses: t.expenses });
-        netTrend.push({ month: m.label, netProfit: Number((t.income - t.expenses).toFixed(2)) });
-        assetMonthly.push({ month: m.label, nbv: 0 });
-      }
+      const { data: teRange } = await supabase
+        .from('transaction_entries')
+        .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id)`) 
+        .eq('transactions.company_id', profile.company_id)
+        .gte('transactions.transaction_date', months[0].start.toISOString())
+        .lte('transactions.transaction_date', months[months.length - 1].end.toISOString());
+      const { data: accountsAll } = await supabase
+        .from('chart_of_accounts')
+        .select('id, account_type, account_name, account_code')
+        .eq('company_id', profile.company_id)
+        .eq('is_active', true);
+      const typeByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
+      const nameByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
+      const codeByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
+      const buckets: Record<string, { income: number; expenses: number; label: string }> = {};
+      months.forEach(m => { buckets[m.label] = { income: 0, expenses: 0, label: m.label }; });
+      (teRange || []).forEach((e: any) => {
+        const dt = new Date(String(e.transactions?.transaction_date || new Date()));
+        const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+        if (!buckets[label]) return;
+        const id = String(e.account_id || '');
+        const type = (typeByIdAll.get(id) || '').toLowerCase();
+        const name = String(nameByIdAll.get(id) || '').toLowerCase();
+        const code = codeByIdAll.get(id) || '';
+        const debit = Number(e.debit || 0);
+        const credit = Number(e.credit || 0);
+        const isIncome = type.includes('income') || type.includes('revenue');
+        const isExpense = type.includes('expense') || name.includes('cost of') || String(code).startsWith('5');
+        if (isIncome) buckets[label].income += Math.abs(credit - debit);
+        else if (isExpense) buckets[label].expenses += Math.abs(debit - credit);
+      });
+      Object.values(buckets).forEach(r => {
+        monthlyData.push({ month: r.label, income: Number(r.income.toFixed(2)), expenses: Number(r.expenses.toFixed(2)) });
+        netTrend.push({ month: r.label, netProfit: Number((r.income - r.expenses).toFixed(2)) });
+        assetMonthly.push({ month: r.label, nbv: 0 });
+      });
       const { data: fa } = await supabase
         .from('fixed_assets')
         .select('id, description, cost, purchase_date, useful_life_years, status')
@@ -1060,10 +1089,20 @@ export const DashboardOverview = () => {
                 ))}
               </SelectContent>
             </Select>
+            <Select value={chartMonths.toString()} onValueChange={(value) => setChartMonths(parseInt(value))}>
+              <SelectTrigger className="w-28">
+                <SelectValue placeholder="Months" />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                  <SelectItem key={m} value={m.toString()}>{m} months</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <Badge variant="outline" className="gap-2">
             <Calendar className="h-4 w-4" />
-            {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })}
+            {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })} • {chartMonths} months
           </Badge>
           <Sheet>
             <SheetTrigger asChild>
@@ -1136,21 +1175,12 @@ export const DashboardOverview = () => {
         )}
         {widgets.incomeVsExpense && (
           <Card className="card-professional">
-            <CardHeader className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-primary" />
+              <CardHeader className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5 text-primary" />
                 {`Income vs Expenses (${chartMonths} months)`}
-              </CardTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setChartMonths((m) => (m === 3 ? 6 : 3));
-                }}
-              >
-                {chartMonths === 3 ? 'Show More' : 'Show Less'}
-              </Button>
-            </CardHeader>
+                </CardTitle>
+              </CardHeader>
             <CardContent>
               <div className="h-64 w-full">
                 <ResponsiveContainer>
