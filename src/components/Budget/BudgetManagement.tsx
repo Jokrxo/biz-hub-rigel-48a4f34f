@@ -6,10 +6,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Plus, Trash2, Edit, TrendingUp, TrendingDown, DollarSign, AlertCircle } from "lucide-react";
+import { TrendingUp, TrendingDown, DollarSign, AlertCircle, Download } from "lucide-react";
+import { exportFinancialReportToPDF } from "@/lib/export-utils";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
@@ -41,6 +43,15 @@ export const BudgetManagement = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
+  const [activeBudget, setActiveBudget] = useState<'pl' | 'bs' | 'cf'>('pl');
+  const [actualMap, setActualMap] = useState<Record<string, number>>({});
+  const [bsActualMap, setBsActualMap] = useState<Record<string, number>>({});
+  const [cfActual, setCfActual] = useState<{ operating: number; investing: number; financing: number; net: number; opening: number; closing: number }>({ operating: 0, investing: 0, financing: 0, net: 0, opening: 0, closing: 0 });
+  
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [entryValues, setEntryValues] = useState<Record<string, number>>({});
+  const [submitting, setSubmitting] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   const currentYear = new Date().getFullYear();
   const currentMonth = new Date().getMonth() + 1;
@@ -79,8 +90,8 @@ export const BudgetManagement = () => {
         .select("id, account_name, account_type, normal_balance")
         .eq("company_id", profile.company_id)
         .eq("is_active", true);
-      const acct = (accs || []).filter((a: any) => ["expense", "income"].includes(String(a.account_type || '').toLowerCase()));
-      setAccounts(acct.map((a: any) => ({ id: a.id, account_name: a.account_name, account_type: a.account_type, normal_balance: a.normal_balance })));
+      const acctAll = (accs || []).map((a: any) => ({ id: a.id, account_name: a.account_name, account_type: a.account_type, normal_balance: a.normal_balance }));
+      setAccounts(acctAll);
       const start = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-01`;
       const y = parseInt(selectedYear);
       const m = parseInt(selectedMonth);
@@ -95,16 +106,49 @@ export const BudgetManagement = () => {
         .lte("transactions.transaction_date", end)
         .eq("status", "approved");
       if (teError) throw teError;
-      const actualMap: Record<string, number> = {};
+      const actuals: Record<string, number> = {};
       (te || []).forEach((row: any) => {
         const accId = String(row.account_id || '');
-        const acc = acct.find((a: any) => a.id === accId);
+        const acc = acctAll.find((a: any) => a.id === accId);
         const nb = String(acc?.normal_balance || '').toLowerCase();
         const val = nb === 'credit' ? Number(row.credit || 0) - Number(row.debit || 0) : Number(row.debit || 0) - Number(row.credit || 0);
-        actualMap[accId] = (actualMap[accId] || 0) + val;
+        actuals[accId] = (actuals[accId] || 0) + val;
       });
+      setActualMap(actuals);
+
+      const { data: led } = await supabase
+        .from('ledger_entries')
+        .select('account_id, debit, credit, entry_date, company_id')
+        .eq('company_id', profile.company_id)
+        .lte('entry_date', end);
+      const bsActuals: Record<string, number> = {};
+      (led || []).forEach((row: any) => {
+        const accId = String(row.account_id || '');
+        const acc = acctAll.find((a: any) => a.id === accId);
+        const nb = String(acc?.normal_balance || '').toLowerCase();
+        const val = nb === 'credit' ? Number(row.credit || 0) - Number(row.debit || 0) : Number(row.debit || 0) - Number(row.credit || 0);
+        bsActuals[accId] = (bsActuals[accId] || 0) + val;
+      });
+      setBsActualMap(bsActuals);
+
+      try {
+        const { data: cfData } = await supabase.rpc('generate_cash_flow', { _company_id: profile.company_id, _period_start: start, _period_end: end });
+        if (cfData && cfData.length > 0) {
+          const cf = cfData[0];
+          setCfActual({
+            operating: Number(cf.operating_activities || 0),
+            investing: Number(cf.investing_activities || 0),
+            financing: Number(cf.financing_activities || 0),
+            net: Number(cf.net_cash_flow || 0),
+            opening: Number(cf.opening_cash || 0),
+            closing: Number(cf.closing_cash || 0),
+          });
+        } else {
+          setCfActual({ operating: 0, investing: 0, financing: 0, net: 0, opening: 0, closing: 0 });
+        }
+      } catch {}
       const budgetsWithActuals = (data || []).map((budget: any) => {
-        const actualAmount = actualMap[String(budget.account_id || '')] || 0;
+        const actualAmount = actuals[String(budget.account_id || '')] || 0;
         const variance = Number(budget.budgeted_amount || 0) - actualAmount;
         return { ...budget, actual_amount: actualAmount, variance } as Budget;
       });
@@ -299,6 +343,91 @@ export const BudgetManagement = () => {
     return `R ${value.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
+  const budgetLookup = Object.fromEntries(budgets.map(b => [String(b.account_id || b.category), Number(b.budgeted_amount || 0)]));
+
+  const upsertBudgetAmount = async (opts: { accountId?: string; category?: string; amount: number }) => {
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', user?.id)
+        .maybeSingle();
+      if (!profile?.company_id) return;
+      const q = supabase.from('budgets')
+        .select('id')
+        .eq('company_id', profile.company_id)
+        .eq('budget_year', parseInt(selectedYear))
+        .eq('budget_month', parseInt(selectedMonth));
+      if (opts.accountId) q.eq('account_id', opts.accountId); else q.is('account_id', null).eq('category', opts.category || '');
+      const { data: existing } = await q;
+      if ((existing || []).length > 0) {
+        const id = (existing || [])[0].id as string;
+        await supabase.from('budgets').update({ budgeted_amount: opts.amount }).eq('id', id);
+      } else {
+        await supabase.from('budgets').insert({
+          company_id: profile.company_id,
+          user_id: user!.id,
+          budget_name: opts.accountId ? (accounts.find(a => a.id === opts.accountId)?.account_name || '') : (opts.category || ''),
+          budget_year: parseInt(selectedYear),
+          budget_month: parseInt(selectedMonth),
+          account_id: opts.accountId || null,
+          category: opts.accountId ? String(opts.accountId) : String(opts.category || ''),
+          budgeted_amount: opts.amount,
+          actual_amount: 0,
+          variance: opts.amount,
+          status: 'active',
+          notes: null,
+        } as any);
+      }
+      loadBudgets();
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    }
+  };
+
+  const openBudgetEntry = () => {
+    const initial: Record<string, number> = {};
+    if (activeBudget === 'pl') {
+      accounts
+        .filter(a => ['income','revenue','expense'].includes(String(a.account_type).toLowerCase()))
+        .forEach(a => { initial[a.id] = Number(budgetLookup[a.id] || 0); });
+    } else if (activeBudget === 'bs') {
+      accounts
+        .filter(a => ['asset','liability','equity'].includes(String(a.account_type).toLowerCase()))
+        .forEach(a => { initial[a.id] = Number(budgetLookup[a.id] || 0); });
+    } else {
+      ['operating','investing','financing','net'].forEach(k => {
+        const key = `cashflow_${k}`;
+        initial[key] = Number(budgetLookup[key] || 0);
+      });
+    }
+    setEntryValues(initial);
+    setEntryOpen(true);
+  };
+
+  const submitBudgetEntries = async () => {
+    try {
+      setSubmitting(true);
+      const keys = Object.keys(entryValues);
+      for (const key of keys) {
+        const amt = Number(entryValues[key] || 0);
+        if (!isFinite(amt)) continue;
+        if (key.startsWith('cashflow_')) {
+          await upsertBudgetAmount({ category: key, amount: amt });
+        } else {
+          await upsertBudgetAmount({ accountId: key, amount: amt });
+        }
+      }
+      await loadBudgets();
+      setEntryOpen(false);
+      toast({ title: 'Success', description: 'Budget submitted' });
+    } catch (e: any) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -306,12 +435,6 @@ export const BudgetManagement = () => {
           <h1 className="text-3xl font-bold">Budget Management</h1>
           <p className="text-muted-foreground mt-1">Track and manage your budgets vs actual spending</p>
         </div>
-        {canEdit && (
-          <Button className="bg-gradient-primary" onClick={() => openDialog()}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create Budget
-          </Button>
-        )}
       </div>
 
       {/* Period Selector */}
@@ -412,89 +535,551 @@ export const BudgetManagement = () => {
         </Card>
       </div>
 
-      {/* Budgets Table */}
+      {/* Budget Structures */}
       <Card>
         <CardHeader>
-          <CardTitle>
-            Budgets for {months[parseInt(selectedMonth) - 1]} {selectedYear}
-          </CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Budget Structure</CardTitle>
+            <div className="flex gap-2">
+              <Button variant={activeBudget==='pl'?'default':'outline'} size="sm" onClick={() => setActiveBudget('pl')}>Income Statement</Button>
+              <Button variant={activeBudget==='bs'?'default':'outline'} size="sm" onClick={() => setActiveBudget('bs')}>Balance Sheet</Button>
+              <Button variant={activeBudget==='cf'?'default':'outline'} size="sm" onClick={() => setActiveBudget('cf')}>Cash Flow</Button>
+              <Button variant="outline" size="sm" onClick={() => setActionsOpen(true)}>Actions</Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
-          {loading ? (
-            <div className="text-center py-8">Loading...</div>
-          ) : budgets.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No budgets for this period. Click "Create Budget" to add one.
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Account</TableHead>
-                  <TableHead className="text-right">Budgeted</TableHead>
-                  <TableHead className="text-right">Actual</TableHead>
-                  <TableHead className="text-right">Variance</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Progress</TableHead>
-                  {canEdit && <TableHead>Actions</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {budgets.map((budget) => {
-                  const percentage = budget.budgeted_amount > 0 
-                    ? (budget.actual_amount / budget.budgeted_amount) * 100 
-                    : 0;
-                  const isOverBudget = percentage > 100;
-
-                  return (
-                    <TableRow key={budget.id}>
-                      <TableCell className="font-medium">{accounts.find(a => a.id === String(budget.account_id || ''))?.account_name || budget.budget_name}</TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatCurrency(budget.budgeted_amount)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono">
-                        {formatCurrency(budget.actual_amount)}
-                      </TableCell>
-                      <TableCell className={`text-right font-mono ${
-                        budget.variance >= 0 ? 'text-primary' : 'text-destructive'
-                      }`}>
-                        {formatCurrency(Math.abs(budget.variance))}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={
-                          isOverBudget ? 'destructive' :
-                          percentage > 90 ? 'secondary' :
-                          'default'
-                        }>
-                          {isOverBudget ? 'Over' : percentage > 90 ? 'Warning' : 'On Track'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="w-24">
-                          <Progress value={Math.min(percentage, 100)} />
-                          <span className="text-xs text-muted-foreground">{percentage.toFixed(0)}%</span>
-                        </div>
-                      </TableCell>
-                      {canEdit && (
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="outline" onClick={() => openDialog(budget)}>
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => deleteBudget(budget.id)}>
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      )}
+          {activeBudget === 'pl' && (
+            <div className="space-y-6">
+              <div>
+                <div className="font-semibold mb-2">Income</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                      <TableHead>Status</TableHead>
                     </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts
+                      .filter(a => ['income','revenue'].includes(String(a.account_type).toLowerCase()))
+                      .map(acc => {
+                        const budgetAmt = Number(budgetLookup[acc.id] || 0);
+                        const actualAmt = Number(actualMap[acc.id] || 0);
+                        if (Math.abs(budgetAmt) < 0.0001 && Math.abs(actualAmt) < 0.0001) return null;
+                        const variance = budgetAmt - actualAmt;
+                        return (
+                          <TableRow key={acc.id}>
+                            <TableCell className="font-medium">{acc.account_name}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(budgetAmt)}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                            <TableCell>
+                              <Badge variant={variance >= 0 ? 'default' : 'destructive'}>{variance >= 0 ? 'On Track' : 'Not On Track'}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </div>
+              <div>
+                <div className="font-semibold mb-2">Expenses</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts
+                      .filter(a => String(a.account_type).toLowerCase()==='expense')
+                      .map(acc => {
+                        const budgetAmt = Number(budgetLookup[acc.id] || 0);
+                        const actualAmt = Number(actualMap[acc.id] || 0);
+                        if (Math.abs(budgetAmt) < 0.0001 && Math.abs(actualAmt) < 0.0001) return null;
+                        const variance = budgetAmt - actualAmt;
+                        return (
+                          <TableRow key={acc.id}>
+                            <TableCell className="font-medium">{acc.account_name}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(budgetAmt)}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                            <TableCell>
+                              <Badge variant={variance >= 0 ? 'default' : 'destructive'}>{variance >= 0 ? 'On Track' : 'Not On Track'}</Badge>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+          {activeBudget === 'bs' && (
+            <div className="space-y-6">
+              <div>
+                <div className="font-semibold mb-2">Assets</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts.filter(a => String(a.account_type).toLowerCase()==='asset').map(acc => {
+                      const budgetAmt = Number(budgetLookup[acc.id] || 0);
+                      const actualAmt = Number(bsActualMap[acc.id] || 0);
+                      if (Math.abs(budgetAmt) < 0.0001 && Math.abs(actualAmt) < 0.0001) return null;
+                      const variance = budgetAmt - actualAmt;
+                      return (
+                        <TableRow key={acc.id}>
+                          <TableCell className="font-medium">{acc.account_name}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(budgetAmt)}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                          <TableCell>
+                            <Badge variant={variance >= 0 ? 'default' : 'destructive'}>{variance >= 0 ? 'On Track' : 'Not On Track'}</Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              <div>
+                <div className="font-semibold mb-2">Liabilities</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts.filter(a => String(a.account_type).toLowerCase()==='liability').map(acc => {
+                      const budgetAmt = Number(budgetLookup[acc.id] || 0);
+                      const actualAmt = Number(bsActualMap[acc.id] || 0);
+                      if (Math.abs(budgetAmt) < 0.0001 && Math.abs(actualAmt) < 0.0001) return null;
+                      const variance = budgetAmt - actualAmt;
+                      return (
+                        <TableRow key={acc.id}>
+                          <TableCell className="font-medium">{acc.account_name}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(budgetAmt)}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                          <TableCell>
+                            <Badge variant={variance >= 0 ? 'default' : 'destructive'}>{variance >= 0 ? 'On Track' : 'Not On Track'}</Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              <div>
+                <div className="font-semibold mb-2">Equity</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts.filter(a => String(a.account_type).toLowerCase()==='equity').map(acc => {
+                      const budgetAmt = Number(budgetLookup[acc.id] || 0);
+                      const actualAmt = Number(bsActualMap[acc.id] || 0);
+                      if (Math.abs(budgetAmt) < 0.0001 && Math.abs(actualAmt) < 0.0001) return null;
+                      const variance = budgetAmt - actualAmt;
+                      return (
+                        <TableRow key={acc.id}>
+                          <TableCell className="font-medium">{acc.account_name}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(budgetAmt)}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                          <TableCell>
+                            <Badge variant={variance >= 0 ? 'default' : 'destructive'}>{variance >= 0 ? 'On Track' : 'Not On Track'}</Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+          {activeBudget === 'cf' && (
+            <div className="space-y-6">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Actual</TableHead>
+                    <TableHead className="text-right">Budget</TableHead>
+                    <TableHead className="text-right">Variance</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[
+                    { key: 'operating', name: 'Operating Activities' },
+                    { key: 'investing', name: 'Investing Activities' },
+                    { key: 'financing', name: 'Financing Activities' },
+                    { key: 'net', name: 'Net Cash Flow' },
+                  ].map(row => {
+                    const budgetKey = `cashflow_${row.key}`;
+                    const budgetAmt = Number(budgetLookup[budgetKey] || 0);
+                    const actualAmt = Number((cfActual as any)[row.key] || 0);
+                    if (Math.abs(budgetAmt) < 0.0001 && Math.abs(actualAmt) < 0.0001) return null;
+                    const variance = budgetAmt - actualAmt;
+                    return (
+                      <TableRow key={row.key}>
+                        <TableCell className="font-medium">{row.name}</TableCell>
+                        <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                        <TableCell className="text-right font-mono">{formatCurrency(budgetAmt)}</TableCell>
+                        <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                        <TableCell>
+                          <Badge variant={variance >= 0 ? 'default' : 'destructive'}>{variance >= 0 ? 'On Track' : 'Not On Track'}</Badge>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>
+
+      <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
+        <SheetContent className="sm:max-w-[520px]">
+          <div className="space-y-4">
+            <div className="text-lg font-semibold">Quick Actions</div>
+            <div className="text-sm text-muted-foreground">Manage budgets and export statements</div>
+            <div className="grid gap-3">
+              <Button className="w-full" onClick={() => { setActionsOpen(false); openBudgetEntry(); }}>
+                Budget
+              </Button>
+              <Button className="w-full" variant="outline" onClick={() => {
+                const periodLabel = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}`;
+                const lines: { account: string; amount: number; type?: string }[] = [];
+                if (activeBudget === 'pl') {
+                  lines.push({ account: 'INCOME', amount: 0, type: 'header' });
+                  const inc = accounts.filter(a => ['income','revenue'].includes(String(a.account_type).toLowerCase()))
+                    .map(a => ({ a, budget: Number(budgetLookup[a.id]||0), actual: Number(actualMap[a.id]||0) }))
+                    .filter(x => Math.abs(x.budget) > 0.0001 || Math.abs(x.actual) > 0.0001);
+                  let incTotal = 0;
+                  inc.forEach(x => { lines.push({ account: x.a.account_name, amount: x.budget, type: 'income' }); incTotal += x.budget; });
+                  lines.push({ account: 'Total Income (Budget)', amount: incTotal, type: 'subtotal' });
+                  lines.push({ account: '', amount: 0, type: 'spacer' });
+                  lines.push({ account: 'EXPENSES', amount: 0, type: 'header' });
+                  const exp = accounts.filter(a => String(a.account_type).toLowerCase()==='expense')
+                    .map(a => ({ a, budget: Number(budgetLookup[a.id]||0), actual: Number(actualMap[a.id]||0) }))
+                    .filter(x => Math.abs(x.budget) > 0.0001 || Math.abs(x.actual) > 0.0001);
+                  let expTotal = 0;
+                  exp.forEach(x => { lines.push({ account: x.a.account_name, amount: x.budget, type: 'expense' }); expTotal += x.budget; });
+                  lines.push({ account: 'Total Expenses (Budget)', amount: expTotal, type: 'subtotal' });
+                  lines.push({ account: 'Net Profit (Budget)', amount: incTotal - expTotal, type: 'final' });
+                } else if (activeBudget === 'bs') {
+                  lines.push({ account: 'ASSETS', amount: 0, type: 'header' });
+                  const assets = accounts.filter(a => String(a.account_type).toLowerCase()==='asset')
+                    .map(a => ({ a, budget: Number(budgetLookup[a.id]||0), actual: Number(bsActualMap[a.id]||0) }))
+                    .filter(x => Math.abs(x.budget) > 0.0001 || Math.abs(x.actual) > 0.0001);
+                  let assetTotal = 0; assets.forEach(x => { lines.push({ account: x.a.account_name, amount: x.budget, type: 'asset' }); assetTotal += x.budget; });
+                  lines.push({ account: 'Total Assets (Budget)', amount: assetTotal, type: 'subtotal' });
+                  lines.push({ account: '', amount: 0, type: 'spacer' });
+                  lines.push({ account: 'LIABILITIES', amount: 0, type: 'header' });
+                  const liabs = accounts.filter(a => String(a.account_type).toLowerCase()==='liability')
+                    .map(a => ({ a, budget: Number(budgetLookup[a.id]||0), actual: Number(bsActualMap[a.id]||0) }))
+                    .filter(x => Math.abs(x.budget) > 0.0001 || Math.abs(x.actual) > 0.0001);
+                  let liabTotal = 0; liabs.forEach(x => { lines.push({ account: x.a.account_name, amount: x.budget, type: 'liability' }); liabTotal += x.budget; });
+                  lines.push({ account: 'Total Liabilities (Budget)', amount: liabTotal, type: 'subtotal' });
+                  lines.push({ account: '', amount: 0, type: 'spacer' });
+                  lines.push({ account: 'EQUITY', amount: 0, type: 'header' });
+                  const eq = accounts.filter(a => String(a.account_type).toLowerCase()==='equity')
+                    .map(a => ({ a, budget: Number(budgetLookup[a.id]||0), actual: Number(bsActualMap[a.id]||0) }))
+                    .filter(x => Math.abs(x.budget) > 0.0001 || Math.abs(x.actual) > 0.0001);
+                  let eqTotal = 0; eq.forEach(x => { lines.push({ account: x.a.account_name, amount: x.budget, type: 'equity' }); eqTotal += x.budget; });
+                  lines.push({ account: 'Total Equity (Budget)', amount: eqTotal, type: 'subtotal' });
+                  lines.push({ account: 'Total Liabilities & Equity (Budget)', amount: liabTotal + eqTotal, type: 'final' });
+                } else {
+                  const cats = [
+                    { key: 'operating', name: 'Operating Activities' },
+                    { key: 'investing', name: 'Investing Activities' },
+                    { key: 'financing', name: 'Financing Activities' },
+                    { key: 'net', name: 'Net Cash Flow' },
+                  ];
+                  cats.forEach(c => {
+                    const budgetKey = `cashflow_${c.key}`;
+                    const budgetAmt = Number(budgetLookup[budgetKey] || 0);
+                    lines.push({ account: c.name, amount: budgetAmt, type: c.key });
+                  });
+                }
+                exportFinancialReportToPDF(lines, `Budget - ${activeBudget.toUpperCase()}`, periodLabel, `budget_${activeBudget}`);
+                toast({ title: 'Exported', description: 'Budget exported to PDF' });
+                setActionsOpen(false);
+              }}>
+                <Download className="h-4 w-4 mr-2" />
+                Export PDF
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      <Dialog open={entryOpen} onOpenChange={setEntryOpen}>
+        <DialogContent className="sm:max-w-[640px] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Budget Entry</DialogTitle>
+          </DialogHeader>
+          <div className="flex items-center gap-2 mb-4">
+            <Button variant={activeBudget==='pl'?'default':'outline'} size="sm" onClick={() => setActiveBudget('pl')}>Income Statement</Button>
+            <Button variant={activeBudget==='bs'?'default':'outline'} size="sm" onClick={() => setActiveBudget('bs')}>Balance Sheet</Button>
+            <Button variant={activeBudget==='cf'?'default':'outline'} size="sm" onClick={() => setActiveBudget('cf')}>Cash Flow</Button>
+          </div>
+          {activeBudget === 'pl' && (
+            <div className="space-y-6">
+              <div>
+                <div className="font-semibold mb-2">Income</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts
+                      .filter(a => ['income','revenue'].includes(String(a.account_type).toLowerCase()))
+                      .map(acc => {
+                        const actualAmt = Number(actualMap[acc.id] || 0);
+                        const budgetAmt = Number(entryValues[acc.id] || 0);
+                        const variance = budgetAmt - actualAmt;
+                        return (
+                          <TableRow key={acc.id}>
+                            <TableCell className="font-medium">{acc.account_name}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                            <TableCell className="text-right">
+                              <Input className="text-right" value={String(budgetAmt)} onChange={(e) => {
+                                const v = parseFloat(e.target.value || '0');
+                                setEntryValues(prev => ({ ...prev, [acc.id]: isNaN(v)?0:v }));
+                              }} />
+                            </TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </div>
+              <div>
+                <div className="font-semibold mb-2">Expenses</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts
+                      .filter(a => String(a.account_type).toLowerCase()==='expense')
+                      .map(acc => {
+                        const actualAmt = Number(actualMap[acc.id] || 0);
+                        const budgetAmt = Number(entryValues[acc.id] || 0);
+                        const variance = budgetAmt - actualAmt;
+                        return (
+                          <TableRow key={acc.id}>
+                            <TableCell className="font-medium">{acc.account_name}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                            <TableCell className="text-right">
+                              <Input className="text-right" value={String(budgetAmt)} onChange={(e) => {
+                                const v = parseFloat(e.target.value || '0');
+                                setEntryValues(prev => ({ ...prev, [acc.id]: isNaN(v)?0:v }));
+                              }} />
+                            </TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+          {activeBudget === 'bs' && (
+            <div className="space-y-6">
+              <div>
+                <div className="font-semibold mb-2">Assets</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts.filter(a => String(a.account_type).toLowerCase()==='asset').map(acc => {
+                      const actualAmt = Number(bsActualMap[acc.id] || 0);
+                      const budgetAmt = Number(entryValues[acc.id] || 0);
+                      const variance = budgetAmt - actualAmt;
+                      return (
+                        <TableRow key={acc.id}>
+                          <TableCell className="font-medium">{acc.account_name}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                          <TableCell className="text-right">
+                            <Input className="text-right" value={String(budgetAmt)} onChange={(e) => {
+                              const v = parseFloat(e.target.value || '0');
+                              setEntryValues(prev => ({ ...prev, [acc.id]: isNaN(v)?0:v }));
+                            }} />
+                          </TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              <div>
+                <div className="font-semibold mb-2">Liabilities</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts.filter(a => String(a.account_type).toLowerCase()==='liability').map(acc => {
+                      const actualAmt = Number(bsActualMap[acc.id] || 0);
+                      const budgetAmt = Number(entryValues[acc.id] || 0);
+                      const variance = budgetAmt - actualAmt;
+                      return (
+                        <TableRow key={acc.id}>
+                          <TableCell className="font-medium">{acc.account_name}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                          <TableCell className="text-right">
+                            <Input className="text-right" value={String(budgetAmt)} onChange={(e) => {
+                              const v = parseFloat(e.target.value || '0');
+                              setEntryValues(prev => ({ ...prev, [acc.id]: isNaN(v)?0:v }));
+                            }} />
+                          </TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              <div>
+                <div className="font-semibold mb-2">Equity</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Account</TableHead>
+                      <TableHead className="text-right">Actual</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Variance</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {accounts.filter(a => String(a.account_type).toLowerCase()==='equity').map(acc => {
+                      const actualAmt = Number(bsActualMap[acc.id] || 0);
+                      const budgetAmt = Number(entryValues[acc.id] || 0);
+                      const variance = budgetAmt - actualAmt;
+                      return (
+                        <TableRow key={acc.id}>
+                          <TableCell className="font-medium">{acc.account_name}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                          <TableCell className="text-right">
+                            <Input className="text-right" value={String(budgetAmt)} onChange={(e) => {
+                              const v = parseFloat(e.target.value || '0');
+                              setEntryValues(prev => ({ ...prev, [acc.id]: isNaN(v)?0:v }));
+                            }} />
+                          </TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+          {activeBudget === 'cf' && (
+            <div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Category</TableHead>
+                    <TableHead className="text-right">Actual</TableHead>
+                    <TableHead className="text-right">Budget</TableHead>
+                    <TableHead className="text-right">Variance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {[
+                    { key: 'operating', name: 'Operating Activities' },
+                    { key: 'investing', name: 'Investing Activities' },
+                    { key: 'financing', name: 'Financing Activities' },
+                    { key: 'net', name: 'Net Cash Flow' },
+                  ].map(row => {
+                    const budgetKey = `cashflow_${row.key}`;
+                    const actualAmt = Number((cfActual as any)[row.key] || 0);
+                    const budgetAmt = Number(entryValues[budgetKey] || 0);
+                    const variance = budgetAmt - actualAmt;
+                    return (
+                      <TableRow key={row.key}>
+                        <TableCell className="font-medium">{row.name}</TableCell>
+                        <TableCell className="text-right font-mono">{formatCurrency(actualAmt)}</TableCell>
+                        <TableCell className="text-right">
+                          <Input className="text-right" value={String(budgetAmt)} onChange={(e) => {
+                            const v = parseFloat(e.target.value || '0');
+                            setEntryValues(prev => ({ ...prev, [budgetKey]: isNaN(v)?0:v }));
+                          }} />
+                        </TableCell>
+                        <TableCell className="text-right font-mono">{formatCurrency(Math.abs(variance))}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          <DialogFooter className="sticky bottom-0 bg-background p-3 border-t">
+            <Button type="button" variant="outline" onClick={() => setEntryOpen(false)}>Cancel</Button>
+            <Button onClick={submitBudgetEntries} disabled={submitting}>{submitting ? 'Submitting...' : 'Submit Budget'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Old Budgets Table removed per request */}
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Download, Trash2, Package, Search, Info, Menu } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -384,6 +385,23 @@ export default function FixedAssetsPage() {
 
   const canEdit = isAdmin || isAccountant;
 
+  const exportAssets = () => {
+    const rows = assets.map((a) => ({
+      description: a.description,
+      purchase_date: a.purchase_date,
+      cost: a.cost,
+      useful_life_years: a.useful_life_years,
+      accumulated_depreciation: a.accumulated_depreciation,
+      status: a.status,
+      disposal_date: a.disposal_date || "",
+      net_book_value: a.cost - a.accumulated_depreciation,
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "FixedAssets");
+    XLSX.writeFile(wb, "fixed_assets.xlsx");
+  };
+
   return (
     <>
       <SEO title="Fixed Assets Register | Rigel Business" description="Manage fixed assets and depreciation" />
@@ -395,14 +413,6 @@ export default function FixedAssetsPage() {
               <p className="text-muted-foreground mt-1">Track and manage company fixed assets</p>
             </div>
             <div className="flex gap-3">
-              <Button variant="outline" disabled={assets.length === 0}>
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </Button>
-              <Button variant="outline" onClick={() => setTutorialOpen(true)}>
-                <Info className="h-4 w-4 mr-2" />
-                Help & Tutorial
-              </Button>
               <Button className="bg-gradient-primary" onClick={() => setActionsOpen(true)}>
                 <Menu className="h-4 w-4 mr-2" />
                 Actions
@@ -565,6 +575,14 @@ export default function FixedAssetsPage() {
                   <Button className="w-full" variant="secondary" onClick={() => { setActionsOpen(false); setDeprDialogOpen(true); }}>
                     <Trash2 className="h-4 w-4 mr-2 rotate-180" />
                     Depreciation
+                  </Button>
+                  <Button className="w-full" variant="outline" disabled={assets.length===0} onClick={() => { exportAssets(); setActionsOpen(false); }}>
+                    <Download className="h-4 w-4 mr-2" />
+                    Export Register
+                  </Button>
+                  <Button className="w-full" variant="outline" onClick={() => { setActionsOpen(false); setTutorialOpen(true); }}>
+                    <Info className="h-4 w-4 mr-2" />
+                    Help & Tutorial
                   </Button>
                 </div>
               </div>

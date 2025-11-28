@@ -1312,6 +1312,44 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       }
 
       const amount = parseFloat(form.amount);
+      if (form.element === 'loan_interest' && form.loanId) {
+        const monthStart = new Date((form.date || new Date().toISOString().slice(0,10)).slice(0,7) + '-01');
+        const nextMonth = new Date(monthStart);
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        const monthStartStr = monthStart.toISOString().slice(0,10);
+        const nextMonthStr = nextMonth.toISOString().slice(0,10);
+        const { data: interestDup } = await supabase
+          .from('loan_payments')
+          .select('id')
+          .eq('loan_id', form.loanId)
+          .gte('payment_date', monthStartStr)
+          .lt('payment_date', nextMonthStr)
+          .gt('interest_component', 0);
+        if ((interestDup || []).length > 0) {
+          toast({ title: 'Duplicate', description: 'Interest installment for this month is already recorded', variant: 'destructive' });
+          setLoading(false);
+          return;
+        }
+      }
+      if (form.element === 'loan_repayment' && form.loanId) {
+        const monthStart = new Date((form.date || new Date().toISOString().slice(0,10)).slice(0,7) + '-01');
+        const nextMonth = new Date(monthStart);
+        nextMonth.setMonth(nextMonth.getMonth() + 1);
+        const monthStartStr = monthStart.toISOString().slice(0,10);
+        const nextMonthStr = nextMonth.toISOString().slice(0,10);
+        const { data: principalDup } = await supabase
+          .from('loan_payments')
+          .select('id')
+          .eq('loan_id', form.loanId)
+          .gte('payment_date', monthStartStr)
+          .lt('payment_date', nextMonthStr)
+          .gt('principal_component', 0);
+        if ((principalDup || []).length > 0) {
+          toast({ title: 'Duplicate', description: 'Principal installment for this month is already recorded', variant: 'destructive' });
+          setLoading(false);
+          return;
+        }
+      }
       const isLoan = !!(form.element && form.element.startsWith('loan_'));
       const vatRate = (isLoan || form.element === 'depreciation' || form.element === 'asset_disposal') ? 0 : parseFloat(form.vatRate);
       const isPurchase = form.element === 'expense' || form.element === 'product_purchase';
@@ -1974,25 +2012,40 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         const termMonths = form.loanTerm && form.loanTerm.trim() !== '' ? parseInt(form.loanTerm) : 12;
         const monthlyRepayment = calculateMonthlyRepayment(amount, interestRateDecimal / 12, termMonths);
         if (!form.loanId) {
+          const refVal = (form.reference && form.reference.trim() !== '')
+            ? form.reference.trim()
+            : (() => {
+                const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
+                let rand = '';
+                try {
+                  const arr = new Uint8Array(4);
+                  (window.crypto || (globalThis as any).crypto)?.getRandomValues(arr);
+                  rand = Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('').slice(0,6);
+                } catch {
+                  rand = Math.random().toString(36).slice(2,8);
+                }
+                return `LN-${today}-${rand}`;
+              })();
+          const payload = {
+            company_id: companyId,
+            reference: refVal,
+            loan_type: form.loanTermType,
+            principal: amount,
+            interest_rate: interestRateDecimal,
+            start_date: form.date,
+            term_months: termMonths,
+            monthly_repayment: monthlyRepayment,
+            status: 'active',
+            outstanding_balance: amount
+          };
           const { error: loanError } = await supabase
-            .from("loans")
-            .insert({
-              company_id: companyId,
-              reference: form.reference || `LOAN-${Date.now()}`,
-              loan_type: form.loanTermType,
-              principal: amount,
-              interest_rate: interestRateDecimal,
-              start_date: form.date,
-              term_months: termMonths,
-              monthly_repayment: monthlyRepayment,
-              status: 'active',
-              outstanding_balance: amount
-            });
+            .from('loans')
+            .upsert(payload as any, { onConflict: 'company_id,reference' });
           if (loanError) {
-            console.error("Loan creation error:", loanError);
-            toast({ title: "Loan Creation Failed", description: "Transaction was posted but loan record could not be created: " + loanError.message, variant: "destructive" });
+            console.error('Loan creation error:', loanError);
+            toast({ title: 'Loan Creation Failed', description: 'Transaction was posted but loan record could not be created: ' + loanError.message, variant: 'destructive' });
           } else {
-            toast({ title: "Loan Created Successfully", description: "New loan record created with monthly repayment of R " + monthlyRepayment.toFixed(2) });
+            toast({ title: 'Loan Created/Updated', description: 'Loan record saved with monthly repayment of R ' + monthlyRepayment.toFixed(2) });
           }
         } else {
           // Loan was already created via Loans module; optionally update monthly_repayment if empty

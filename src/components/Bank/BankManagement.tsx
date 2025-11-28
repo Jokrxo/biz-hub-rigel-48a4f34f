@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Plus, Building2, TrendingUp, TrendingDown } from "lucide-react";
+import { Plus, Building2, TrendingUp, TrendingDown, Menu } from "lucide-react";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { CSVImport } from "./CSVImport";
 import { ConnectBank } from "./ConnectBank";
 import { BankReconciliation } from "./BankReconciliation";
@@ -46,6 +47,7 @@ export const BankManagement = () => {
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [form, setForm] = useState({
     account_name: "",
     account_number: "",
@@ -305,8 +307,10 @@ export const BankManagement = () => {
           <p className="text-muted-foreground mt-1">Manage bank accounts, import statements, and reconcile transactions</p>
         </div>
         <div className="flex gap-3">
-          <CSVImport bankAccounts={banks} onImportComplete={loadBanks} />
-          <ConnectBank />
+          <Button className="bg-gradient-primary" onClick={() => setActionsOpen(true)}>
+            <Menu className="h-4 w-4 mr-2" />
+            Actions
+          </Button>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button className="bg-gradient-primary hover:opacity-90">
@@ -385,6 +389,27 @@ export const BankManagement = () => {
           </Dialog>
         </div>
       </div>
+
+      <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
+        <SheetContent className="sm:max-w-[520px]">
+          <div className="space-y-4">
+            <div className="text-lg font-semibold">Quick Actions</div>
+            <div className="text-sm text-muted-foreground">Manage bank accounts and statements</div>
+            <div className="grid gap-3">
+              <Button className="w-full" onClick={() => { setActionsOpen(false); setOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Bank Account
+              </Button>
+              <div className="w-full">
+                <CSVImport bankAccounts={banks} onImportComplete={loadBanks} />
+              </div>
+              <div className="w-full">
+                <ConnectBank />
+              </div>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="card-professional">

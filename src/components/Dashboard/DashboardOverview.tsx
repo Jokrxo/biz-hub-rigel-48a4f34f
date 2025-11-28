@@ -55,6 +55,8 @@ export const DashboardOverview = () => {
   const [apAging, setApAging] = useState<any[]>([]);
   const [netProfitTrend, setNetProfitTrend] = useState<any[]>([]);
   const [plTrend, setPlTrend] = useState<any[]>([]);
+  const [budgetUtilization, setBudgetUtilization] = useState<number>(0);
+  const [budgetOnTrack, setBudgetOnTrack] = useState<boolean>(true);
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean; hasProducts: boolean; hasCustomers: boolean; hasSuppliers: boolean; hasEmployees: boolean }>({ hasCoa: true, hasBank: true, hasProducts: true, hasCustomers: true, hasSuppliers: true, hasEmployees: true });
   const [userName, setUserName] = useState<string>("");
   const [companyId, setCompanyId] = useState<string>("");
@@ -79,6 +81,7 @@ export const DashboardOverview = () => {
       trialBalance: true,
       arOverview: true,
       apOverview: true,
+      budgetGauge: true,
     };
     const saved = localStorage.getItem('dashboardWidgets');
     const parsed = saved ? JSON.parse(saved) : {};
@@ -342,6 +345,86 @@ export const DashboardOverview = () => {
         operatingExpenses: Number(operatingExpensesTB.toFixed(2)),
         bankBalance
       };
+
+      try {
+        const { data: budgetRows } = await supabase
+          .from('budgets')
+          .select('account_id, category, budgeted_amount, status')
+          .eq('company_id', profile.company_id)
+          .eq('budget_year', selectedYear)
+          .eq('budget_month', selectedMonth)
+          .in('status', ['active','approved']);
+        const filteredBudgets = (budgetRows || []).filter((r: any) => ['active','approved'].includes(String(r.status || '').toLowerCase()));
+        const accIds = Array.from(new Set((filteredBudgets || []).map((r: any) => String(r.account_id || '')).filter(Boolean)));
+        let actualMap: Record<string, number> = {};
+        if (accIds.length > 0) {
+          const { data: te } = await supabase
+            .from('transaction_entries')
+            .select(`account_id, debit, credit, status, transactions!inner (transaction_date, company_id, status)`) 
+            .eq('transactions.company_id', profile.company_id)
+            .eq('transactions.status', 'posted')
+            .gte('transactions.transaction_date', startDate.toISOString())
+            .lte('transactions.transaction_date', endDate.toISOString())
+            .eq('status', 'approved');
+          const { data: accounts } = await supabase
+            .from('chart_of_accounts')
+            .select('id, account_type')
+            .eq('company_id', profile.company_id)
+            .in('id', accIds);
+          const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
+          actualMap = {};
+          (te || []).forEach((e: any) => {
+            const id = String(e.account_id || '');
+            if (!accIds.includes(id)) return;
+            const type = (typeById.get(id) || '').toLowerCase();
+            const debit = Number(e.debit || 0);
+            const credit = Number(e.credit || 0);
+            if (type.includes('income') || type.includes('revenue')) {
+              actualMap[id] = (actualMap[id] || 0) + Math.abs(credit - debit);
+            } else if (type.includes('expense')) {
+              actualMap[id] = (actualMap[id] || 0) + Math.abs(debit - credit);
+            } else {
+              const naturalDebit = type === 'asset' || type === 'expense';
+              const bal = naturalDebit ? (debit - credit) : (credit - debit);
+              actualMap[id] = (actualMap[id] || 0) + bal;
+            }
+          });
+        }
+        const cfBudgets = (filteredBudgets || []).filter((r: any) => String(r.category || '').startsWith('cashflow_'));
+        let cfActual = { operating: 0, investing: 0, financing: 0, net: 0 } as any;
+        if (cfBudgets.length > 0) {
+          const { data: cf } = await supabase.rpc('generate_cash_flow', {
+            p_company_id: profile.company_id,
+            p_start_date: startDate.toISOString(),
+            p_end_date: endDate.toISOString()
+          });
+          if (cf && cf[0]) {
+            cfActual.operating = Number(cf[0].operating || 0);
+            cfActual.investing = Number(cf[0].investing || 0);
+            cfActual.financing = Number(cf[0].financing || 0);
+            cfActual.net = Number(cf[0].net || 0);
+          }
+        }
+        let onTrackCount = 0;
+        let totalCount = 0;
+        (filteredBudgets || []).forEach((r: any) => {
+          const budgetAmt = Number(r.budgeted_amount || 0);
+          let actualAmt = 0;
+          if (r.account_id) {
+            actualAmt = Number(actualMap[String(r.account_id)] || 0);
+          } else if (String(r.category || '').startsWith('cashflow_')) {
+            const key = String(r.category || '').replace('cashflow_', '');
+            actualAmt = Number((cfActual as any)[key] || 0);
+          }
+          const variance = budgetAmt - actualAmt;
+          const isOnTrack = variance >= 0;
+          totalCount += 1;
+          if (isOnTrack) onTrackCount += 1;
+        });
+        const pctOnTrack = totalCount > 0 ? Math.round((onTrackCount / totalCount) * 100) : 0;
+        setBudgetUtilization(pctOnTrack);
+        setBudgetOnTrack(pctOnTrack === 100);
+      } catch {}
 
       if ((newMetrics.totalIncome === 0 || newMetrics.totalExpenses === 0) || (newMetrics.totalAssets === 0 && newMetrics.totalLiabilities === 0 && newMetrics.totalEquity === 0)) {
         try {
@@ -1036,6 +1119,21 @@ export const DashboardOverview = () => {
 
       {/* Charts Section */}
       <div className="grid gap-6 lg:grid-cols-2">
+        {widgets.budgetGauge && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5 text-primary" />
+                Budget Gauge
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-center py-6">
+                <DashboardBudgetGauge percentage={budgetUtilization} onTrack={budgetOnTrack} />
+              </div>
+            </CardContent>
+          </Card>
+        )}
         {widgets.incomeVsExpense && (
           <Card className="card-professional">
             <CardHeader className="flex items-center justify-between">
@@ -1429,5 +1527,39 @@ export const DashboardOverview = () => {
           )}
       </div>
     </div>
+  );
+};
+
+const DashboardBudgetGauge = ({ percentage, onTrack }: { percentage: number; onTrack: boolean }) => {
+  const size = 220;
+  const cx = size / 2;
+  const cy = size / 2 + 20;
+  const r = size / 2 - 20;
+  const start = -Math.PI / 2;
+  const end = Math.PI / 2;
+  const pct = Math.max(0, Math.min(100, percentage));
+  const ang = start + (pct / 100) * (end - start);
+  const nx = cx + r * Math.cos(ang);
+  const ny = cy + r * Math.sin(ang);
+  const color = onTrack ? '#22c55e' : '#ef4444';
+  const ticks = Array.from({ length: 11 }).map((_, i) => {
+    const a = start + (i / 10) * (end - start);
+    const x1 = cx + (r - 10) * Math.cos(a);
+    const y1 = cy + (r - 10) * Math.sin(a);
+    const x2 = cx + r * Math.cos(a);
+    const y2 = cy + r * Math.sin(a);
+    return { x1, y1, x2, y2, i };
+  });
+  return (
+    <svg width={size} height={size / 2 + 40} viewBox={`0 0 ${size} ${size / 2 + 40}`}>
+      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="#e5e7eb" strokeWidth={12} />
+      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke={color} strokeWidth={12} strokeLinecap="round" />
+      {ticks.map((t) => (
+        <line key={t.i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke="#9ca3af" strokeWidth={t.i % 5 === 0 ? 3 : 1.5} />
+      ))}
+      <circle cx={cx} cy={cy} r={6} fill="#374151" />
+      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={color} strokeWidth={4} />
+      <text x={cx} y={cy - 20} textAnchor="middle" fontSize="18" fill={color}>{`${pct.toFixed(0)}%`}</text>
+    </svg>
   );
 };
