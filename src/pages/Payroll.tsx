@@ -9,8 +9,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Drawer, DrawerTrigger, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription, DrawerFooter, DrawerClose } from "@/components/ui/drawer";
 import { Textarea } from "@/components/ui/textarea";
-import { useEffect, useMemo, useState } from "react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
+import React, { useEffect, useMemo, useState, useCallback, FormEvent } from "react";
 import { Users, FileText, Calculator, Plus, Check, BarChart, Info, ArrowRight, Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -19,11 +22,140 @@ import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 import { buildPayslipPDF, type PayslipForPDF } from "@/lib/payslip-export";
 import { addLogoToPDF, fetchLogoDataUrl } from "@/lib/invoice-export";
+import { getCompanyTaxSettings } from "@/lib/payroll/services/taxService";
+import * as XLSX from "xlsx";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 type Employee = { id: string; first_name: string; last_name: string; email: string | null; id_number: string | null; start_date: string | null; salary_type: string | null; bank_name: string | null; bank_branch_code: string | null; bank_account_number: string | null; bank_account_type: string | null; active: boolean };
 type PayItem = { id: string; code: string; name: string; type: "earning" | "deduction" | "employer"; taxable: boolean };
 type PayRun = { id: string; company_id: string; period_start: string; period_end: string; status: string };
 type PayRunLine = { id: string; pay_run_id: string; employee_id: string; gross: number; net: number; paye: number; uif_emp: number; uif_er: number; sdl_er: number };
+
+async function getEmployees(companyId: string): Promise<Employee[]> {
+  const { data } = await supabase
+    .from("employees" as any)
+    .select("*")
+    .eq("company_id", companyId)
+    .order("first_name", { ascending: true });
+  return (data || []) as any;
+}
+
+async function postEarnings(payload: { pay_run_id: string; employee_id: string; type: string; hours?: number | null; rate?: number | null; amount?: number | null; }): Promise<void> {
+  const { data: line } = await supabase
+    .from("pay_run_lines" as any)
+    .select("*")
+    .eq("pay_run_id", payload.pay_run_id)
+    .eq("employee_id", payload.employee_id)
+    .maybeSingle();
+  const calc = (payload.amount ?? ((payload.hours || 0) * (payload.rate || 0))) || 0;
+  const details = (line as any)?.details || { earnings: [], deductions: [], employer: [] };
+  details.earnings = Array.isArray(details.earnings) ? details.earnings : [];
+  details.earnings.push({ name: payload.type, amount: calc });
+  await supabase
+    .from("pay_run_lines" as any)
+    .update({ details } as any)
+    .eq("id", (line as any)?.id);
+}
+
+async function deleteEarnings(pay_run_id: string, employee_id: string, type: string): Promise<void> {
+  const { data: line } = await supabase
+    .from("pay_run_lines" as any)
+    .select("*")
+    .eq("pay_run_id", pay_run_id)
+    .eq("employee_id", employee_id)
+    .maybeSingle();
+  if (!line) return;
+  const details = (line as any)?.details || { earnings: [], deductions: [], employer: [] };
+  details.earnings = (Array.isArray(details.earnings) ? details.earnings : []).filter((e: any) => String(e?.name || "") !== String(type));
+  await supabase
+    .from("pay_run_lines" as any)
+    .update({ details } as any)
+    .eq("id", (line as any)?.id);
+}
+
+async function postDeductions(payload: { pay_run_id: string; employee_id: string; type: string; amount: number; }): Promise<void> {
+  const { data: line } = await supabase
+    .from("pay_run_lines" as any)
+    .select("*")
+    .eq("pay_run_id", payload.pay_run_id)
+    .eq("employee_id", payload.employee_id)
+    .maybeSingle();
+  const details = (line as any)?.details || { earnings: [], deductions: [], employer: [] };
+  details.deductions = Array.isArray(details.deductions) ? details.deductions : [];
+  details.deductions.push({ name: payload.type, amount: payload.amount || 0 });
+  await supabase
+    .from("pay_run_lines" as any)
+    .update({ details } as any)
+    .eq("id", (line as any)?.id);
+}
+
+async function deleteDeductions(pay_run_id: string, employee_id: string, type: string): Promise<void> {
+  const { data: line } = await supabase
+    .from("pay_run_lines" as any)
+    .select("*")
+    .eq("pay_run_id", pay_run_id)
+    .eq("employee_id", employee_id)
+    .maybeSingle();
+  if (!line) return;
+  const details = (line as any)?.details || { earnings: [], deductions: [], employer: [] };
+  details.deductions = (Array.isArray(details.deductions) ? details.deductions : []).filter((d: any) => String(d?.name || "") !== String(type));
+  await supabase
+    .from("pay_run_lines" as any)
+    .update({ details } as any)
+    .eq("id", (line as any)?.id);
+}
+
+async function postPayrollProcess(args: { company_id: string; employee_id: string; period_start: string; period_end: string; pay_run_id: string; }): Promise<{ gross: number; net: number; }> {
+  const { data: line } = await supabase
+    .from("pay_run_lines" as any)
+    .select("gross, net")
+    .eq("pay_run_id", args.pay_run_id)
+    .eq("employee_id", args.employee_id)
+    .maybeSingle();
+  const gross = Number((line as any)?.gross || 0);
+  const net = Number((line as any)?.net || 0);
+  return { gross, net };
+}
+
+async function loadLines(pay_run_id: string): Promise<any[]> {
+  const { data } = await supabase
+    .from("pay_run_lines" as any)
+    .select("*")
+    .eq("pay_run_id", pay_run_id);
+  return (data || []) as any[];
+}
+
+async function postPayrollPayslip(runId: string, employeeId: string): Promise<any> {
+  const { data } = await supabase
+    .from("pay_run_lines" as any)
+    .select("*")
+    .eq("pay_run_id", runId)
+    .eq("employee_id", employeeId)
+    .maybeSingle();
+  return data || {};
+}
+
+async function getReportsEmp201(companyId: string, start: string, end: string): Promise<any> {
+  const { data } = await supabase
+    .from("pay_run_lines" as any)
+    .select("paye,uif_emp,uif_er,sdl_er")
+    .in("pay_run_id", (await supabase.from("pay_runs" as any).select("id").eq("company_id", companyId).gte("period_start", start).lte("period_end", end)).data?.map((r: any) => r.id) || []);
+  const totals = (data || []).reduce((s: any, r: any) => ({ paye: s.paye + (r.paye || 0), uif_emp: s.uif_emp + (r.uif_emp || 0), uif_er: s.uif_er + (r.uif_er || 0), sdl_er: s.sdl_er + (r.sdl_er || 0) }), { paye: 0, uif_emp: 0, uif_er: 0, sdl_er: 0 });
+  return totals;
+}
+
+async function getReportsEmp501(companyId: string, start: string, end: string): Promise<any> {
+  return await getReportsEmp201(companyId, start, end);
+}
+
+async function getReportsIrp5(companyId: string, employeeId: string, start: string, end: string): Promise<any> {
+  const { data } = await supabase
+    .from("pay_run_lines" as any)
+    .select("gross,net,paye,uif_emp,uif_er,sdl_er")
+    .in("pay_run_id", (await supabase.from("pay_runs" as any).select("id").eq("company_id", companyId).gte("period_start", start).lte("period_end", end)).data?.map((r: any) => r.id) || [])
+    .eq("employee_id", employeeId);
+  return { items: data || [] };
+}
 
 export default function Payroll() {
   const [tab, setTab] = useState("dashboard");
@@ -80,8 +212,10 @@ export default function Payroll() {
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="run">Run Payroll</TabsTrigger>
             <TabsTrigger value="employees">Employees</TabsTrigger>
+            <TabsTrigger value="payroll">Payroll</TabsTrigger>
             <TabsTrigger value="items">Pay Items</TabsTrigger>
             <TabsTrigger value="history">Payroll History</TabsTrigger>
+            <TabsTrigger value="tax">Payroll Tax Settings</TabsTrigger>
           </TabsList>
 
             <TabsContent value="dashboard">
@@ -96,12 +230,20 @@ export default function Payroll() {
               <EmployeesSimple companyId={companyId} canEdit={canEdit} />
             </TabsContent>
 
+            <TabsContent value="payroll">
+              <PayrollPostingModule companyId={companyId} />
+            </TabsContent>
+
             <TabsContent value="items">
               <PayItemsSimple companyId={companyId} canEdit={canEdit} />
             </TabsContent>
 
             <TabsContent value="history">
               <PayrollHistory companyId={companyId} />
+            </TabsContent>
+
+            <TabsContent value="tax">
+              <PayrollTaxSettings companyId={companyId} canEdit={canEdit} />
             </TabsContent>
           </Tabs>
 
@@ -150,6 +292,163 @@ export default function Payroll() {
         </div>
       </DashboardLayout>
     </>
+  );
+}
+
+function PayrollTaxSettings({ companyId, canEdit }: { companyId: string; canEdit: boolean }) {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const [cfg, setCfg] = useState<{ brackets: { up_to: number | null; rate: number; base: number }[]; rebates: { primary: number }; uif_cap: number; sdl_rate: number } | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      if (!companyId) return;
+      setLoading(true);
+      try {
+        const c = await getCompanyTaxSettings(companyId);
+        setCfg(c);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, [companyId]);
+
+  const updateBracket = (idx: number, field: 'up_to' | 'rate' | 'base', value: string) => {
+    if (!cfg) return;
+    const next = { ...cfg, brackets: cfg.brackets.map((b, i) => i === idx ? { ...b, [field]: field === 'up_to' ? (value === '' ? null : Number(value)) : Number(value) } : b) };
+    setCfg(next);
+  };
+
+  const addBracket = () => {
+    if (!cfg) return;
+    const next = { ...cfg, brackets: [...cfg.brackets, { up_to: null, rate: 0.00, base: 0 }] };
+    setCfg(next);
+  };
+
+  const removeBracket = (idx: number) => {
+    if (!cfg) return;
+    const next = { ...cfg, brackets: cfg.brackets.filter((_, i) => i !== idx) };
+    setCfg(next);
+  };
+
+  const save = async () => {
+    if (!cfg || !companyId) return;
+    try {
+      setLoading(true);
+      await supabase.from('payroll_settings' as any).upsert({ company_id: companyId, tax_config: cfg } as any);
+      toast({ title: 'Saved', description: 'Payroll tax settings updated' });
+    } catch {
+      toast({ title: 'Error', description: 'Failed to save settings' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Payroll Tax Settings</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">Configure SARS brackets, primary rebate, UIF cap, and SDL rate. These values drive PAYE, UIF and SDL calculations.</p>
+        {loading && <div className="text-sm">Loading…</div>}
+        {cfg && (
+          <div className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-medium">Tax Brackets (annual)</div>
+                {canEdit && <Button variant="outline" size="sm" onClick={addBracket}><Plus className="h-4 w-4 mr-2" />Add Bracket</Button>}
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Up To (ZAR)</TableHead>
+                    <TableHead>Rate (%)</TableHead>
+                    <TableHead>Base (ZAR)</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {cfg.brackets.map((b, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell className="w-40">
+                        <Input
+                          placeholder="e.g. 237100 or blank"
+                          value={b.up_to === null ? '' : String(b.up_to)}
+                          onChange={(e) => updateBracket(idx, 'up_to', e.target.value)}
+                          disabled={!canEdit}
+                        />
+                      </TableCell>
+                      <TableCell className="w-24">
+                        <Input
+                          placeholder="e.g. 18"
+                          value={String(Math.round(b.rate * 10000) / 100)}
+                          onChange={(e) => updateBracket(idx, 'rate', String(Number(e.target.value) / 100))}
+                          disabled={!canEdit}
+                        />
+                      </TableCell>
+                      <TableCell className="w-36">
+                        <Input
+                          placeholder="e.g. 0"
+                          value={String(b.base)}
+                          onChange={(e) => updateBracket(idx, 'base', e.target.value)}
+                          disabled={!canEdit}
+                        />
+                      </TableCell>
+                      <TableCell className="w-20 text-right">
+                        {canEdit && (
+                          <Button variant="ghost" size="sm" onClick={() => removeBracket(idx)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <Label>Primary Rebate (annual)</Label>
+                <Input
+                  value={String(cfg.rebates?.primary ?? 0)}
+                  onChange={(e) => setCfg({ ...cfg, rebates: { primary: Number(e.target.value) } })}
+                  disabled={!canEdit}
+                />
+              </div>
+              <div>
+                <Label>UIF Cap (monthly)</Label>
+                <Input
+                  value={String(cfg.uif_cap ?? 17712)}
+                  onChange={(e) => setCfg({ ...cfg, uif_cap: Number(e.target.value) })}
+                  disabled={!canEdit}
+                />
+              </div>
+              <div>
+                <Label>SDL Rate (%)</Label>
+                <Input
+                  value={String((cfg.sdl_rate ?? 0.01) * 100)}
+                  onChange={(e) => setCfg({ ...cfg, sdl_rate: Number(e.target.value) / 100 })}
+                  disabled={!canEdit}
+                />
+              </div>
+            </div>
+
+            {canEdit && (
+              <div className="flex justify-end">
+                <Button onClick={save} disabled={loading}><Check className="h-4 w-4 mr-2" />Save Settings</Button>
+              </div>
+            )}
+
+            <div className="text-xs text-muted-foreground">
+              PAYE is calculated by annualising the taxable income, applying the bracket formula (`base + rate * excess`), subtracting the annual rebate, and de-annualising to the period. UIF is 1% employee + 1% employer on gross up to the cap. SDL is employer at the configured rate.
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -494,15 +793,35 @@ function StatCard({ title, value }: { title: string; value: string }) {
 
 function PayrollDashboard({ companyId, setTab }: { companyId: string; setTab: (t: string) => void }) {
   const [totals, setTotals] = useState<{ employees: number; gross: number; paye: number; uif: number; sdl: number; overtime: number; net: number }>({ employees: 0, gross: 0, paye: 0, uif: 0, sdl: 0, overtime: 0, net: 0 });
+  const [periodMode, setPeriodMode] = useState<'month' | 'year'>('month');
+  const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [trendData, setTrendData] = useState<Array<{ month: string; salary: number; uif: number; paye: number; sdl: number }>>([]);
+  const [refreshTick, setRefreshTick] = useState<number>(0);
+  useEffect(() => {
+    const h = () => setRefreshTick(v => v + 1);
+    window.addEventListener('payroll-data-changed', h);
+    return () => window.removeEventListener('payroll-data-changed', h);
+  }, []);
   useEffect(() => {
     const load = async () => {
-      const { count: empCount } = await supabase.from("employees" as any).select("id", { count: "exact", head: true } as any).eq("company_id", companyId);
+      const { data: empRows, count: empCount } = await supabase
+        .from("employees" as any)
+        .select("id", { count: "exact" } as any)
+        .eq("company_id", companyId);
       const { data: lines } = await supabase
         .from("pay_run_lines" as any)
         .select("gross, net, paye, uif_emp, uif_er, sdl_er, details")
         .in(
           "pay_run_id",
-          (await supabase.from("pay_runs" as any).select("id").eq("company_id", companyId)).data?.map((r: any) => r.id) || []
+          (
+            await supabase
+              .from("pay_runs" as any)
+              .select("id, period_start, period_end")
+              .eq("company_id", companyId)
+              .gte("period_start", new Date(selectedYear, periodMode === 'month' ? selectedMonth - 1 : 0, 1).toISOString().slice(0, 10))
+              .lte("period_end", new Date(selectedYear, periodMode === 'month' ? selectedMonth : 12, 0).toISOString().slice(0, 10))
+          ).data?.map((r: any) => r.id) || []
         );
       const gross = (lines || []).reduce((s, l: any) => s + (l.gross || 0), 0);
       const net = (lines || []).reduce((s, l: any) => s + (l.net || 0), 0);
@@ -510,12 +829,165 @@ function PayrollDashboard({ companyId, setTab }: { companyId: string; setTab: (t
       const uif = (lines || []).reduce((s, l: any) => s + (l.uif_emp || 0) + (l.uif_er || 0), 0);
       const sdl = (lines || []).reduce((s, l: any) => s + (l.sdl_er || 0), 0);
       const overtime = (lines || []).reduce((s, l: any) => s + ((l.details?.overtime_amount) || 0), 0);
-      setTotals({ employees: empCount || 0, gross, paye, uif, sdl, overtime, net });
+      const employeesTotal = (empCount ?? (empRows?.length || 0) ?? 0);
+      setTotals({ employees: employeesTotal, gross, paye, uif, sdl, overtime, net });
+
+      const needFallbackTotals = [gross, paye, uif, sdl, overtime].every(v => Number(v || 0) === 0);
+      if (needFallbackTotals) {
+        const monthsCount = periodMode === 'year' ? 12 : 6;
+        const startBase = periodMode === 'year' ? 0 : (selectedMonth - monthsCount);
+        const periodStart = new Date(selectedYear, startBase, 1).toISOString();
+        const periodEnd = new Date(selectedYear, (periodMode === 'year' ? 12 : selectedMonth), 0, 23, 59, 59, 999).toISOString();
+        const { data: accounts } = await supabase
+          .from('chart_of_accounts' as any)
+          .select('id, account_type, account_name, account_code')
+          .eq('company_id', companyId)
+          .eq('is_active', true);
+        const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
+        const nameById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_name || '').toLowerCase()]));
+        const codeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
+        const { data: te } = await supabase
+          .from('transaction_entries' as any)
+          .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id, status)`) 
+          .eq('transactions.company_id', companyId)
+          .eq('transactions.status', 'posted')
+          .gte('transactions.transaction_date', periodStart)
+          .lte('transactions.transaction_date', periodEnd);
+        let g = 0, p = 0, u = 0, s = 0, ot = 0;
+        (te || []).forEach((e: any) => {
+          const id = String(e.account_id || '');
+          const type = (typeById.get(id) || '').toLowerCase();
+          const name = (nameById.get(id) || '').toLowerCase();
+          const code = (codeById.get(id) || '');
+          const debit = Number(e.debit || 0);
+          const credit = Number(e.credit || 0);
+          const naturalDebit = type === 'asset' || type === 'expense';
+          const bal = naturalDebit ? (debit - credit) : (credit - debit);
+          if (type.includes('expense') && (name.includes('salary') || name.includes('wage'))) g += Math.abs(bal);
+          if (code.startsWith('2100') || name.includes('paye') || name.includes('pay as you earn')) p += Math.abs(bal);
+          if (code.startsWith('2101') || name.includes('uif')) u += Math.abs(bal);
+          if (code.startsWith('2102') || name.includes('sdl')) s += Math.abs(bal);
+          if (name.includes('overtime')) ot += Math.abs(bal);
+        });
+        const netApprox = Math.max(0, g - p - (u / 2));
+        setTotals({ employees: employeesTotal, gross: g, paye: p, uif: u, sdl: s, overtime: ot, net: netApprox });
+      }
+
+      const monthsCount = periodMode === 'year' ? 12 : 6;
+      const startBase = periodMode === 'year' ? 0 : (selectedMonth - monthsCount);
+      const months: Array<{ start: Date; end: Date; label: string }> = [];
+      for (let i = 0; i < monthsCount; i++) {
+        const mIndex = (periodMode === 'year' ? i : startBase + i);
+        const ms = new Date(selectedYear, mIndex, 1);
+        const me = new Date(selectedYear, mIndex + 1, 0, 23, 59, 59, 999);
+        const label = ms.toLocaleDateString('en-ZA', { month: 'short' });
+        months.push({ start: ms, end: me, label });
+      }
+      const { data: runsRange } = await supabase
+        .from('pay_runs' as any)
+        .select('id, period_start, period_end')
+        .eq('company_id', companyId)
+        .gte('period_start', months[0].start.toISOString().slice(0,10))
+        .lte('period_end', months[months.length - 1].end.toISOString().slice(0,10));
+      const idByPeriod: Array<{ id: string; start: Date; end: Date }> = (runsRange || []).map((r: any) => ({ id: String(r.id), start: new Date(String(r.period_start)), end: new Date(String(r.period_end)) }));
+      const bucketMap: Record<string, { salary: number; uif: number; paye: number; sdl: number }> = {};
+      months.forEach(m => { bucketMap[m.label] = { salary: 0, uif: 0, paye: 0, sdl: 0 }; });
+      for (const per of months) {
+        const runIds = idByPeriod.filter(rr => rr.start >= per.start && rr.end <= per.end).map(rr => rr.id);
+        if (runIds.length === 0) continue;
+        const { data: lns } = await supabase
+          .from('pay_run_lines' as any)
+          .select('gross, paye, uif_emp, uif_er, sdl_er')
+          .in('pay_run_id', runIds);
+        const sGross = (lns || []).reduce((s, l: any) => s + Number(l.gross || 0), 0);
+        const sPaye = (lns || []).reduce((s, l: any) => s + Number(l.paye || 0), 0);
+        const sUif = (lns || []).reduce((s, l: any) => s + Number(l.uif_emp || 0) + Number(l.uif_er || 0), 0);
+        const sSdl = (lns || []).reduce((s, l: any) => s + Number(l.sdl_er || 0), 0);
+        bucketMap[per.label] = { salary: sGross, uif: sUif, paye: sPaye, sdl: sSdl };
+      }
+      const series = months.map(m => ({ month: m.label, ...bucketMap[m.label] }));
+      setTrendData(series);
+
+      const needFallbackTrend = series.every(r => [r.salary, r.uif, r.paye, r.sdl].every(v => Number(v || 0) === 0));
+      if (needFallbackTrend) {
+        const { data: accounts } = await supabase
+          .from('chart_of_accounts' as any)
+          .select('id, account_type, account_name, account_code')
+          .eq('company_id', companyId)
+          .eq('is_active', true);
+        const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
+        const nameById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_name || '').toLowerCase()]));
+        const codeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
+        const { data: teRange } = await supabase
+          .from('transaction_entries' as any)
+          .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id, status)`) 
+          .eq('transactions.company_id', companyId)
+          .eq('transactions.status', 'posted')
+          .gte('transactions.transaction_date', months[0].start.toISOString())
+          .lte('transactions.transaction_date', months[months.length - 1].end.toISOString());
+        const bucketMap2: Record<string, { salary: number; uif: number; paye: number; sdl: number }> = {};
+        months.forEach(m => { bucketMap2[m.label] = { salary: 0, uif: 0, paye: 0, sdl: 0 }; });
+        (teRange || []).forEach((e: any) => {
+          const dt = new Date(String(e.transactions?.transaction_date || new Date()));
+          const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+          if (!bucketMap2[label]) return;
+          const id = String(e.account_id || '');
+          const type = (typeById.get(id) || '').toLowerCase();
+          const name = (nameById.get(id) || '').toLowerCase();
+          const code = (codeById.get(id) || '');
+          const debit = Number(e.debit || 0);
+          const credit = Number(e.credit || 0);
+          const naturalDebit = type === 'asset' || type === 'expense';
+          const bal = naturalDebit ? (debit - credit) : (credit - debit);
+          if (type.includes('expense') && (name.includes('salary') || name.includes('wage'))) bucketMap2[label].salary += Math.abs(bal);
+          if (code.startsWith('2100') || name.includes('paye') || name.includes('pay as you earn')) bucketMap2[label].paye += Math.abs(bal);
+          if (code.startsWith('2101') || name.includes('uif')) bucketMap2[label].uif += Math.abs(bal);
+          if (code.startsWith('2102') || name.includes('sdl')) bucketMap2[label].sdl += Math.abs(bal);
+        });
+        const series2 = months.map(m => ({ month: m.label, ...bucketMap2[m.label] }));
+        setTrendData(series2);
+      }
     };
     if (companyId) load();
-  }, [companyId]);
+  }, [companyId, selectedMonth, selectedYear, periodMode, refreshTick]);
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            {periodMode === 'month' ? `Payroll Dashboard • ${new Date(selectedYear, selectedMonth - 1, 1).toLocaleString('en-ZA', { month: 'long', year: 'numeric' })}` : `Payroll Dashboard • ${selectedYear}`}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label>Mode</Label>
+              <Select value={periodMode} onValueChange={(v: any) => setPeriodMode(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="month">Monthly</SelectItem>
+                  <SelectItem value="year">Annual</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Month</Label>
+              <Select disabled={periodMode === 'year'} value={String(selectedMonth)} onValueChange={(v: any) => setSelectedMonth(parseInt(String(v)))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 12 }).map((_, i) => (
+                    <SelectItem key={i + 1} value={String(i + 1)}>{new Date(selectedYear, i, 1).toLocaleString('en-ZA', { month: 'long' })}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Year</Label>
+              <Input value={String(selectedYear)} onChange={(e) => setSelectedYear(parseInt(e.target.value || '0'))} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Total Employees" value={`${totals.employees}`} />
         <StatCard title="Gross Pay" value={`R ${totals.gross.toFixed(2)}`} />
@@ -525,14 +997,47 @@ function PayrollDashboard({ companyId, setTab }: { companyId: string; setTab: (t
         <StatCard title="Overtime" value={`R ${totals.overtime.toFixed(2)}`} />
         <StatCard title="Net Pay" value={`R ${totals.net.toFixed(2)}`} />
       </div>
+      <div className="flex justify-end">
+        <Drawer>
+          <DrawerTrigger asChild>
+            <Button variant="outline"><Calculator className="h-4 w-4 mr-2" />Actions</Button>
+          </DrawerTrigger>
+          <DrawerContent>
+            <DrawerHeader>
+              <DrawerTitle>Payroll Actions</DrawerTitle>
+              <DrawerDescription>Quick tasks for payroll</DrawerDescription>
+            </DrawerHeader>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4">
+              <Button className="bg-gradient-primary" onClick={() => setTab("run")}><Calculator className="h-4 w-4 mr-2" />Run Payroll</Button>
+              <Button variant="outline" onClick={() => setTab("employees")}><Users className="h-4 w-4 mr-2" />Employees</Button>
+              <Button variant="outline" onClick={() => setTab("items")}><FileText className="h-4 w-4 mr-2" />Pay Items</Button>
+              <Button variant="outline" onClick={() => setTab("history")}><BarChart className="h-4 w-4 mr-2" />Payroll History</Button>
+            </div>
+            <DrawerFooter>
+              <DrawerClose asChild>
+                <Button variant="outline">Close</Button>
+              </DrawerClose>
+            </DrawerFooter>
+          </DrawerContent>
+        </Drawer>
+      </div>
       <Card>
-        <CardHeader><CardTitle>Actions</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Salary, UIF, PAYE, SDL</CardTitle></CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Button className="bg-gradient-primary" onClick={() => setTab("run")}><Calculator className="h-4 w-4 mr-2" />Run Payroll</Button>
-            <Button variant="outline" onClick={() => setTab("employees")}><Users className="h-4 w-4 mr-2" />Employees</Button>
-            <Button variant="outline" onClick={() => setTab("items")}><FileText className="h-4 w-4 mr-2" />Pay Items</Button>
-            <Button variant="outline" onClick={() => setTab("history")}><BarChart className="h-4 w-4 mr-2" />Payroll History</Button>
+          <div style={{ width: '100%', height: 280 }}>
+            <ResponsiveContainer>
+              <LineChart data={trendData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="salary" stroke="#22c55e" name="Salary" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="uif" stroke="#ef4444" name="UIF" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="paye" stroke="#f59e0b" name="PAYE" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="sdl" stroke="#3b82f6" name="SDL" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         </CardContent>
       </Card>
@@ -607,12 +1112,12 @@ function PayrollPeriods({ companyId, canEdit }: { companyId: string; canEdit: bo
   const { toast } = useToast();
   const [periods, setPeriods] = useState<any[]>([]);
   const [form, setForm] = useState({ year: new Date().getFullYear(), month: new Date().getMonth() + 1 });
-  const load = React.useCallback(async () => {
+  const load = useCallback(async () => {
     const { data } = await supabase.from("payroll_periods" as any).select("*").eq("company_id", companyId).order("start_date", { ascending: false });
     setPeriods(data || []);
   }, [companyId]);
   useEffect(() => { if (companyId) load(); }, [companyId, load]);
-  const create = async (e: React.FormEvent) => {
+  const create = async (e: FormEvent) => {
     e.preventDefault();
     const start = new Date(form.year, form.month - 1, 1);
     const end = new Date(form.year, form.month, 0);
@@ -1195,7 +1700,7 @@ function EmployeesTab({ companyId, canEdit }: { companyId: string; canEdit: bool
   }, [companyId, toast]);
   useEffect(() => { if (companyId) load(); }, [companyId, load]);
 
-  const create = async (e: React.FormEvent) => {
+  const create = async (e: FormEvent) => {
     e.preventDefault();
     try {
       let insertedEmp: any = null;
@@ -1693,6 +2198,7 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
     const { error } = await supabase.rpc("post_pay_run_finalize", { _pay_run_id: selectedRun.id });
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Success", description: "Pay run finalized and posted" });
+    window.dispatchEvent(new Event('payroll-data-changed'));
     loadRuns();
   };
 
@@ -1701,6 +2207,7 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
     const { error } = await supabase.rpc("post_pay_run_pay", { _pay_run_id: selectedRun.id, _amount: totals.net });
     if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
     toast({ title: "Success", description: "Net wages paid" });
+    window.dispatchEvent(new Event('payroll-data-changed'));
     loadRuns();
   };
 
@@ -1715,6 +2222,7 @@ function PayRunsTab({ companyId, canEdit }: { companyId: string; canEdit: boolea
     results.forEach((r: any) => { if (r.error) errs.push(r.error.message); });
     if (errs.length) { toast({ title: "Error", description: errs.join("; "), variant: "destructive" }); return; }
     toast({ title: "Success", description: "Statutory remittances posted" });
+    window.dispatchEvent(new Event('payroll-data-changed'));
   };
 
   const downloadLinePayslip = async (l: PayRunLine) => {
@@ -2065,7 +2573,6 @@ function RunPayrollWizard({ companyId, canEdit }: { companyId: string; canEdit: 
     const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", (r as any).id);
     setLines((data || []) as any);
     toast({ title: "Processed", description: "Calculations updated" });
-    setStep(4);
   };
   const loadLinesLocal = React.useCallback(async () => {
     if (!run) return;
@@ -2080,6 +2587,130 @@ function RunPayrollWizard({ companyId, canEdit }: { companyId: string; canEdit: 
     sdl: lines.reduce((s, l: any) => s + (l.sdl_er || 0), 0),
     net: lines.reduce((s, l: any) => s + (l.net || 0), 0),
   }), [lines]);
+  const ensureAccountByCode = async (nm: string, tp: 'asset' | 'liability' | 'equity' | 'income' | 'expense', code: string) => {
+    const { data: found } = await supabase.from('chart_of_accounts' as any).select('id').eq('company_id', companyId).eq('account_code', code).maybeSingle();
+    if ((found as any)?.id) return (found as any).id as string;
+    const { data } = await supabase.from('chart_of_accounts' as any).insert({ company_id: companyId, account_code: code, account_name: nm, account_type: tp, is_active: true } as any).select('id').single();
+    return (data as any).id as string;
+  };
+  const postRunJournal = async () => {
+    if (!run || lines.length === 0) return;
+    const paye = totals.paye;
+    const uifEmp = lines.reduce((s, l: any) => s + (l.uif_emp || 0), 0);
+    const uifEr = lines.reduce((s, l: any) => s + (l.uif_er || 0), 0);
+    const sdlEr = totals.sdl;
+    const gross = totals.gross;
+    const net = totals.net;
+    const postDate = new Date().toISOString().slice(0, 10);
+    const salaryExp = await ensureAccountByCode('Salary Expense', 'expense', '6020');
+    const uifExp = await ensureAccountByCode('Employer UIF Expense', 'expense', '6021');
+    const sdlExp = await ensureAccountByCode('Employer SDL Expense', 'expense', '6022');
+    const netPayable = await ensureAccountByCode('Net Salaries Payable', 'liability', '2100-NET');
+    const payePayable = await ensureAccountByCode('PAYE Payable', 'liability', '2100-PAYE');
+    const uifPayable = await ensureAccountByCode('UIF Payable', 'liability', '2100-UIF');
+    const sdlPayable = await ensureAccountByCode('SDL Payable', 'liability', '2100-SDL');
+    const benefitsPayable = await ensureAccountByCode('Employee Benefits Payable', 'liability', '2100-BEN');
+    const benefitsTotal = 0;
+    const { data: { user } } = await supabase.auth.getUser();
+    const basePayload: any = { company_id: companyId, user_id: user?.id || '', transaction_date: postDate, description: `Payroll posting ${new Date(run.period_start).toLocaleDateString()} - ${new Date(run.period_end).toLocaleDateString()}`, total_amount: gross, status: 'pending', transaction_type: 'payroll' };
+    const { data: tx } = await supabase.from('transactions' as any).insert(basePayload as any).select('id').single();
+    const txId = (tx as any)?.id;
+    if (!txId) return;
+    const rows = [
+      { transaction_id: txId, account_id: salaryExp, debit: gross, credit: 0, description: 'Salary Expense', status: 'approved' },
+      { transaction_id: txId, account_id: uifExp, debit: uifEr, credit: 0, description: 'Employer UIF Expense', status: 'approved' },
+      { transaction_id: txId, account_id: sdlExp, debit: sdlEr, credit: 0, description: 'Employer SDL Expense', status: 'approved' },
+      { transaction_id: txId, account_id: netPayable, debit: 0, credit: net, description: 'Net Salaries Payable', status: 'approved' },
+      { transaction_id: txId, account_id: payePayable, debit: 0, credit: paye, description: 'PAYE Payable', status: 'approved' },
+      { transaction_id: txId, account_id: uifPayable, debit: 0, credit: uifEmp + uifEr, description: 'UIF Payable', status: 'approved' },
+      { transaction_id: txId, account_id: sdlPayable, debit: 0, credit: sdlEr, description: 'SDL Payable', status: 'approved' },
+      { transaction_id: txId, account_id: benefitsPayable, debit: 0, credit: benefitsTotal, description: 'Employee Benefits Payable', status: 'approved' },
+    ];
+    await supabase.from('transaction_entries' as any).insert(rows as any);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: txId, description: r.description }));
+    await supabase.from('ledger_entries' as any).insert(ledgerRows as any);
+    await supabase.from('transactions' as any).update({ status: 'posted' } as any).eq('id', txId);
+    toast({ title: 'Posted', description: 'Payroll journal posted' });
+    window.dispatchEvent(new Event('payroll-data-changed'));
+  };
+  const pickCompanyBank = async (): Promise<string | null> => {
+    const { data } = await supabase.from('bank_accounts' as any).select('id').eq('company_id', companyId).order('account_name');
+    const b = (data || [])[0] as any;
+    return b ? String(b.id) : null;
+  };
+  const postEmployeePayments = async () => {
+    const bankId = await pickCompanyBank();
+    if (!bankId || lines.length === 0) { toast({ title: 'Bank', description: 'No bank account or lines' }); return; }
+    const net = totals.net;
+    const postDate = new Date().toISOString().slice(0, 10);
+    const bankLedger = await ensureAccountByCode('Bank', 'asset', '1000');
+    const netPayable = await ensureAccountByCode('Net Salaries Payable', 'liability', '2100-NET');
+    const { data: { user } } = await supabase.auth.getUser();
+    const base: any = { company_id: companyId, user_id: user?.id || '', transaction_date: postDate, description: 'Employees payment', total_amount: net, status: 'pending', transaction_type: 'payment' };
+    const { data: tx } = await supabase.from('transactions' as any).insert({ ...base, bank_account_id: bankId } as any).select('id').single();
+    const txId = (tx as any)?.id; if (!txId) return;
+    const rows = [
+      { transaction_id: txId, account_id: netPayable, debit: net, credit: 0, description: 'Net Salaries Payable', status: 'approved' },
+      { transaction_id: txId, account_id: bankLedger, debit: 0, credit: net, description: 'Bank', status: 'approved' },
+    ];
+    await supabase.from('transaction_entries' as any).insert(rows as any);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: txId, description: r.description }));
+    await supabase.from('ledger_entries' as any).insert(ledgerRows as any);
+    await supabase.from('transactions' as any).update({ status: 'posted' } as any).eq('id', txId);
+    toast({ title: 'Paid', description: 'Employees payment posted' });
+    window.dispatchEvent(new Event('payroll-data-changed'));
+  };
+  const postSarsPayment = async () => {
+    const bankId = await pickCompanyBank();
+    if (!bankId || lines.length === 0) { toast({ title: 'Bank', description: 'No bank account or lines' }); return; }
+    const paye = totals.paye;
+    const uif = lines.reduce((s, l: any) => s + (l.uif_emp || 0) + (l.uif_er || 0), 0);
+    const sdl = totals.sdl;
+    const total = paye + uif + sdl;
+    const postDate = new Date().toISOString().slice(0, 10);
+    const bankLedger = await ensureAccountByCode('Bank', 'asset', '1000');
+    const payePayable = await ensureAccountByCode('PAYE Payable', 'liability', '2100-PAYE');
+    const uifPayable = await ensureAccountByCode('UIF Payable', 'liability', '2100-UIF');
+    const sdlPayable = await ensureAccountByCode('SDL Payable', 'liability', '2100-SDL');
+    const { data: { user } } = await supabase.auth.getUser();
+    const base: any = { company_id: companyId, user_id: user?.id || '', transaction_date: postDate, description: 'SARS payment', total_amount: total, status: 'pending', transaction_type: 'payment' };
+    const { data: tx } = await supabase.from('transactions' as any).insert({ ...base, bank_account_id: bankId } as any).select('id').single();
+    const txId = (tx as any)?.id; if (!txId) return;
+    const rows = [
+      { transaction_id: txId, account_id: payePayable, debit: paye, credit: 0, description: 'PAYE Payable', status: 'approved' },
+      { transaction_id: txId, account_id: uifPayable, debit: uif, credit: 0, description: 'UIF Payable', status: 'approved' },
+      { transaction_id: txId, account_id: sdlPayable, debit: sdl, credit: 0, description: 'SDL Payable', status: 'approved' },
+      { transaction_id: txId, account_id: bankLedger, debit: 0, credit: total, description: 'Bank', status: 'approved' },
+    ];
+    await supabase.from('transaction_entries' as any).insert(rows as any);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: txId, description: r.description }));
+    await supabase.from('ledger_entries' as any).insert(ledgerRows as any);
+    await supabase.from('transactions' as any).update({ status: 'posted' } as any).eq('id', txId);
+    toast({ title: 'Paid', description: 'SARS payment posted' });
+    window.dispatchEvent(new Event('payroll-data-changed'));
+  };
+  const postBenefitsPayment = async () => {
+    const bankId = await pickCompanyBank();
+    if (!bankId) { toast({ title: 'Bank', description: 'No bank account' }); return; }
+    const total = 0;
+    if (total <= 0) { toast({ title: 'No Benefits', description: 'No benefits payable' }); return; }
+    const postDate = new Date().toISOString().slice(0, 10);
+    const bankLedger = await ensureAccountByCode('Bank', 'asset', '1000');
+    const benefitsPayable = await ensureAccountByCode('Employee Benefits Payable', 'liability', '2100-BEN');
+    const { data: { user } } = await supabase.auth.getUser();
+    const base: any = { company_id: companyId, user_id: user?.id || '', transaction_date: postDate, description: 'Benefits payment', total_amount: total, status: 'pending', transaction_type: 'payment' };
+    const { data: tx } = await supabase.from('transactions' as any).insert({ ...base, bank_account_id: bankId } as any).select('id').single();
+    const txId = (tx as any)?.id; if (!txId) return;
+    const rows = [
+      { transaction_id: txId, account_id: benefitsPayable, debit: total, credit: 0, description: 'Employee Benefits Payable', status: 'approved' },
+      { transaction_id: txId, account_id: bankLedger, debit: 0, credit: total, description: 'Bank', status: 'approved' },
+    ];
+    await supabase.from('transaction_entries' as any).insert(rows as any);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: txId, description: r.description }));
+    await supabase.from('ledger_entries' as any).insert(ledgerRows as any);
+    await supabase.from('transactions' as any).update({ status: 'posted' } as any).eq('id', txId);
+    toast({ title: 'Paid', description: 'Benefits payment posted' });
+  };
   const finalizePosting = async () => {
     if (!run) return;
     const { error } = await supabase.rpc("post_pay_run_finalize", { _pay_run_id: (run as any).id });
@@ -2116,6 +2747,10 @@ function RunPayrollWizard({ companyId, canEdit }: { companyId: string; canEdit: 
     <Card>
       <CardHeader><CardTitle>Run Payroll</CardTitle></CardHeader>
       <CardContent>
+        <div className="flex items-center justify-between mb-4">
+          <Badge variant="secondary">Running payroll for {new Date(year, month - 1, 1).toLocaleString('en-ZA', { month: 'long', year: 'numeric' })}</Badge>
+          {run && <Badge variant="outline" className="capitalize">Status: {String(run.status || 'draft')}</Badge>}
+        </div>
         {step === 1 && (
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-3">
@@ -2193,7 +2828,7 @@ function RunPayrollWizard({ companyId, canEdit }: { companyId: string; canEdit: 
               <TableHeader>
                 <TableRow>
                   <TableHead>Employee</TableHead>
-                  <TableHead>Salary</TableHead>
+                  <TableHead>Basic Salary</TableHead>
                   <TableHead>Overtime</TableHead>
                   <TableHead>Allowances</TableHead>
                   <TableHead>UIF</TableHead>
@@ -2205,13 +2840,14 @@ function RunPayrollWizard({ companyId, canEdit }: { companyId: string; canEdit: 
                 {employees.map(e => {
                   const entry = entries[e.id] || { allowance: "", overtime: "" };
                   const line = lines.find(l => l.employee_id === e.id);
+                  const basic = line ? `R ${Number(line.gross || 0).toFixed(2)}` : "-";
                   const paye = line ? `R ${Number(line.paye || 0).toFixed(2)}` : "-";
                   const uif = line ? `R ${(Number(line.uif_emp || 0) + Number(line.uif_er || 0)).toFixed(2)}` : "-";
                   const net = line ? `R ${Number(line.net || 0).toFixed(2)}` : "-";
                   return (
                     <TableRow key={e.id}>
                       <TableCell>{e.first_name} {e.last_name}</TableCell>
-                      <TableCell>Basic</TableCell>
+                      <TableCell>{basic}</TableCell>
                       <TableCell>
                         <Input className="w-28" type="number" step="0.01" value={entry.overtime} onChange={ev => setEntries({ ...entries, [e.id]: { ...entry, overtime: ev.target.value } })} />
                       </TableCell>
@@ -2266,6 +2902,9 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [filterYear, setFilterYear] = useState<number>(new Date().getFullYear());
+  const [filterMonth, setFilterMonth] = useState<number>(new Date().getMonth() + 1);
   const [form, setForm] = useState({
     first_name: "",
     last_name: "",
@@ -2290,6 +2929,176 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
   const [editOpen, setEditOpen] = useState(false);
   const [editEmp, setEditEmp] = useState<Employee | null>(null);
   const [editRate, setEditRate] = useState<string>("");
+  const ensureCurrentRun = async () => {
+    const today = new Date();
+    const start = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const end = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+    const { data: existing } = await supabase
+      .from("pay_runs" as any)
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("period_start", start)
+      .eq("period_end", end)
+      .maybeSingle();
+    if (existing) return existing as any;
+    const { data, error } = await supabase
+      .from("pay_runs" as any)
+      .insert({ company_id: companyId, period_start: start, period_end: end, status: "draft" } as any)
+      .select("*")
+      .single();
+    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return null; }
+    return data as any;
+  };
+  const computePAYE = (monthlyGross: number): number => {
+    const annual = monthlyGross * 12;
+    const brackets = [
+      { upTo: 237100, base: 0, rate: 0.18, over: 0 },
+      { upTo: 370500, base: 42678, rate: 0.26, over: 237100 },
+      { upTo: 512800, base: 77362, rate: 0.31, over: 370500 },
+      { upTo: 673000, base: 121475, rate: 0.36, over: 512800 },
+      { upTo: 857900, base: 179147, rate: 0.39, over: 673000 },
+      { upTo: 1817000, base: 251258, rate: 0.41, over: 857900 },
+      { upTo: Infinity, base: 644489, rate: 0.45, over: 1817000 },
+    ];
+    let taxAnnual = 0;
+    for (const b of brackets) { if (annual <= b.upTo) { taxAnnual = b.base + (annual - b.over) * b.rate; break; } }
+    const rebateAnnual = 17235;
+    const taxAfterRebate = Math.max(0, taxAnnual - rebateAnnual);
+    return +(taxAfterRebate / 12).toFixed(2);
+  };
+  const getBasicSalary = async (empId: string): Promise<number> => {
+    const { data: basicItem } = await supabase
+      .from("pay_items" as any)
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("name", "Basic Salary")
+      .maybeSingle();
+    const basicId = (basicItem as any)?.id;
+    if (!basicId) return 0;
+    const { data: ep } = await supabase
+      .from("employee_pay_items" as any)
+      .select("amount")
+      .eq("employee_id", empId)
+      .eq("pay_item_id", basicId)
+      .maybeSingle();
+    return ep ? Number((ep as any).amount || 0) : 0;
+  };
+  const runPayrollForEmployee = async (empId: string) => {
+    const run = await ensureCurrentRun();
+    if (!run) return;
+    const gross = +(await getBasicSalary(empId)).toFixed(2);
+    const uifCapMonthly = 177.12;
+    const uifEmpRaw = +(gross * 0.01).toFixed(2);
+    const uif_emp = Math.min(uifEmpRaw, uifCapMonthly);
+    const uif_er = +(gross * 0.01).toFixed(2);
+    const sdl_er = +(gross * 0.01).toFixed(2);
+    const paye = computePAYE(gross);
+    const net = +(gross - paye - uif_emp).toFixed(2);
+    const payload = { pay_run_id: (run as any).id, employee_id: empId, gross, net, paye, uif_emp, uif_er, sdl_er } as any;
+    const { data: existing } = await supabase
+      .from("pay_run_lines" as any)
+      .select("id")
+      .eq("pay_run_id", (run as any).id)
+      .eq("employee_id", empId)
+      .maybeSingle();
+    if (existing) {
+      await supabase.from("pay_run_lines" as any).update(payload as any).eq("id", (existing as any).id);
+    } else {
+      await supabase.from("pay_run_lines" as any).insert(payload as any);
+    }
+    toast({ title: "Processed", description: "Payroll calculated for employee" });
+  };
+  const processSelected = async () => {
+    const ids = Object.entries(selected).filter(([_, v]) => v).map(([id]) => id);
+    if (ids.length === 0) { toast({ title: "Select Employees", description: "Choose employees to process in bulk" }); return; }
+    const run = await ensureCurrentRun();
+    if (!run) return;
+    for (const id of ids) { await runPayrollForEmployee(id); }
+    toast({ title: "Processed", description: "Bulk payroll completed" });
+  };
+  const downloadPayslipForEmployee = async (empId: string) => {
+    const { data: runs } = await supabase
+      .from("pay_runs" as any)
+      .select("*")
+      .eq("company_id", companyId)
+      .order("period_start", { ascending: false });
+    const run = (runs || [])[0];
+    if (!run) { toast({ title: "No Run", description: "Create a pay run first" }); return; }
+    const { data: l } = await supabase
+      .from("pay_run_lines" as any)
+      .select("*")
+      .eq("pay_run_id", (run as any).id)
+      .eq("employee_id", empId)
+      .maybeSingle();
+    if (!l) { toast({ title: "No Payslip", description: "Employee not processed in current run" }); return; }
+    const emp = employees.find(e => e.id === empId);
+    const employee_name = emp ? `${emp.first_name} ${emp.last_name}` : empId;
+    const slip: PayslipForPDF = {
+      period_start: (run as any).period_start,
+      period_end: (run as any).period_end,
+      employee_name,
+      gross: (l as any).gross,
+      net: (l as any).net,
+      paye: (l as any).paye,
+      uif_emp: (l as any).uif_emp,
+      uif_er: (l as any).uif_er,
+      sdl_er: (l as any).sdl_er,
+      details: null,
+    };
+    const { data: company } = await supabase
+      .from('companies')
+      .select('name,email,phone,address,tax_number,vat_number,logo_url')
+      .eq('id', companyId)
+      .maybeSingle();
+    const doc = buildPayslipPDF(slip, (company as any) || { name: 'Company' });
+    const logoDataUrl = await fetchLogoDataUrl((company as any)?.logo_url);
+    if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
+    const periodName = `${new Date((run as any).period_start).toLocaleDateString('en-ZA')} - ${new Date((run as any).period_end).toLocaleDateString('en-ZA')}`;
+    doc.save(`payslip_${employee_name.replace(/\s+/g,'_')}_${periodName.replace(/\s+/g,'_')}.pdf`);
+  };
+  const downloadPayslipForEmployeePeriod = async (empId: string) => {
+    const start = new Date(filterYear, filterMonth - 1, 1).toISOString().slice(0, 10);
+    const end = new Date(filterYear, filterMonth, 0).toISOString().slice(0, 10);
+    const { data: run } = await supabase
+      .from("pay_runs" as any)
+      .select("*")
+      .eq("company_id", companyId)
+      .eq("period_start", start)
+      .eq("period_end", end)
+      .maybeSingle();
+    if (!run) { toast({ title: "No Run", description: "No payroll run for selected period" }); return; }
+    const { data: l } = await supabase
+      .from("pay_run_lines" as any)
+      .select("*")
+      .eq("pay_run_id", (run as any).id)
+      .eq("employee_id", empId)
+      .maybeSingle();
+    if (!l) { toast({ title: "No Payslip", description: "Employee not processed in selected run" }); return; }
+    const emp = employees.find(e => e.id === empId);
+    const employee_name = emp ? `${emp.first_name} ${emp.last_name}` : empId;
+    const slip: PayslipForPDF = {
+      period_start: (run as any).period_start,
+      period_end: (run as any).period_end,
+      employee_name,
+      gross: (l as any).gross,
+      net: (l as any).net,
+      paye: (l as any).paye,
+      uif_emp: (l as any).uif_emp,
+      uif_er: (l as any).uif_er,
+      sdl_er: (l as any).sdl_er,
+      details: null,
+    };
+    const { data: company } = await supabase
+      .from('companies')
+      .select('name,email,phone,address,tax_number,vat_number,logo_url')
+      .eq('id', companyId)
+      .maybeSingle();
+    const doc = buildPayslipPDF(slip, (company as any) || { name: 'Company' });
+    const logoDataUrl = await fetchLogoDataUrl((company as any)?.logo_url);
+    if (logoDataUrl) addLogoToPDF(doc, logoDataUrl);
+    const periodName = `${new Date((run as any).period_start).toLocaleDateString('en-ZA')} - ${new Date((run as any).period_end).toLocaleDateString('en-ZA')}`;
+    doc.save(`payslip_${employee_name.replace(/\s+/g,'_')}_${periodName.replace(/\s+/g,'_')}.pdf`);
+  };
   useEffect(() => {
     const load = async () => {
       const { data } = await supabase.from("employees" as any).select("*").eq("company_id", companyId).order("first_name", { ascending: true });
@@ -2307,11 +3116,9 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
         last_name: form.last_name,
         email: form.email || null,
         phone: form.phone || null,
-        address: form.address || null,
         id_number: form.id_number || null,
         start_date: form.start_date || null,
         position: form.position || null,
-        department: form.department || null,
         payroll_number: form.payroll_number || null,
         tax_number: form.tax_number || null,
         salary_type: form.salary_type,
@@ -2327,7 +3134,7 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
       emp = res.data;
     } catch (err: any) {
       const msg = String(err?.message || "").toLowerCase();
-      const retry = msg.includes("column") && msg.includes("does not exist");
+      const retry = msg.includes("column") && (msg.includes("does not exist") || msg.includes("could not find"));
       if (!retry) { toast({ title: "Error", description: err.message, variant: "destructive" }); return; }
       const res2 = await supabase.from("employees" as any).insert({
         company_id: companyId,
@@ -2340,6 +3147,12 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
       if (res2.error) { toast({ title: "Error", description: res2.error.message, variant: "destructive" }); return; }
       emp = res2.data;
     }
+    // Persist extended employee details in a separate table when available
+    try {
+      await (supabase as any)
+        .from('employee_details')
+        .upsert({ employee_id: (emp as any).id, department: form.department || null, address: form.address || null });
+    } catch {}
     const { data: basicItem } = await supabase.from("pay_items" as any).select("id").eq("company_id", companyId).eq("name", "Basic Salary").maybeSingle();
     let basicId = (basicItem as any)?.id;
     if (!basicId) { const { data } = await supabase.from("pay_items" as any).insert({ company_id: companyId, code: "BASIC_SALARY", name: "Basic Salary", type: "earning", taxable: true } as any).select("id").single(); basicId = (data as any)?.id; }
@@ -2404,6 +3217,12 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
           <div className="flex gap-2">
             {canEdit && <Button onClick={() => setDialogOpen(true)} className="bg-gradient-primary"><Plus className="h-4 w-4 mr-2" />Add Employee</Button>}
             {canEdit && <Button variant="outline" onClick={() => document.getElementById('empCsvInput')?.click()}>CSV Import</Button>}
+            <div className="flex items-center gap-2">
+              <Label>Year</Label>
+              <Input type="number" className="w-24" value={filterYear} onChange={e => setFilterYear(parseInt(e.target.value || '0'))} />
+              <Label>Month</Label>
+              <Input type="number" className="w-20" value={filterMonth} onChange={e => setFilterMonth(parseInt(e.target.value || '0'))} />
+            </div>
             <input id="empCsvInput" type="file" accept=".csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) importCSV(f); }} />
           </div>
         </CardHeader>
@@ -2412,6 +3231,7 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8"></TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Position</TableHead>
                   <TableHead>ID</TableHead>
@@ -2419,12 +3239,15 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
                   <TableHead>Rate</TableHead>
                   <TableHead>PAYE registered?</TableHead>
                   <TableHead>UIF registered?</TableHead>
-                  <TableHead></TableHead>
+                  <TableHead className="w-64">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {employees.map(e => (
                   <TableRow key={e.id}>
+                    <TableCell>
+                      <Checkbox checked={!!selected[e.id]} onCheckedChange={(v: any) => setSelected(prev => ({ ...prev, [e.id]: !!v }))} />
+                    </TableCell>
                     <TableCell>{e.first_name} {e.last_name}</TableCell>
                     <TableCell>{(e as any).position || '-'}</TableCell>
                     <TableCell>{e.id_number || '-'}</TableCell>
@@ -2432,7 +3255,10 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
                     <TableCell>—</TableCell>
                     <TableCell>{(e as any).paye_registered ? 'Yes' : 'No'}</TableCell>
                     <TableCell>{(e as any).uif_registered ? 'Yes' : 'No'}</TableCell>
-                    <TableCell><Button size="sm" variant="outline" onClick={() => openEdit(e)}>Edit</Button></TableCell>
+                    <TableCell>
+                      <Button size="sm" variant="outline" onClick={() => openEdit(e)}>Edit</Button>
+                      <Button size="sm" variant="outline" className="ml-2" onClick={() => downloadPayslipForEmployeePeriod(e.id)}>Payslip</Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -2688,4 +3514,374 @@ function PayrollHistory({ companyId }: { companyId: string }) {
     </div>
   );
 }
-import React from "react";
+function PayrollPostingModule({ companyId }: { companyId: string }) {
+  const { toast } = useToast();
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [openPostDlg, setOpenPostDlg] = useState(false);
+  const [openPaySalaryDlg, setOpenPaySalaryDlg] = useState(false);
+  const [openPaySarsDlg, setOpenPaySarsDlg] = useState(false);
+  const [selectedEmpId, setSelectedEmpId] = useState<string>("");
+  const [postValues, setPostValues] = useState<{ gross: number; uif_er: number; sdl_er: number; paye: number; uif_emp: number; net: number }>({ gross: 0, uif_er: 0, sdl_er: 0, paye: 0, uif_emp: 0, net: 0 });
+  const [paySalaryValues, setPaySalaryValues] = useState<{ net: number; bankId: string }>({ net: 0, bankId: "" });
+  const [paySarsValues, setPaySarsValues] = useState<{ paye: number; sdl: number; uif_total: number; bankId: string }>({ paye: 0, sdl: 0, uif_total: 0, bankId: "" });
+  const [bankId, setBankId] = useState<string>("");
+  const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; account_name: string; bank_name?: string; account_number?: string }>>([]);
+  const [linesByEmp, setLinesByEmp] = useState<Record<string, any>>({});
+  const [currentRun, setCurrentRun] = useState<any>(null);
+  const [currentRunId, setCurrentRunId] = useState<string>("");
+  useEffect(() => {
+    const load = async () => {
+      const { data: emps } = await supabase.from('employees' as any).select('*').eq('company_id', companyId).order('first_name');
+      setEmployees((emps || []) as any);
+      const { data: run } = await supabase
+        .from('pay_runs' as any)
+        .select('*')
+        .eq('company_id', companyId)
+        .order('period_start', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (run) {
+        const { data: ls } = await supabase.from('pay_run_lines' as any).select('*').eq('pay_run_id', (run as any).id);
+        const map: Record<string, any> = {};
+        (ls || []).forEach((l: any) => { map[l.employee_id] = l; });
+        setLinesByEmp(map);
+        setCurrentRun(run);
+        setCurrentRunId(String((run as any).id || ''));
+      }
+      const { data: banks } = await supabase.from('bank_accounts' as any).select('id, account_name, bank_name, account_number').eq('company_id', companyId).order('account_name');
+      setBankAccounts((banks || []) as any);
+      setBankId(((banks || [])[0] as any)?.id || "");
+    };
+    load();
+  }, [companyId]);
+  const getEffectiveCompanyId = useCallback(async (): Promise<string> => {
+    let cid = String(companyId || '').trim();
+    if (cid) return cid;
+    if (!hasSupabaseEnv) return '';
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: prof } = await supabase
+          .from('profiles' as any)
+          .select('company_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        cid = String((prof as any)?.company_id || '').trim();
+      }
+    } catch {}
+    return cid;
+  }, [companyId]);
+  const ensureAccountByCode = async (nm: string, tp: 'asset' | 'liability' | 'equity' | 'income' | 'expense', code: string) => {
+    const cid = await getEffectiveCompanyId();
+    if (!cid) throw new Error('Company ID missing');
+    const { data: found } = await supabase.from('chart_of_accounts' as any).select('id').eq('company_id', cid).eq('account_code', code).maybeSingle();
+    if ((found as any)?.id) return (found as any).id as string;
+    const { data } = await supabase.from('chart_of_accounts' as any).insert({ company_id: cid, account_code: code, account_name: nm, account_type: tp, is_active: true } as any).select('id').single();
+    return (data as any).id as string;
+  };
+  const openPostFor = async (empId: string) => {
+    const l = linesByEmp[empId];
+    if (!l) { toast({ title: 'No Line', description: 'Run payroll first' }); return; }
+    const gross = Number(l.gross || 0);
+    const paye = Number(l.paye || 0);
+    const uif_emp = Number(l.uif_emp || 0);
+    const uif_er = Number(l.uif_er || 0);
+    const sdl_er = Number(l.sdl_er || 0);
+    const net = Number(l.net || 0);
+    setSelectedEmpId(empId);
+    setPostValues({ gross, uif_er, sdl_er, paye, uif_emp, net });
+    setOpenPostDlg(true);
+  };
+  const openPayFor = async (empId: string) => {
+    const l = linesByEmp[empId];
+    if (!l) { toast({ title: 'No Line', description: 'Run payroll first' }); return; }
+    setSelectedEmpId(empId);
+    setPaySalaryValues({ net: Number(l.net || 0), bankId });
+    setOpenPaySalaryDlg(true);
+  };
+  const openPaySarsFor = async (empId: string) => {
+    const l = linesByEmp[empId];
+    if (!l) { toast({ title: 'No Line', description: 'Run payroll first' }); return; }
+    const paye = Number(l.paye || 0);
+    const uif_total = Number(l.uif_emp || 0) + Number(l.uif_er || 0);
+    const sdl = Number(l.sdl_er || 0);
+    setSelectedEmpId(empId);
+    setPaySarsValues({ paye, sdl, uif_total, bankId });
+    setOpenPaySarsDlg(true);
+  };
+  const exportToExcel = () => {
+    const rows = employees.map(e => {
+      const l = linesByEmp[e.id];
+      return {
+        Employee: `${e.first_name} ${e.last_name}`,
+        Gross: Number(l?.gross || 0),
+        PAYE: Number(l?.paye || 0),
+        UIF_Emp: Number(l?.uif_emp || 0),
+        UIF_Er: Number(l?.uif_er || 0),
+        SDL: Number(l?.sdl_er || 0),
+        Net: Number(l?.net || 0),
+      };
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Payroll');
+    const label = currentRun ? new Date(String(currentRun.period_start || new Date())).toLocaleString('en-ZA', { month: 'long', year: 'numeric' }) : 'Current';
+    XLSX.writeFile(wb, `Payroll_${label}.xlsx`);
+  };
+
+  const executePostJournal = async () => {
+    try {
+      const effectiveCompanyId = await getEffectiveCompanyId();
+      if (!effectiveCompanyId) throw new Error('Company ID missing');
+      const l = linesByEmp[selectedEmpId];
+      if (!l) throw new Error('No payroll line');
+      const ref = `PR-${currentRunId}-${selectedEmpId}-POST`;
+      const { data: existingTx } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('company_id', effectiveCompanyId)
+        .eq('reference_number', ref)
+        .maybeSingle();
+      if (existingTx) { toast({ title: 'Duplicate', description: 'This payroll journal was already posted', variant: 'destructive' }); return; }
+      const salaryExp = await ensureAccountByCode('Salary Expense', 'expense', '6020');
+      const uifExp = await ensureAccountByCode('Employer UIF Expense', 'expense', '6021');
+      const sdlExp = await ensureAccountByCode('Employer SDL Expense', 'expense', '6022');
+      const netPayable = await ensureAccountByCode('Net Salaries Payable', 'liability', '2100-NET');
+      const payePayable = await ensureAccountByCode('PAYE Payable', 'liability', '2100-PAYE');
+      const uifPayable = await ensureAccountByCode('UIF Payable', 'liability', '2100-UIF');
+      const sdlPayable = await ensureAccountByCode('SDL Payable', 'liability', '2100-SDL');
+      const total = Number(postValues.gross || 0) + Number(postValues.uif_er || 0) + Number(postValues.sdl_er || 0);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      const { data: tx } = await supabase
+        .from('transactions')
+        .insert({ company_id: effectiveCompanyId, user_id: user.id, transaction_date: new Date().toISOString().slice(0,10), description: 'Payroll expense', total_amount: total, transaction_type: 'expense', status: 'pending', reference_number: ref } as any)
+        .select()
+        .single();
+      const txId = (tx as any)?.id;
+      const entries = [
+        { transaction_id: txId, account_id: salaryExp, debit: Number(postValues.gross || 0), credit: 0, description: 'Salary Expense', status: 'pending' },
+        { transaction_id: txId, account_id: uifExp, debit: Number(postValues.uif_er || 0), credit: 0, description: 'Employer UIF Expense', status: 'pending' },
+        { transaction_id: txId, account_id: sdlExp, debit: Number(postValues.sdl_er || 0), credit: 0, description: 'Employer SDL Expense', status: 'pending' },
+        { transaction_id: txId, account_id: netPayable, debit: 0, credit: Number(postValues.net || 0), description: 'Net Salaries Payable', status: 'pending' },
+        { transaction_id: txId, account_id: payePayable, debit: 0, credit: Number(postValues.paye || 0), description: 'PAYE Payable', status: 'pending' },
+        { transaction_id: txId, account_id: uifPayable, debit: 0, credit: Number((postValues.uif_emp || 0) + (postValues.uif_er || 0)), description: 'UIF Payable', status: 'pending' },
+        { transaction_id: txId, account_id: sdlPayable, debit: 0, credit: Number(postValues.sdl_er || 0), description: 'SDL Payable', status: 'pending' },
+      ];
+      await supabase.from('transaction_entries').insert(entries as any);
+      const ledgerRows = entries.map(e => ({ company_id: effectiveCompanyId, transaction_id: txId, account_id: e.account_id, entry_date: new Date().toISOString().slice(0,10), description: e.description, debit: e.debit, credit: e.credit, is_reversed: false }));
+      await supabase.from('ledger_entries').insert(ledgerRows as any);
+      setOpenPostDlg(false);
+      toast({ title: 'Posted', description: 'Payroll journal posted' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to post payroll', variant: 'destructive' });
+    }
+  };
+
+  const executePaySalary = async () => {
+    try {
+      const effectiveCompanyId = await getEffectiveCompanyId();
+      if (!effectiveCompanyId) throw new Error('Company ID missing');
+      // Validate bank account
+      const bid = String(paySalaryValues.bankId || '').trim();
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!bid || !uuidRegex.test(bid) || !bankAccounts.find(b => b.id === bid)) {
+        toast({ title: 'Bank Account Required', description: 'Please select a valid bank account.', variant: 'destructive' });
+        return;
+      }
+      const ref = `PR-${currentRunId}-${selectedEmpId}-SALARY`;
+      const { data: existingTx } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('company_id', effectiveCompanyId)
+        .eq('reference_number', ref)
+        .maybeSingle();
+      if (existingTx) { toast({ title: 'Duplicate', description: 'This salary payment was already posted', variant: 'destructive' }); return; }
+      const netPayable = await ensureAccountByCode('Net Salaries Payable', 'liability', '2100-NET');
+      const bankLedger = await ensureAccountByCode('Bank', 'asset', '1000');
+      const amt = Number(paySalaryValues.net || 0);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      const { data: tx } = await supabase
+        .from('transactions')
+        .insert({ company_id: effectiveCompanyId, user_id: user.id, transaction_date: new Date().toISOString().slice(0,10), description: 'Salary payment', total_amount: amt, bank_account_id: bid, transaction_type: 'payment', status: 'pending', reference_number: ref } as any)
+        .select()
+        .single();
+      const txId = (tx as any)?.id;
+      const entries = [
+        { transaction_id: txId, account_id: netPayable, debit: amt, credit: 0, description: 'Pay Net Salary', status: 'pending' },
+        { transaction_id: txId, account_id: bankLedger, debit: 0, credit: amt, description: 'Pay Net Salary', status: 'pending' },
+      ];
+      await supabase.from('transaction_entries').insert(entries as any);
+      const ledgerRows = entries.map(e => ({ company_id: effectiveCompanyId, transaction_id: txId, account_id: e.account_id, entry_date: new Date().toISOString().slice(0,10), description: e.description, debit: e.debit, credit: e.credit, is_reversed: false }));
+      await supabase.from('ledger_entries').insert(ledgerRows as any);
+      setOpenPaySalaryDlg(false);
+      toast({ title: 'Paid', description: 'Salary payment posted' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to pay salary', variant: 'destructive' });
+    }
+  };
+
+  const executePaySars = async () => {
+    try {
+      const effectiveCompanyId = await getEffectiveCompanyId();
+      if (!effectiveCompanyId) throw new Error('Company ID missing');
+      // Validate bank account
+      const bid = String(paySarsValues.bankId || '').trim();
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!bid || !uuidRegex.test(bid) || !bankAccounts.find(b => b.id === bid)) {
+        toast({ title: 'Bank Account Required', description: 'Please select a valid bank account.', variant: 'destructive' });
+        return;
+      }
+      const ref = `PR-${currentRunId}-${selectedEmpId}-SARS`;
+      const { data: existingTx } = await supabase
+        .from('transactions')
+        .select('id')
+        .eq('company_id', effectiveCompanyId)
+        .eq('reference_number', ref)
+        .maybeSingle();
+      if (existingTx) { toast({ title: 'Duplicate', description: 'This SARS payment was already posted', variant: 'destructive' }); return; }
+      const payePayable = await ensureAccountByCode('PAYE Payable', 'liability', '2100-PAYE');
+      const uifPayable = await ensureAccountByCode('UIF Payable', 'liability', '2100-UIF');
+      const sdlPayable = await ensureAccountByCode('SDL Payable', 'liability', '2100-SDL');
+      const bankLedger = await ensureAccountByCode('Bank', 'asset', '1000');
+      const total = Number(paySarsValues.paye || 0) + Number(paySarsValues.sdl || 0) + Number(paySarsValues.uif_total || 0);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      const { data: tx } = await supabase
+        .from('transactions')
+        .insert({ company_id: effectiveCompanyId, user_id: user.id, transaction_date: new Date().toISOString().slice(0,10), description: 'SARS payment (PAYE/UIF/SDL)', total_amount: total, bank_account_id: bid, transaction_type: 'liability', status: 'pending', reference_number: ref } as any)
+        .select()
+        .single();
+      const txId = (tx as any)?.id;
+      const entries = [
+        { transaction_id: txId, account_id: payePayable, debit: Number(paySarsValues.paye || 0), credit: 0, description: 'PAYE Payable', status: 'pending' },
+        { transaction_id: txId, account_id: sdlPayable, debit: Number(paySarsValues.sdl || 0), credit: 0, description: 'SDL Payable', status: 'pending' },
+        { transaction_id: txId, account_id: uifPayable, debit: Number(paySarsValues.uif_total || 0), credit: 0, description: 'UIF Payable', status: 'pending' },
+        { transaction_id: txId, account_id: bankLedger, debit: 0, credit: total, description: 'SARS Payment', status: 'pending' },
+      ];
+      await supabase.from('transaction_entries').insert(entries as any);
+      const ledgerRows = entries.map(e => ({ company_id: effectiveCompanyId, transaction_id: txId, account_id: e.account_id, entry_date: new Date().toISOString().slice(0,10), description: e.description, debit: e.debit, credit: e.credit, is_reversed: false }));
+      await supabase.from('ledger_entries').insert(ledgerRows as any);
+      setOpenPaySarsDlg(false);
+      toast({ title: 'Paid', description: 'SARS payment posted' });
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message || 'Failed to pay SARS', variant: 'destructive' });
+    }
+  };
+  return (
+    <Card>
+      <CardHeader><CardTitle>Payroll</CardTitle></CardHeader>
+      <CardContent>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-sm">
+            {currentRun ? (
+              <Badge variant="secondary">This payroll is for {new Date(String(currentRun.period_start)).toLocaleString('en-ZA', { month: 'long', year: 'numeric' })}</Badge>
+            ) : (
+              <Badge variant="outline">No current pay run</Badge>
+            )}
+          </div>
+          <Button variant="outline" onClick={exportToExcel}>Export to Excel</Button>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Employee</TableHead>
+              <TableHead>Gross</TableHead>
+              <TableHead>PAYE</TableHead>
+              <TableHead>UIF</TableHead>
+              <TableHead>SDL</TableHead>
+              <TableHead>Net</TableHead>
+              <TableHead>Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+        <TableBody>
+          {employees.map(e => {
+            const l = linesByEmp[e.id];
+            return (
+              <TableRow key={e.id}>
+                  <TableCell>{e.first_name} {e.last_name}</TableCell>
+                  <TableCell>{l ? `R ${Number(l.gross || 0).toFixed(2)}` : '-'}</TableCell>
+                  <TableCell>{l ? `R ${Number(l.paye || 0).toFixed(2)}` : '-'}</TableCell>
+                  <TableCell>{l ? `R ${(Number(l.uif_emp || 0) + Number(l.uif_er || 0)).toFixed(2)}` : '-'}</TableCell>
+                  <TableCell>{l ? `R ${Number(l.sdl_er || 0).toFixed(2)}` : '-'}</TableCell>
+                  <TableCell>{l ? `R ${Number(l.net || 0).toFixed(2)}` : '-'}</TableCell>
+                  <TableCell>
+                    <Button size="sm" variant="outline" onClick={() => openPostFor(e.id)}>Post</Button>
+                    <Button size="sm" variant="outline" className="ml-2" onClick={() => openPayFor(e.id)}>Pay Salary</Button>
+                    <Button size="sm" variant="outline" className="ml-2" onClick={() => openPaySarsFor(e.id)}>Pay SARS</Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+        <Dialog open={openPostDlg} onOpenChange={setOpenPostDlg}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Post Payroll Journal</DialogTitle></DialogHeader>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Gross Salary</Label><Input value={String(postValues.gross)} onChange={e => setPostValues({ ...postValues, gross: Number(e.target.value || 0) })} /></div>
+              <div><Label>PAYE</Label><Input value={String(postValues.paye)} onChange={e => setPostValues({ ...postValues, paye: Number(e.target.value || 0) })} /></div>
+              <div><Label>UIF (Employer)</Label><Input value={String(postValues.uif_er)} onChange={e => setPostValues({ ...postValues, uif_er: Number(e.target.value || 0) })} /></div>
+              <div><Label>UIF (Employee)</Label><Input value={String(postValues.uif_emp)} onChange={e => setPostValues({ ...postValues, uif_emp: Number(e.target.value || 0) })} /></div>
+              <div><Label>SDL (Employer)</Label><Input value={String(postValues.sdl_er)} onChange={e => setPostValues({ ...postValues, sdl_er: Number(e.target.value || 0) })} /></div>
+              <div><Label>Net Pay</Label><Input value={String(postValues.net)} onChange={e => setPostValues({ ...postValues, net: Number(e.target.value || 0) })} /></div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setOpenPostDlg(false)}>Cancel</Button>
+              <Button onClick={executePostJournal}>Post</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={openPaySalaryDlg} onOpenChange={setOpenPaySalaryDlg}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Pay Net Salary</DialogTitle></DialogHeader>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Net Amount</Label><Input value={String(paySalaryValues.net)} onChange={e => setPaySalaryValues({ ...paySalaryValues, net: Number(e.target.value || 0) })} /></div>
+              <div>
+                <Label>Bank Account</Label>
+                <Select value={paySalaryValues.bankId} onValueChange={(v: any) => setPaySalaryValues({ ...paySalaryValues, bankId: String(v) })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {bankAccounts.map(b => (
+                      <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setOpenPaySalaryDlg(false)}>Cancel</Button>
+              <Button onClick={executePaySalary}>Pay</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={openPaySarsDlg} onOpenChange={setOpenPaySarsDlg}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Pay SARS (PAYE/UIF/SDL)</DialogTitle></DialogHeader>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>PAYE</Label><Input value={String(paySarsValues.paye)} onChange={e => setPaySarsValues({ ...paySarsValues, paye: Number(e.target.value || 0) })} /></div>
+              <div><Label>SDL</Label><Input value={String(paySarsValues.sdl)} onChange={e => setPaySarsValues({ ...paySarsValues, sdl: Number(e.target.value || 0) })} /></div>
+              <div><Label>UIF Total</Label><Input value={String(paySarsValues.uif_total)} onChange={e => setPaySarsValues({ ...paySarsValues, uif_total: Number(e.target.value || 0) })} /></div>
+              <div>
+                <Label>Bank Account</Label>
+                <Select value={paySarsValues.bankId} onValueChange={(v: any) => setPaySarsValues({ ...paySarsValues, bankId: String(v) })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {bankAccounts.map(b => (
+                      <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setOpenPaySarsDlg(false)}>Cancel</Button>
+              <Button onClick={executePaySars}>Pay</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </CardContent>
+    </Card>
+  );
+}

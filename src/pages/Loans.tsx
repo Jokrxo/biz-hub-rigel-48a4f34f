@@ -85,7 +85,10 @@ export default function Loans() {
         .select("id, account_name")
         .eq("company_id", companyId)
         .order("account_name");
-      setBanks(bankList || []);
+      const banksSafe = Array.isArray(bankList)
+        ? (bankList as any[]).filter((b: any) => b && typeof b.id === 'string' && typeof b.account_name === 'string')
+        : [];
+      setBanks(banksSafe as any);
     };
     loadAux();
   }, [companyId]);
@@ -110,9 +113,10 @@ export default function Loans() {
       .select("id, account_name")
       .eq("company_id", companyId)
       .order("account_name");
-    if (bankList && bankList.length > 0) {
-      setBanks(bankList as any);
-      return bankList[0].id as string;
+    if (Array.isArray(bankList) && bankList.length > 0) {
+      const banksSafe = (bankList as any[]).filter((b: any) => b && typeof b.id === 'string' && typeof b.account_name === 'string');
+      setBanks(banksSafe as any);
+      return String((banksSafe[0] as any).id);
     }
     const { data: created } = await supabase
       .from("bank_accounts" as any)

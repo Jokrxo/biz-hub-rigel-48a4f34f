@@ -1,6 +1,6 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
 
 /* SA Finance Manager Design System - Professional Financial Theme */
 
@@ -453,7 +453,17 @@
 
   /* Professional card styles */
   .card-professional {
-    @apply bg-card border shadow-card backdrop-blur-sm transition-all duration-300 hover:shadow-float;
+    background-color: hsl(var(--card));
+    box-shadow: var(--shadow-card);
+    backdrop-filter: blur(4px);
+    transition-property: all;
+    transition-duration: 300ms;
+    border-width: 1px;
+    border-style: solid;
+    border-color: hsl(var(--border));
+  }
+  .card-professional:hover {
+    box-shadow: var(--shadow-float);
   }
 
   .gradient-primary {
@@ -474,11 +484,12 @@
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: hsl(var(--border));
   }
 
   body {
-    @apply bg-background text-foreground;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
   }
 }
 

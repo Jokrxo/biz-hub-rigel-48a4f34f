@@ -16,7 +16,8 @@ import {
   Building2,
   Building,
   Wallet,
-  Crown
+  Crown,
+  Info
 } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -44,6 +45,7 @@ const navItems = [
   { icon: Users, label: "Customers", href: "/customers" },
   { icon: Crown, label: "Billing", href: "/billing" },
   { icon: Settings, label: "Settings", href: "/settings" },
+  { icon: Info, label: "About", href: "/about-us" },
 ];
 
 export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {

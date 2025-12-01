@@ -218,7 +218,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     interestRate: "",
     loanTerm: "",
     loanTermType: "short",
-    installmentNumber: ""
+    installmentNumber: "",
+    assetFinancedByLoan: false
   });
   const [showFixedAssetsUI, setShowFixedAssetsUI] = useState<boolean>(false);
   const [cogsTotal, setCogsTotal] = useState<number>(0);
@@ -294,7 +295,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       setFixedAssets(assetsData || []);
       const { data: loansData } = await supabase
         .from("loans")
-        .select("id, reference, outstanding_balance, status, loan_type, interest_rate")
+        .select("id, reference, outstanding_balance, status, loan_type, interest_rate, monthly_repayment")
         .eq("company_id", profile.company_id)
         .eq("status", "active")
         .order("reference");
@@ -338,8 +339,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           setForm(prev => ({ ...prev, debitAccount: bankId, creditAccount: arId }));
         } else if (lockType === 'po_sent') {
           const invId = form.debitAccount || pick('asset', ['1300'], ['inventory','stock']);
-          const apId = form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']);
-          setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: apId }));
+          const creditAccountId = (prefill?.funding_source === 'loan' || Boolean(prefill?.loan_ledger_id))
+            ? (form.creditAccount || pick('liability', ['2300','2400'], ['loan']))
+            : (form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']));
+          setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: creditAccountId }));
         }
       }
     } catch (error: any) {
@@ -541,8 +544,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       setForm(prev => ({ ...prev, debitAccount: bankId, creditAccount: arId }));
     } else if (lockType === 'po_sent') {
       const invId = form.debitAccount || pick('asset', ['1300'], ['inventory','stock']);
-      const apId = form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']);
-      setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: apId }));
+      const creditAccountId = (prefill?.funding_source === 'loan' || Boolean(prefill?.loan_ledger_id))
+        ? (form.creditAccount || pick('liability', ['2300','2400'], ['loan']))
+        : (form.creditAccount || pick('liability', ['2000'], ['accounts payable','payable']));
+      setForm(prev => ({ ...prev, debitAccount: invId, creditAccount: creditAccountId }));
     }
   }, [open, lockAccounts, lockType, accounts, form.debitAccount, form.creditAccount]);
   useEffect(() => { ensureLockedAccounts(); }, [ensureLockedAccounts]);
@@ -692,10 +697,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           loanPayable = credits.find(acc => acc.account_type === 'liability' && (acc.account_code === '2300' || acc.account_code === '2400'));
         }
         if (bankAccount) {
-          setForm(prev => ({ ...prev, debitAccount: bankAccount.id }));
+          setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || bankAccount.id }));
         }
         if (loanPayable) {
-          setForm(prev => ({ ...prev, creditAccount: loanPayable.id }));
+          setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || loanPayable.id }));
         }
       } else if (form.element === 'loan_repayment') {
         // Loan repayment: Auto-select loan payable for debit, bank for credit
@@ -706,10 +711,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank')
         );
         if (loanPayable) {
-          setForm(prev => ({ ...prev, debitAccount: loanPayable.id }));
+          setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || loanPayable.id }));
         }
         if (bankAccount) {
-          setForm(prev => ({ ...prev, creditAccount: bankAccount.id }));
+          setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || bankAccount.id }));
         }
       } else if (form.element === 'loan_interest') {
         // Loan interest: Auto-select interest expense for debit, bank for credit
@@ -720,10 +725,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank')
         );
         if (interestExpense) {
-          setForm(prev => ({ ...prev, debitAccount: interestExpense.id }));
+          setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || interestExpense.id }));
         }
         if (bankAccount) {
-          setForm(prev => ({ ...prev, creditAccount: bankAccount.id }));
+          setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || bankAccount.id }));
         }
       } else if (form.element === 'expense' || form.element === 'asset' || form.element === 'liability') {
         let creditAccount: Account | undefined;
@@ -735,23 +740,23 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           );
         }
         if (creditAccount) {
-          setForm(prev => ({ ...prev, creditAccount: creditAccount.id }));
+          setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || creditAccount.id }));
         }
       } else if (form.element === 'income' || form.element === 'equity') {
         const debitAccount = debits.find(acc => 
           keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
         );
         if (debitAccount) {
-          setForm(prev => ({ ...prev, debitAccount: debitAccount.id }));
+          setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || debitAccount.id }));
         }
       } else if (form.element === 'depreciation') {
         const depExp = debits.find(acc => acc.account_type === 'expense' && acc.account_name.toLowerCase().includes('depreciation')) || debits.find(acc => acc.account_type === 'expense' && acc.account_name.toLowerCase().includes('asset'));
         const accDep = credits.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('accumulated')) || credits.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('depreciation'));
         if (depExp) {
-          setForm(prev => ({ ...prev, debitAccount: depExp.id }));
+          setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || depExp.id }));
         }
         if (accDep) {
-          setForm(prev => ({ ...prev, creditAccount: accDep.id }));
+          setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || accDep.id }));
         }
       } else if (form.element === 'asset_disposal') {
         const bankAccount = debits.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank')) || credits.find(acc => acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank'));
@@ -1511,17 +1516,36 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       // - Income: Dr Bank (total), Cr Income (net), Cr VAT Output (vat)
       const entries: any[] = [];
 
-      // If payment method is bank, ensure one side is a bank Asset account (skip for depreciation)
+      // If payment method is bank, ensure one side is a Bank/Cash Asset ledger
       if (form.paymentMethod === 'bank' && form.element !== 'depreciation') {
-        const debitAcc = accounts.find(a => a.id === form.debitAccount);
-        const creditAcc = accounts.find(a => a.id === form.creditAccount);
-        const isDebitBank = !!(debitAcc && (debitAcc.account_type || '').toLowerCase() === 'asset' && (debitAcc.account_name || '').toLowerCase().includes('bank'));
-        const isCreditBank = !!(creditAcc && (creditAcc.account_type || '').toLowerCase() === 'asset' && (creditAcc.account_name || '').toLowerCase().includes('bank'));
+        const norm = accounts.map(a => ({
+          ...a,
+          account_name: (a.account_name || '').toLowerCase(),
+          account_type: (a.account_type || '').toLowerCase(),
+          account_code: (a.account_code || '').toString(),
+        }));
+        const debitAcc = norm.find(a => a.id === form.debitAccount);
+        const creditAcc = norm.find(a => a.id === form.creditAccount);
+        const looksBank = (acc: any) => !!(acc && acc.account_type === 'asset' && (acc.account_name.includes('bank') || acc.account_name.includes('cash') || acc.account_code === '1000' || (acc as any).is_cash_equivalent === true));
+        let isDebitBank = looksBank(debitAcc);
+        let isCreditBank = looksBank(creditAcc);
         if (!isDebitBank && !isCreditBank) {
-          toast({ 
-            title: "Select Bank Ledger Account", 
-            description: "When using bank payment method, either the debit or credit account must be a Bank (Asset) ledger account.", 
-            variant: "destructive" 
+          // Try auto-fix: pick a bank/cash asset from chart if available
+          const autoBank = norm.find(a => a.account_type === 'asset' && (a.account_name.includes('bank') || a.account_name.includes('cash') || a.account_code === '1000' || (a as any).is_cash_equivalent === true));
+          if (autoBank) {
+            // Prefer credit side as Bank for payments
+            const newCredit = form.creditAccount && looksBank(creditAcc) ? form.creditAccount : autoBank.id;
+            const newDebit = form.debitAccount;
+            setForm(prev => ({ ...prev, creditAccount: newCredit, debitAccount: newDebit }));
+            isDebitBank = looksBank(norm.find(a => a.id === newDebit));
+            isCreditBank = looksBank(norm.find(a => a.id === newCredit));
+          }
+        }
+        if (!isDebitBank && !isCreditBank) {
+          toast({
+            title: "Select Bank Ledger Account",
+            description: "When using bank payment method, either the debit or credit account must be a Bank (Asset) ledger account.",
+            variant: "destructive"
           });
           return;
         }
@@ -1828,25 +1852,41 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           );
         }
       } else {
-        // No VAT - simple double entry
-        entries.push(
-          {
-            transaction_id: transaction.id,
-            account_id: form.debitAccount,
-            debit: amount,
-            credit: 0,
-            description: sanitizedDescription,
-            status: "pending"
-          },
-          {
-            transaction_id: transaction.id,
-            account_id: form.creditAccount,
-            debit: 0,
-            credit: amount,
-            description: sanitizedDescription,
-            status: "pending"
+        // No VAT - support multi-leg via prefill.additionalDebits + prefill.splitCredits
+        const multiCredits = prefill && Array.isArray((prefill as any).splitCredits) ? (prefill as any).splitCredits : null;
+        const extraDebits = prefill && Array.isArray((prefill as any).additionalDebits) ? (prefill as any).additionalDebits : null;
+        const multiDebits = prefill && Array.isArray((prefill as any).splitDebits) ? (prefill as any).splitDebits : null;
+        if (form.element === 'expense' && (multiCredits || extraDebits)) {
+          const extraDebitsTotal = Array.isArray(extraDebits) ? extraDebits.reduce((s: number, d: any) => s + Number(d.amount || 0), 0) : 0;
+          const mainDebitAmt = amount - extraDebitsTotal;
+          // Debits
+          entries.push({ transaction_id: transaction.id, account_id: form.debitAccount, debit: mainDebitAmt, credit: 0, description: sanitizedDescription, status: 'pending' });
+          if (Array.isArray(extraDebits)) {
+            for (const d of extraDebits) {
+              entries.push({ transaction_id: transaction.id, account_id: d.accountId, debit: Number(d.amount || 0), credit: 0, description: String(d.description || sanitizedDescription), status: 'pending' });
+            }
           }
-        );
+          // Credits
+          if (Array.isArray(multiCredits)) {
+            for (const c of multiCredits) {
+              entries.push({ transaction_id: transaction.id, account_id: c.accountId, debit: 0, credit: Number(c.amount || 0), description: String(c.description || sanitizedDescription), status: 'pending' });
+            }
+          } else {
+            entries.push({ transaction_id: transaction.id, account_id: form.creditAccount, debit: 0, credit: amount, description: sanitizedDescription, status: 'pending' });
+          }
+        } else if (form.element === 'liability' && Array.isArray(multiDebits)) {
+          // Multi-debit liability payment (e.g., PAYE, SDL, UIF to SARS): Dr multiple liabilities / Cr Bank
+          for (const d of multiDebits) {
+            entries.push({ transaction_id: transaction.id, account_id: d.accountId, debit: Number(d.amount || 0), credit: 0, description: String(d.description || sanitizedDescription), status: 'pending' });
+          }
+          entries.push({ transaction_id: transaction.id, account_id: form.creditAccount, debit: 0, credit: amount, description: sanitizedDescription, status: 'pending' });
+        } else {
+          // Simple double entry
+          entries.push(
+            { transaction_id: transaction.id, account_id: form.debitAccount, debit: amount, credit: 0, description: sanitizedDescription, status: 'pending' },
+            { transaction_id: transaction.id, account_id: form.creditAccount, debit: 0, credit: amount, description: sanitizedDescription, status: 'pending' }
+          );
+        }
       }
 
       // Validate all entries have account_id before inserting
@@ -2079,6 +2119,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           }
         }
       } else if (form.element === 'loan_interest' && form.loanId) {
+        
         // Record loan interest payment
         const { error: interestError } = await supabase
           .from("loan_payments")
@@ -2093,15 +2134,93 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if (interestError) {
           console.error("Interest payment recording error:", interestError);
         }
+      } else if (form.element === 'asset') {
+        // If asset purchase is funded by a loan liability, ensure the loan is recorded, and optionally create a companion loan transaction
+        const creditAcc = accounts.find(a => a.id === form.creditAccount);
+        const type = String(creditAcc?.account_type || '').toLowerCase();
+        const code = String(creditAcc?.account_code || '');
+        const name = String(creditAcc?.account_name || '').toLowerCase();
+        const isLoanCredit = type === 'liability' && (code === '2300' || code === '2400' || name.includes('loan'));
+        if (isLoanCredit) {
+          if (!form.interestRate || !form.loanTerm || String(form.interestRate).trim() === '' || String(form.loanTerm).trim() === '') {
+            toast({ title: 'Loan details required', description: 'Enter interest rate (%) and term (months).', variant: 'destructive' });
+            return;
+          }
+          const interestRatePercent = parseFloat(String(form.interestRate));
+          const interestRateDecimal = interestRatePercent / 100;
+          const termMonths = parseInt(String(form.loanTerm));
+          const monthlyRepayment = calculateMonthlyRepayment(amount, interestRateDecimal / 12, termMonths);
+          // Create or update loan record
+          let createdLoanId: string | undefined = form.loanId || undefined;
+          if (!form.loanId) {
+            const refVal = (form.reference && form.reference.trim() !== '')
+              ? form.reference.trim()
+              : (() => {
+                  const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
+                  let rand = '';
+                  try {
+                    const arr = new Uint8Array(4);
+                    (window.crypto || (globalThis as any).crypto)?.getRandomValues(arr);
+                    rand = Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('').slice(0,6);
+                  } catch {
+                    rand = Math.random().toString(36).slice(2,8);
+                  }
+                  return `LN-${today}-${rand}`;
+                })();
+            const payload = {
+              company_id: companyId,
+              reference: refVal,
+              loan_type: form.loanTermType,
+              principal: amount,
+              interest_rate: interestRateDecimal,
+              start_date: form.date,
+              term_months: termMonths,
+              monthly_repayment: monthlyRepayment,
+              status: 'active',
+              outstanding_balance: amount
+            };
+            const { data: loanRow, error: loanError } = await supabase
+              .from('loans')
+              .upsert(payload as any, { onConflict: 'company_id,reference' })
+              .select('id')
+              .single();
+            if (loanError) {
+              console.error('Loan creation error:', loanError);
+              toast({ title: 'Loan Creation Failed', description: 'Asset posted but loan record could not be created: ' + loanError.message, variant: 'destructive' });
+            }
+            createdLoanId = (loanRow as any)?.id || createdLoanId;
+          } else {
+            try {
+              await supabase
+                .from('loans')
+                .update({ monthly_repayment: monthlyRepayment, interest_rate: interestRateDecimal, term_months: termMonths, loan_type: form.loanTermType })
+                .eq('id', form.loanId);
+            } catch {}
+          }
+          if (createdLoanId) {
+            setForm(prev => ({ ...prev, loanId: createdLoanId }));
+            // Refresh loans list so the newly created loan appears
+            try {
+              const { data: loansData } = await supabase
+                .from('loans')
+                .select('id, reference, outstanding_balance, status, loan_type, interest_rate, monthly_repayment')
+                .eq('company_id', companyId)
+                .eq('status', 'active')
+                .order('reference');
+              setLoans(loansData || []);
+            } catch {}
+          }
+          // Remove automatic creation of a companion 'loan_received' transaction to avoid double-posting
+        }
       }
 
       if (showFixedAssetsUI && form.element === 'asset') {
-        const costNum = parseFloat(form.amount || '0');
-        if (costNum > 0) {
+        const assetCost = netAmount; // use amount excluding VAT for asset cost
+        if (assetCost > 0) {
           await supabase.from('fixed_assets').insert({
             company_id: companyId,
             description: descriptionWithMethod,
-            cost: costNum,
+            cost: assetCost,
             purchase_date: form.date,
             useful_life_years: parseInt(assetUsefulLifeYears || '5'),
             accumulated_depreciation: 0,
@@ -2190,6 +2309,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const selectedElement = ACCOUNTING_ELEMENTS.find(e => e.value === form.element);
   const debitAccountName = accounts.find(a => a.id === form.debitAccount)?.account_name;
   const creditAccountName = accounts.find(a => a.id === form.creditAccount)?.account_name;
+  const isLoanCreditSelected = (() => {
+    const ca = accounts.find(a => a.id === form.creditAccount);
+    const type = String(ca?.account_type || '').toLowerCase();
+    const code = String(ca?.account_code || '');
+    const name = String(ca?.account_name || '').toLowerCase();
+    return type === 'liability' && (code.startsWith('2300') || code.startsWith('2400') || name.includes('loan'));
+  })();
   const [accountSearchOpen, setAccountSearchOpen] = useState(false);
   const [accountSearchTarget, setAccountSearchTarget] = useState<"debit"|"credit">("debit");
   const [globalSearch, setGlobalSearch] = useState("");
@@ -2209,6 +2335,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
 
   // Auto-calculate loan payment amount when loan is selected
   useEffect(() => {
@@ -2372,6 +2499,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                         <SelectItem value="diminishing">Diminishing Balance</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Label>Finance Asset With Loan</Label>
+                    <Switch checked={form.assetFinancedByLoan} onCheckedChange={(checked) => setForm(prev => ({ ...prev, assetFinancedByLoan: checked }))} />
                   </div>
                 </div>
               )}
@@ -2766,6 +2897,44 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     </Select>
                   </div>
                 )
+              )}
+              {form.element === 'asset' && (isLoanCreditSelected || form.assetFinancedByLoan) && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="interestRate">Interest Rate (%)</Label>
+                    <Input
+                      id="interestRate"
+                      type="number"
+                      step="0.01"
+                      placeholder="e.g. 10"
+                      value={form.interestRate}
+                      onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="loanTerm">Term (months)</Label>
+                    <Input
+                      id="loanTerm"
+                      type="number"
+                      step="1"
+                      placeholder="e.g. 12"
+                      value={form.loanTerm}
+                      onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="loanTermType">Loan Term Type</Label>
+                    <Select value={form.loanTermType} onValueChange={(val) => setForm({ ...form, loanTermType: val })}>
+                      <SelectTrigger id="loanTermType">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="short">Short-term</SelectItem>
+                        <SelectItem value="long">Long-term</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
               )}
             </div>
 

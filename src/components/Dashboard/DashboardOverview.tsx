@@ -57,6 +57,11 @@ export const DashboardOverview = () => {
   const [plTrend, setPlTrend] = useState<any[]>([]);
   const [budgetUtilization, setBudgetUtilization] = useState<number>(0);
   const [budgetOnTrack, setBudgetOnTrack] = useState<boolean>(true);
+  const [inventoryLevels, setInventoryLevels] = useState<Array<{ name: string; qty: number }>>([]);
+  const [bsComposition, setBsComposition] = useState<Array<{ label: string; assets: number; liabilities: number; equity: number }>>([]);
+  const [cashGaugePct, setCashGaugePct] = useState<number>(0);
+  const [cashOnTrack, setCashOnTrack] = useState<boolean>(true);
+  const [safeMinimum, setSafeMinimum] = useState<number>(0);
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean; hasProducts: boolean; hasCustomers: boolean; hasSuppliers: boolean; hasEmployees: boolean }>({ hasCoa: true, hasBank: true, hasProducts: true, hasCustomers: true, hasSuppliers: true, hasEmployees: true });
   const [userName, setUserName] = useState<string>("");
   const [companyId, setCompanyId] = useState<string>("");
@@ -80,8 +85,11 @@ export const DashboardOverview = () => {
       recentTransactions: true,
       trialBalance: true,
       arOverview: true,
-      apOverview: true,
+      apOverview: false,
       budgetGauge: true,
+      inventoryStock: true,
+      bsComposition: true,
+      cashGauge: true,
     };
     const saved = localStorage.getItem('dashboardWidgets');
     const parsed = saved ? JSON.parse(saved) : {};
@@ -225,7 +233,7 @@ export const DashboardOverview = () => {
       if ((txRes as any)?.error) throw (txRes as any).error;
       const transactions = (txRes as any)?.data || [];
       const recent = (transactions || []).slice(0, 10).map((t: any) => ({
-        id: String(t.reference_number || t.id || ''),
+        id: String(t.id || t.reference_number || ''),
         description: String(t.description || ''),
         date: new Date(String(t.transaction_date || new Date())).toLocaleDateString('en-ZA'),
         type: ['sales','income','asset_disposal','invoice'].includes(String(t.transaction_type || '').toLowerCase()) ? 'income' : 'expense',
@@ -420,18 +428,18 @@ export const DashboardOverview = () => {
           });
         }
         const cfBudgets = (filteredBudgets || []).filter((r: any) => String(r.category || '').startsWith('cashflow_'));
-        let cfActual = { operating: 0, investing: 0, financing: 0, net: 0 } as any;
+        const cfActual = { operating: 0, investing: 0, financing: 0, net: 0 } as any;
         if (cfBudgets.length > 0) {
           const { data: cf } = await supabase.rpc('generate_cash_flow', {
-            p_company_id: profile.company_id,
-            p_start_date: startDate.toISOString(),
-            p_end_date: endDate.toISOString()
+            _company_id: profile.company_id,
+            _period_start: startDate.toISOString(),
+            _period_end: endDate.toISOString()
           });
           if (cf && cf[0]) {
-            cfActual.operating = Number(cf[0].operating || 0);
-            cfActual.investing = Number(cf[0].investing || 0);
-            cfActual.financing = Number(cf[0].financing || 0);
-            cfActual.net = Number(cf[0].net || 0);
+            cfActual.operating = Number((cf[0] as any).operating_activities || 0);
+            cfActual.investing = Number((cf[0] as any).investing_activities || 0);
+            cfActual.financing = Number((cf[0] as any).financing_activities || 0);
+            cfActual.net = Number((cf[0] as any).net_cash_flow || 0);
           }
         }
         let onTrackCount = 0;
@@ -736,6 +744,24 @@ export const DashboardOverview = () => {
         newMetrics.totalExpenses = Number(expFromBreakdown.toFixed(2));
       }
       setMetrics(newMetrics);
+      try {
+        const { data: products } = await supabase
+          .from('items')
+          .select('name, quantity_on_hand, item_type')
+          .eq('company_id', profile.company_id)
+          .eq('item_type', 'product');
+        const stocks = (products || [])
+          .map((p: any) => ({ name: String(p.name || 'Unknown'), qty: Number(p.quantity_on_hand || 0) }))
+          .sort((a, b) => a.qty - b.qty)
+          .slice(0, 10);
+        setInventoryLevels(stocks);
+      } catch {}
+      setBsComposition([{ label: 'Composition', assets: Number(newMetrics.totalAssets || 0), liabilities: Number(newMetrics.totalLiabilities || 0), equity: Number(newMetrics.totalEquity || 0) }]);
+      const min = Math.max(10000, Number(newMetrics.operatingExpenses || 0));
+      setSafeMinimum(min);
+      const cashPct = min > 0 ? Math.min(100, Math.max(0, (Number(newMetrics.bankBalance || 0) / min) * 100)) : 0;
+      setCashGaugePct(Number(cashPct.toFixed(0)));
+      setCashOnTrack(Number(newMetrics.bankBalance || 0) >= min);
       setLoading(false);
       loadingRef.current = false;
       try { localStorage.setItem(cacheKey, JSON.stringify({ metrics: newMetrics, recentTransactions: recent, chartData: monthlyData, netProfitTrend: netTrend, incomeBreakdown, expenseBreakdown, arTop10: arTop, apTop10: apTop, arDonut: arTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })), apDonut: apTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })) })); } catch {}
@@ -744,6 +770,12 @@ export const DashboardOverview = () => {
       loadingRef.current = false;
     }
   }, [selectedMonth, selectedYear, chartMonths, fetchTrialBalanceForPeriod]);
+
+  useEffect(() => {
+    const h = () => { loadDashboardData(); };
+    window.addEventListener('payroll-data-changed', h);
+    return () => window.removeEventListener('payroll-data-changed', h);
+  }, [loadDashboardData]);
   useEffect(() => {
     loadDashboardData();
   }, [selectedMonth, selectedYear, loadDashboardData]);
@@ -789,7 +821,7 @@ export const DashboardOverview = () => {
         // Set up real-time subscription for auto-updates on ALL financial data
         const channel = supabase
           .channel('dashboard-realtime-updates')
-          .on('postgres_changes', { 
+          .on('postgres_changes' as any, { 
             event: 'insert', 
             schema: 'public', 
             table: 'transactions',
@@ -799,7 +831,7 @@ export const DashboardOverview = () => {
             scheduleReload();
           })
           // Avoid listening to transaction_entries directly to reduce reload noise
-          .on('postgres_changes', { 
+          .on('postgres_changes' as any, { 
             event: 'insert', 
             schema: 'public', 
             table: 'bank_accounts',
@@ -808,7 +840,7 @@ export const DashboardOverview = () => {
             console.log('Bank account changed - updating dashboard...');
             scheduleReload();
           })
-          .on('postgres_changes', { 
+          .on('postgres_changes' as any, { 
             event: 'insert', 
             schema: 'public', 
             table: 'invoices',
@@ -817,7 +849,7 @@ export const DashboardOverview = () => {
             console.log('Invoice changed - updating dashboard...');
             scheduleReload();
           })
-          .on('postgres_changes', { 
+          .on('postgres_changes' as any, { 
             event: 'insert', 
             schema: 'public', 
             table: 'fixed_assets',
@@ -826,7 +858,7 @@ export const DashboardOverview = () => {
             console.log('Fixed asset changed - updating dashboard...');
             scheduleReload();
           })
-          .on('postgres_changes', { 
+          .on('postgres_changes' as any, { 
             event: 'insert', 
             schema: 'public', 
             table: 'purchase_orders',
@@ -835,7 +867,7 @@ export const DashboardOverview = () => {
             console.log('Purchase order changed - updating dashboard...');
             scheduleReload();
           })
-          .on('postgres_changes', { 
+          .on('postgres_changes' as any, { 
             event: 'insert', 
             schema: 'public', 
             table: 'quotes',
@@ -844,7 +876,7 @@ export const DashboardOverview = () => {
             console.log('Quote changed - updating dashboard...');
             scheduleReload();
           })
-          .on('postgres_changes', { 
+          .on('postgres_changes' as any, { 
             event: 'insert', 
             schema: 'public', 
             table: 'sales',
@@ -1297,32 +1329,36 @@ export const DashboardOverview = () => {
           </Card>
         )}
 
-        {widgets.apOverview && (
+        {widgets.inventoryStock && (
           <Card className="card-professional">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-primary" />
-                Unpaid purchases amount (Top 10 Suppliers)
+                <Briefcase className="h-5 w-5 text-primary" />
+                Inventory Stock Levels
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={apTop10} layout="vertical">
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={inventoryLevels} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis type="number" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis type="category" dataKey="name" width={150} stroke="hsl(var(--muted-foreground))" />
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Unpaid']} />
+                  <XAxis type="number" stroke="hsl(var(--muted-foreground))" />
+                  <YAxis type="category" dataKey="name" width={160} stroke="hsl(var(--muted-foreground))" />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [Number(v).toLocaleString('en-ZA'), 'Qty']} />
                   <Legend />
-                  <Bar dataKey="amount" radius={[4, 4, 0, 0]} name="Unpaid">
-                    {apTop10.map((_, index) => (
-                      <Cell key={`ap-top10-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                  <Bar dataKey="qty" name="Qty" radius={[4,4,0,0]}>
+                    {inventoryLevels.map((entry, index) => (
+                      <Cell key={`inv-cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
+              {inventoryLevels.length === 0 && (
+                <div className="text-sm text-muted-foreground mt-2">No inventory items</div>
+              )}
             </CardContent>
           </Card>
         )}
+
 
         {widgets.expenseBreakdown && (
           <Card className="card-professional">
@@ -1374,29 +1410,31 @@ export const DashboardOverview = () => {
           </Card>
         )}
 
-        {widgets.apOverview && (
+        {widgets.bsComposition && (
           <Card className="card-professional">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-primary" />
-                Unpaid purchases percentage by supplier
+                <Building2 className="h-5 w-5 text-primary" />
+                Balance Sheet Composition
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={260}>
-                <PieChart>
-                  <Pie data={apDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
-                    {apDonut.map((entry, index) => (
-                      <Cell key={`ap-cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart data={bsComposition}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="label" stroke="hsl(var(--muted-foreground))" />
+                  <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, n: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, n]} />
                   <Legend />
-                </PieChart>
+                  <Bar dataKey="assets" name="Assets" stackId="bs" fill="#22C55E" />
+                  <Bar dataKey="liabilities" name="Liabilities" stackId="bs" fill="#EF4444" />
+                  <Bar dataKey="equity" name="Equity" stackId="bs" fill="#3B82F6" />
+                </BarChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
         )}
+
         
 
         {widgets.arOverview && (
@@ -1415,7 +1453,11 @@ export const DashboardOverview = () => {
                   <YAxis type="category" dataKey="name" width={150} stroke="hsl(var(--muted-foreground))" />
                   <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Unpaid']} />
                   <Legend />
-                  <Bar dataKey="amount" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Unpaid" />
+                  <Bar dataKey="amount" name="Unpaid" radius={[4, 4, 0, 0]}>
+                    {arTop10.map((entry, index) => (
+                      <Cell key={`ar-cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1427,8 +1469,8 @@ export const DashboardOverview = () => {
           <Card className="card-professional">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-primary" />
-                Fixed Assets Trend
+              <Building2 className="h-5 w-5 text-primary" />
+              Fixed Assets Trend
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1449,6 +1491,23 @@ export const DashboardOverview = () => {
                   <Line type="monotone" dataKey="nbv" name="Net Book Value" stroke="#22c55e" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {widgets.cashGauge && (
+          <Card className="card-professional">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5 text-primary" />
+                Cash Position Gauge
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-center py-6">
+                <DashboardCashGauge percentage={cashGaugePct} onTrack={cashOnTrack} />
+              </div>
+              <div className="text-xs text-muted-foreground text-center">Safe minimum: R {safeMinimum.toLocaleString('en-ZA', { minimumFractionDigits: 2 })} • Current: R {metrics.bankBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
             </CardContent>
           </Card>
         )}
@@ -1561,6 +1620,40 @@ export const DashboardOverview = () => {
 };
 
 const DashboardBudgetGauge = ({ percentage, onTrack }: { percentage: number; onTrack: boolean }) => {
+  const size = 220;
+  const cx = size / 2;
+  const cy = size / 2 + 20;
+  const r = size / 2 - 20;
+  const start = -Math.PI / 2;
+  const end = Math.PI / 2;
+  const pct = Math.max(0, Math.min(100, percentage));
+  const ang = start + (pct / 100) * (end - start);
+  const nx = cx + r * Math.cos(ang);
+  const ny = cy + r * Math.sin(ang);
+  const color = onTrack ? '#22c55e' : '#ef4444';
+  const ticks = Array.from({ length: 11 }).map((_, i) => {
+    const a = start + (i / 10) * (end - start);
+    const x1 = cx + (r - 10) * Math.cos(a);
+    const y1 = cy + (r - 10) * Math.sin(a);
+    const x2 = cx + r * Math.cos(a);
+    const y2 = cy + r * Math.sin(a);
+    return { x1, y1, x2, y2, i };
+  });
+  return (
+    <svg width={size} height={size / 2 + 40} viewBox={`0 0 ${size} ${size / 2 + 40}`}>
+      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="#e5e7eb" strokeWidth={12} />
+      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke={color} strokeWidth={12} strokeLinecap="round" />
+      {ticks.map((t) => (
+        <line key={t.i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke="#9ca3af" strokeWidth={t.i % 5 === 0 ? 3 : 1.5} />
+      ))}
+      <circle cx={cx} cy={cy} r={6} fill="#374151" />
+      <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={color} strokeWidth={4} />
+      <text x={cx} y={cy - 20} textAnchor="middle" fontSize="18" fill={color}>{`${pct.toFixed(0)}%`}</text>
+    </svg>
+  );
+};
+
+const DashboardCashGauge = ({ percentage, onTrack }: { percentage: number; onTrack: boolean }) => {
   const size = 220;
   const cx = size / 2;
   const cy = size / 2 + 20;

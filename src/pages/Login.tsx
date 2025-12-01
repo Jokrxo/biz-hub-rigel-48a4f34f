@@ -13,6 +13,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
 import { Calculator } from "lucide-react";
 import { Github } from "lucide-react";
+import stellaLogo from "@/assets/stellkhygugvyt.jpg";
 
 const schema = z.object({
   email: z.string().trim().email("Enter a valid email"),
@@ -170,7 +171,8 @@ export default function Login() {
           <footer className="mt-8 text-center">
             <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
               <span className="inline-block h-px w-10 bg-gradient-to-r from-transparent via-border to-transparent" />
-              <span>Developed by Sinethemba Zwane — All rights reserved</span>
+              <img src={stellaLogo} alt="Stella Lumen" className="h-5 w-5 rounded object-cover border" />
+              <span>Powered by Stella Lumen</span>
               <span className="inline-block h-px w-10 bg-gradient-to-r from-transparent via-border to-transparent" />
             </div>
           </footer>

@@ -39,132 +39,82 @@ export const buildPayslipPDF = (
   company: CompanyForPDF
 ) => {
   const doc = new jsPDF();
-
   const fmt = (n?: number) => `R ${(n ?? 0).toFixed(2)}`;
-  const dateStr = new Date(slip.period_end).toLocaleDateString('en-ZA');
-
-  // Top header
-  doc.setFontSize(18);
-  doc.text(company.name || 'Company Name', 14, 16);
+  const payDate = new Date(slip.period_end).toLocaleDateString('en-ZA');
   doc.setFontSize(18);
   doc.text('PAYSLIP', 190, 16, { align: 'right' });
+  doc.setFontSize(14);
+  doc.text(company.name || 'Company', 14, 16);
   doc.setFontSize(9);
   if (company.address) doc.text(company.address, 14, 22);
-  let lineY = 28;
-  if (company.phone) { doc.text(`Phone: ${company.phone}`, 14, lineY); lineY += 6; }
-  if (company.email) { doc.text(`Email: ${company.email}`, 14, lineY); }
-
-  // Info panels on the right
-  const boxX = 120;
-  const boxY = 22;
-  const boxW = 76;
-  const rowH = 8;
+  if (company.phone) doc.text(`P: ${company.phone}`, 14, 28);
+  if (company.email) doc.text(`E: ${company.email}`, 14, 34);
   doc.setFontSize(10);
-  doc.setFillColor(235, 235, 235);
-  doc.rect(boxX, boxY, boxW, rowH, 'F');
-  doc.text('PAY DATE', boxX + 4, boxY + 5);
-  doc.rect(boxX, boxY + rowH, boxW, rowH);
-  doc.text(dateStr, boxX + boxW - 4, boxY + rowH + 5, { align: 'right' });
-  doc.setFillColor(235, 235, 235);
-  doc.rect(boxX, boxY + 2 * rowH, boxW, rowH, 'F');
-  doc.text('PAY TYPE', boxX + 4, boxY + 2 * rowH + 5);
-  doc.rect(boxX, boxY + 3 * rowH, boxW, rowH);
-  doc.text('Monthly', boxX + boxW - 4, boxY + 3 * rowH + 5, { align: 'right' });
-  doc.setFillColor(235, 235, 235);
-  doc.rect(boxX, boxY + 4 * rowH, boxW, rowH, 'F');
-  doc.text('PERIOD', boxX + 4, boxY + 4 * rowH + 5);
-  doc.rect(boxX, boxY + 5 * rowH, boxW, rowH);
-  doc.text(` ${new Date(slip.period_start).toLocaleDateString('en-ZA')} - ${dateStr}`, boxX + boxW - 4, boxY + 5 * rowH + 5, { align: 'right' });
-  doc.setFillColor(235, 235, 235);
-  doc.rect(boxX, boxY + 6 * rowH, boxW, rowH, 'F');
-  doc.text('PAYROLL #', boxX + 4, boxY + 6 * rowH + 5);
-  doc.rect(boxX, boxY + 7 * rowH, boxW, rowH);
-  doc.text('—', boxX + boxW - 4, boxY + 7 * rowH + 5, { align: 'right' });
-  doc.setFillColor(235, 235, 235);
-  doc.rect(boxX, boxY + 8 * rowH, boxW, rowH, 'F');
-  doc.text('TAX CODE', boxX + 4, boxY + 8 * rowH + 5);
-  doc.rect(boxX, boxY + 9 * rowH, boxW, rowH);
-  doc.text('—', boxX + boxW - 4, boxY + 9 * rowH + 5, { align: 'right' });
-
-  // Employee information panel
-  const infoY = boxY + 10 * rowH + 10;
-  doc.setFillColor(200, 220, 240);
-  doc.rect(14, infoY - 8, 90, 8, 'F');
-  doc.setFontSize(10);
-  doc.text('EMPLOYEE INFORMATION', 16, infoY - 3);
-  doc.setFontSize(10);
-  doc.text('Full Name', 14, infoY + 8);
-  doc.setFont(undefined, 'bold');
-  doc.text(slip.employee_name, 14, infoY + 14);
-  doc.setFont(undefined, 'normal');
-  const addr = company.address || '';
-  if (addr) doc.text(addr, 14, infoY + 20);
-
-  // Payment Method
-  doc.text('Payment Method: EFT', 14, infoY + 30);
-
-  // Earnings table with Hours, Rate, Current, YTD
-  const det = slip.details || {};
-  const earningsRows: Array<any[]> = [];
-  // Standard/Base Pay
-  earningsRows.push(['Standard Pay', det.hours ?? '', '', fmt(slip.gross - (det.overtime_amount ?? 0) - (Array.isArray(det.allowances) ? det.allowances.reduce((s, a) => s + (a.amount || 0), 0) : 0)), fmt(slip.gross)]);
-  // Overtime
-  if (det.overtime_hours || det.overtime_amount) earningsRows.push(['Overtime Pay', det.overtime_hours ?? '', '', fmt(det.overtime_amount ?? 0), fmt(det.overtime_amount ?? 0)]);
-  // Allowances (aggregated)
-  const allowTotal = (det.allowances || []).reduce((s, a) => s + (a.amount || 0), 0);
-  if (allowTotal) earningsRows.push(['Allowances', '', '', fmt(allowTotal), fmt(allowTotal)]);
-
+  const metaY = 46;
+  doc.text(`Employee: ${slip.employee_name}`, 14, metaY);
+  doc.text(`Period: ${new Date(slip.period_start).toLocaleDateString('en-ZA')} - ${payDate}`, 14, metaY + 6);
+  doc.text(`Pay date: ${payDate}`, 14, metaY + 12);
+  const det = slip.details || {} as any;
+  const earningsList: Array<any[]> = [];
+  const base = Math.max(0, (slip.gross || 0) - (det.overtime_amount || 0) - ((det.allowances || []).reduce((s: number, a: any) => s + (a.amount || 0), 0)));
+  if (base > 0) earningsList.push(['Basic Salary', fmt(base)]);
+  const allowTotal = (det.allowances || []).reduce((s: number, a: any) => s + (a.amount || 0), 0);
+  if (allowTotal > 0) earningsList.push(['Allowances', fmt(allowTotal)]);
+  if ((det.overtime_amount || 0) > 0) earningsList.push(['Overtime', fmt(det.overtime_amount || 0)]);
+  if ((det.bonuses || 0) > 0) earningsList.push(['Bonus', fmt(det.bonuses || 0)]);
+  const deductionsList: Array<any[]> = [];
+  if ((slip.paye || 0) > 0) deductionsList.push(['PAYE', fmt(slip.paye)]);
+  if ((slip.uif_emp || 0) > 0) deductionsList.push(['UIF (Employee)', fmt(slip.uif_emp)]);
+  const otherDeds = Array.isArray(det.deductions) ? det.deductions.filter((d: any) => !String(d.name || '').toLowerCase().includes('paye') && !String(d.name || '').toLowerCase().includes('uif')) : [];
+  otherDeds.forEach((d: any) => deductionsList.push([String(d.name || 'Deduction'), fmt(Number(d.amount || 0))]));
   autoTable(doc, {
-    startY: infoY + 36,
-    head: [['EARNINGS', 'HOURS', 'RATE', 'CURRENT', 'YTD']],
-    body: earningsRows.length ? earningsRows : [['-', '', '', 'R 0.00', 'R 0.00']],
+    startY: metaY + 20,
+    head: [['Earnings', 'Amount']],
+    body: earningsList.length ? earningsList : [['-', 'R 0.00']],
     styles: { fontSize: 9, cellPadding: 3 },
-    headStyles: { fillColor: [180, 180, 180], textColor: 0, fontStyle: 'bold' },
-    columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' } }
+    headStyles: { fillColor: [0, 0, 0], textColor: 255 },
+    columnStyles: { 1: { halign: 'right' } },
+    margin: { left: 14 },
+    tableWidth: 90
   });
-
-  let y = (doc as any).lastAutoTable.finalY + 4;
-  // Gross Pay band
-  doc.setFillColor(235, 235, 235);
-  doc.rect(14, y, 180, 10, 'F');
-  doc.setFontSize(11);
-  doc.text('GROSS PAY', 16, y + 6);
-  doc.text(fmt(slip.gross), 190, y + 6, { align: 'right' });
-
-  // Deductions table
-  const deductionsRows: Array<any[]> = [];
-  deductionsRows.push(['PAYE Tax', fmt(slip.paye), fmt(slip.paye)]);
-  deductionsRows.push(['UIF (Employee)', fmt(slip.uif_emp), fmt(slip.uif_emp)]);
+  const rightStartY = metaY + 20;
   autoTable(doc, {
-    startY: y + 14,
-    head: [['DEDUCTIONS', 'CURRENT', 'YTD']],
-    body: deductionsRows.length ? deductionsRows : [['-', 'R 0.00', 'R 0.00']],
+    startY: rightStartY,
+    head: [['Deductions', 'Amount']],
+    body: deductionsList.length ? deductionsList : [['-', 'R 0.00']],
     styles: { fontSize: 9, cellPadding: 3 },
-    headStyles: { fillColor: [180, 180, 180], textColor: 0, fontStyle: 'bold' },
-    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } }
+    headStyles: { fillColor: [0, 0, 0], textColor: 255 },
+    columnStyles: { 1: { halign: 'right' } },
+    margin: { left: 114 },
+    tableWidth: 80
   });
-
-  y = (doc as any).lastAutoTable.finalY + 4;
-  const totalDeductions = (slip.paye || 0) + (slip.uif_emp || 0);
-  doc.setFillColor(235, 235, 235);
-  doc.rect(14, y, 180, 10, 'F');
-  doc.setFontSize(11);
-  doc.text('TOTAL DEDUCTIONS', 16, y + 6);
-  doc.text(fmt(totalDeductions), 190, y + 6, { align: 'right' });
-
-  // Net Pay band
-  y += 14;
-  doc.setFillColor(220, 220, 220);
-  doc.rect(70, y, 124, 12, 'F');
+  let y = Math.max((doc as any).lastAutoTable.finalY, (doc as any).lastAutoTable.finalY) + 8;
+  doc.setFontSize(10);
+  doc.text('Gross Pay', 14, y);
+  doc.text(fmt(slip.gross), 60, y, { align: 'right' });
+  y += 6;
+  const totalDeds = (slip.paye || 0) + (slip.uif_emp || 0) + otherDeds.reduce((s: number, d: any) => s + Number(d.amount || 0), 0);
+  doc.text('Total Deductions', 14, y);
+  doc.text(fmt(totalDeds), 60, y, { align: 'right' });
+  y += 8;
   doc.setFontSize(12);
-  doc.text('NET PAY', 76, y + 8);
-  doc.text(fmt(slip.net), 190, y + 8, { align: 'right' });
-
-  // Footer contact
-  y += 20;
-  doc.setFontSize(8);
-  const contact = company.name ? `[${company.name}]` : '[Company]';
-  doc.text(`If you have any questions about this payslip, please contact: ${contact}`, 14, y);
-
+  doc.text('Net Pay', 14, y);
+  doc.text(fmt(slip.net), 60, y, { align: 'right' });
+  y += 10;
+  const contribRows: Array<any[]> = [];
+  if ((slip.uif_er || 0) > 0) contribRows.push(['UIF (Employer)', fmt(slip.uif_er)]);
+  if ((slip.sdl_er || 0) > 0) contribRows.push(['SDL (Employer)', fmt(slip.sdl_er)]);
+  if (contribRows.length) {
+    autoTable(doc, {
+      startY: y,
+      head: [['Employer Contributions', 'Amount']],
+      body: contribRows,
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [240, 240, 240], textColor: 0 },
+      columnStyles: { 1: { halign: 'right' } },
+      margin: { left: 114 },
+      tableWidth: 80
+    });
+  }
   return doc;
 };

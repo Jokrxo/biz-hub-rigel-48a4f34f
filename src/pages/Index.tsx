@@ -3,6 +3,7 @@ import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import { DashboardOverview } from "@/components/Dashboard/DashboardOverview";
 import SEO from "@/components/SEO";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Info, ChevronLeft } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
@@ -41,8 +42,8 @@ const Index = () => {
   }, [user]);
 
   useEffect(() => {
-    const loadStatus = async () => {
-      const ac = new AbortController();
+    const ac = new AbortController();
+    const run = async () => {
       try {
         const { data: { user: authUser } } = await supabase.auth.getUser();
         if (!authUser) return;
@@ -100,10 +101,9 @@ const Index = () => {
           hasEmployees: (employeesCount || 0) > 0
         });
       } catch {}
-      return () => ac.abort();
     };
-    const cleanup = loadStatus();
-    return () => { if (typeof cleanup === 'function') cleanup(); };
+    run();
+    return () => ac.abort();
   }, []);
   return (
     <>
@@ -199,6 +199,7 @@ const Index = () => {
           </div>
 
           <DashboardOverview />
+
 
           <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
             <DialogContent className="sm:max-w-[640px] p-4">

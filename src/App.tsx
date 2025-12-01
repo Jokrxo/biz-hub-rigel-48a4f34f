@@ -34,6 +34,7 @@ const Budget = lazy(() => import("./pages/Budget"));
 const Payroll = lazy(() => import("./pages/Payroll"));
 const Loans = lazy(() => import("./pages/Loans"));
 const PaymentPortal = lazy(() => import("./pages/PaymentPortal"));
+import About from "./pages/About";
 
 const queryClient = new QueryClient();
 
@@ -106,6 +107,10 @@ const App = () => {
             <Route path="/payroll" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Payroll /></Suspense></ProtectedRoute>} />
             <Route path="/billing" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Settings /></Suspense></ProtectedRoute>} />
+            <Route path="/about" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
+            <Route path="/about-us" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
+            <Route path="/dashboard/about" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
+            <Route path="/dashboard/about-us" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
 
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

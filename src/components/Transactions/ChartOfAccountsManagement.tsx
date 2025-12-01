@@ -190,7 +190,7 @@ export const ChartOfAccountsManagement = () => {
     { key: "income", label: "Income" },
     { key: "transfer", label: "Transfer" },
   ];
-  const [mappings, setMappings] = useState<Record<string, { debit_account_id: string | null; credit_account_id: string | null }>>({});
+  const [mappings] = useState<Record<string, { debit_account_id: string | null; credit_account_id: string | null }>>({});
   
   const [formData, setFormData] = useState({
     account_code: "",
@@ -225,19 +225,8 @@ export const ChartOfAccountsManagement = () => {
   }, []);
   const loadMappings = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user.id)
-        .single();
-      if (!profile) return;
-      const { data } = await supabase
-        .from("account_mappings")
-        .select("*")
-        .eq("company_id", profile.company_id);
-      setMappings(data || []);
+      // Mapping persistence not available; feature disabled until backend support exists
+      return;
     } catch {}
   }, []);
   useEffect(() => {
@@ -249,22 +238,8 @@ export const ChartOfAccountsManagement = () => {
 
   const saveMappings = async () => {
     try {
-      if (!companyId) throw new Error("Company context not found");
-      const payload = TRANSACTION_TYPES.map(tt => ({
-        company_id: companyId,
-        transaction_type: tt.key,
-        debit_account_id: mappings[tt.key]?.debit_account_id || null,
-        credit_account_id: mappings[tt.key]?.credit_account_id || null,
-      }));
-
-      const { error } = await supabase
-        .from("transaction_type_mappings")
-        .upsert(payload, { onConflict: "company_id,transaction_type" });
-      if (error) throw error;
-      toast({ title: "Saved", description: "Transaction type mappings updated" });
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    }
+      toast({ title: "Unavailable", description: "Saving mappings is currently unsupported.", variant: "destructive" });
+    } catch {}
   };
 
   const loadSAChartOfAccounts = async () => {
@@ -649,71 +624,7 @@ export const ChartOfAccountsManagement = () => {
         </CardContent>
       </Card>
 
-      {/* Transaction Type → Account Mapping */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Transaction Type Mappings</CardTitle>
-          <CardDescription>
-            Define default debit and credit accounts for each transaction type.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            {TRANSACTION_TYPES.map(tt => (
-              <div key={tt.key} className="rounded-md border p-4">
-                <div className="font-semibold mb-2">{tt.label}</div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <Label>Debit Account</Label>
-                    <Select
-                      value={mappings[tt.key]?.debit_account_id || ""}
-                      onValueChange={(val) => setMappings(prev => ({
-                        ...prev,
-                        [tt.key]: { ...prev[tt.key], debit_account_id: val }
-                      }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select account" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {accounts.map(a => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.account_code} — {a.account_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label>Credit Account</Label>
-                    <Select
-                      value={mappings[tt.key]?.credit_account_id || ""}
-                      onValueChange={(val) => setMappings(prev => ({
-                        ...prev,
-                        [tt.key]: { ...prev[tt.key], credit_account_id: val }
-                      }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select account" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {accounts.map(a => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.account_code} — {a.account_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="flex justify-end">
-            <Button onClick={saveMappings} className="bg-gradient-primary">Save Mappings</Button>
-          </div>
-        </CardContent>
-      </Card>
+      
     </div>
   );
 };

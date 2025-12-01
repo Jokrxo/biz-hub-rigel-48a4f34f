@@ -142,7 +142,7 @@ export const TransactionManagement = () => {
       if (error) throw error;
       if (rangeError) throw rangeError;
       setItems(pagedData || []);
-      setTotalCount(typeof count === 'number' ? count : (data?.length || 0));
+      setTotalCount(typeof count === 'number' ? count : ((pagedData && Array.isArray(pagedData) ? pagedData.length : 0)));
     } catch (e: any) {
       toast({ title: "Failed to load", description: e.message, variant: "destructive" });
     } finally {
@@ -251,6 +251,10 @@ export const TransactionManagement = () => {
         const description = params.get("description") || "Asset Purchase";
         const usefulLifeYears = params.get("useful_life_years") || "5";
         const depreciationMethod = params.get("depreciation_method") || "straight_line";
+        const interestRate = params.get("interest_rate") || "";
+        const loanTerm = params.get("loan_term") || "";
+        const loanTermType = params.get("loan_term_type") || "short";
+        const vatRate = params.get("vat_rate") || "0";
 
         const creditAccount = bankLedgerId || loanLedgerId || "";
         const paymentMethod = bankLedgerId ? "bank" : "accrual";
@@ -262,10 +266,14 @@ export const TransactionManagement = () => {
           bankAccountId: bankId,
           debitAccount: debitAccountId,
           creditAccount,
-          vatRate: "0",
+          vatRate,
           paymentMethod,
           depreciationMethod,
-          usefulLifeYears
+          usefulLifeYears,
+          interestRate,
+          loanTerm,
+          loanTermType,
+          assetFinancedByLoan: Boolean(loanLedgerId)
         };
         setPrefillData(prefill);
         setEditData(null);

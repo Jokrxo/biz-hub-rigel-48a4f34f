@@ -258,7 +258,7 @@ export const BudgetManagement = () => {
         if (error) throw error;
         toast({ title: "Success", description: "Budget updated successfully" });
       } else {
-        const { data: existing } = await supabase
+        const { data: existing } = await (supabase as any)
           .from("budgets")
           .select("id")
           .eq("company_id", profile!.company_id)
@@ -353,7 +353,7 @@ export const BudgetManagement = () => {
         .eq('user_id', user?.id)
         .maybeSingle();
       if (!profile?.company_id) return;
-      const q = supabase.from('budgets')
+      const q: any = (supabase as any).from('budgets')
         .select('id')
         .eq('company_id', profile.company_id)
         .eq('budget_year', parseInt(selectedYear))

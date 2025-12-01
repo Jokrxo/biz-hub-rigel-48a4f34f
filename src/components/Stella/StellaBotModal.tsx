@@ -32,6 +32,16 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
   const [aiEnabled, setAiEnabled] = useState<boolean>(false);
   const [openaiKey, setOpenaiKey] = useState<string>("");
   const [model, setModel] = useState<string>("gpt-4o-mini");
+  useEffect(() => {
+    if (!open) return;
+    const hash = window.location.hash;
+    if (hash === '#problems_and_diagnostics') setActiveTab('diagnostics');
+    const onHashChange = () => {
+      if (window.location.hash === '#problems_and_diagnostics') setActiveTab('diagnostics');
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => { window.removeEventListener('hashchange', onHashChange); };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -215,7 +225,7 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
               <TabsTrigger value="ask">Ask</TabsTrigger>
               <TabsTrigger value="feed">Live Feed</TabsTrigger>
               <TabsTrigger value="shortcuts">Shortcuts</TabsTrigger>
-              <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
+              <TabsTrigger value="diagnostics">Problems & Diagnostics</TabsTrigger>
             </TabsList>
             <TabsContent value="chat">
               <div className="space-y-3">
@@ -280,7 +290,7 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
               </div>
             </TabsContent>
             <TabsContent value="diagnostics">
-              <div className="space-y-2">
+              <div id="problems_and_diagnostics" className="space-y-2">
                 <div className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-primary" /><span className="text-sm">Company-scoped realtime enabled</span></div>
                 <div className="text-xs text-muted-foreground">Live updates bound to your company only.</div>
               <div className="mt-4 p-3 border rounded-md space-y-3">
