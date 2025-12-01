@@ -8,6 +8,8 @@ import { SalesTaxReport } from "@/components/Tax/SalesTaxReport";
 import { TaxReturns } from "@/components/Tax/TaxReturns";
 import { VAT201 } from "@/components/Tax/VAT201";
 import { PurchaseTaxReport } from "@/components/Tax/PurchaseTaxReport";
+import InterpretationNote45 from "../components/Tax/InterpretationNote45";
+import { TaxComputation } from "@/components/Tax/TaxComputation";
 
 export default function TaxPage() {
   const [activeTab, setActiveTab] = useState("overview");
@@ -25,20 +27,19 @@ export default function TaxPage() {
           <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="rates">Tax Rates</TabsTrigger>
               <TabsTrigger value="sales-tax">Sales Tax Report</TabsTrigger>
               <TabsTrigger value="tax-expense">Tax on Expense (Purchases)</TabsTrigger>
               <TabsTrigger value="returns">Tax Returns</TabsTrigger>
               <TabsTrigger value="vat201">VAT201 Calculation</TabsTrigger>
+              <TabsTrigger value="tax-computation">Tax Computation</TabsTrigger>
+              <TabsTrigger value="rates">Tax Rates</TabsTrigger>
+              <TabsTrigger value="note45">Interpretation Note 45</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview">
               <TaxOverview />
             </TabsContent>
 
-            <TabsContent value="rates">
-              <TaxRates />
-            </TabsContent>
 
             <TabsContent value="sales-tax">
               <SalesTaxReport />
@@ -54,6 +55,18 @@ export default function TaxPage() {
 
             <TabsContent value="vat201">
               <VAT201 />
+            </TabsContent>
+
+            <TabsContent value="tax-computation">
+              <TaxComputation />
+            </TabsContent>
+
+            <TabsContent value="rates">
+              <TaxRates />
+            </TabsContent>
+
+            <TabsContent value="note45">
+              <InterpretationNote45 />
             </TabsContent>
           </Tabs>
         </div>

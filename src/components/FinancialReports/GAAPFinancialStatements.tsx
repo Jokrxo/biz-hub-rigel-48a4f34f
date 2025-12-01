@@ -967,10 +967,98 @@ export const GAAPFinancialStatements = () => {
   };
 
   const renderComparativeBalanceSheet = () => {
-    const curr = bsGroups(trialBalance);
-    const prev = bsGroups(trialBalancePrev);
     const y = selectedYear;
     const py = selectedYear - 1;
+    const normalizeName = (name: string) => name.toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    const buildMap = (tb: TrialBalanceRow[]) => new Map(tb.map(r => [String(r.account_code || r.account_id), r]));
+    const mapCurr = buildMap(trialBalance);
+    const mapPrev = buildMap(trialBalancePrev);
+    const listCurrentAssets = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'asset' && (r.account_name.toLowerCase().includes('cash') || r.account_name.toLowerCase().includes('bank') || r.account_name.toLowerCase().includes('receivable') || r.account_name.toLowerCase().includes('inventory') || parseInt(r.account_code) < 1500) && !String(r.account_name || '').toLowerCase().includes('vat'));
+    const vatReceivableFor = (tb: TrialBalanceRow[]) => tb.filter(r => String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable')).reduce((s, r) => s + r.balance, 0);
+    const nonCurrentAssetsAll = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'asset' && !listCurrentAssets(tb).includes(r));
+    const accDepRows = (tb: TrialBalanceRow[]) => nonCurrentAssetsAll(tb).filter(r => String(r.account_name || '').toLowerCase().includes('accumulated'));
+    const nonCurrentAssets = (tb: TrialBalanceRow[]) => nonCurrentAssetsAll(tb).filter(r => !String(r.account_name || '').toLowerCase().includes('accumulated'));
+    const nbvFor = (tb: TrialBalanceRow[], assetRow: TrialBalanceRow) => {
+      const base = normalizeName(assetRow.account_name);
+      const related = accDepRows(tb).filter(ad => {
+        const adBase = normalizeName(ad.account_name);
+        return adBase.includes(base) || base.includes(adBase);
+      });
+      const accTotal = related.reduce((sum, r) => sum + r.balance, 0);
+      return assetRow.balance - accTotal;
+    };
+    const vatPayableFor = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'liability' && String(r.account_name || '').toLowerCase().includes('vat')).reduce((s, r) => s + r.balance, 0);
+    const currentLiabilitiesList = (tb: TrialBalanceRow[]) => {
+      const rows = tb.filter(r => r.account_type.toLowerCase() === 'liability' && !String(r.account_name || '').toLowerCase().includes('vat'));
+      return rows.filter(r => {
+        const name = String(r.account_name || '').toLowerCase();
+        const code = String(r.account_code || '');
+        const isLoan = name.includes('loan');
+        const isLongLoan = isLoan && (code === '2400' || name.includes('long'));
+        const isShortLoan = isLoan && (code === '2300' || name.includes('short'));
+        const isPayableOrTax = name.includes('payable') || name.includes('sars');
+        return (isPayableOrTax && !isLongLoan) || isShortLoan;
+      });
+    };
+    const prevSetCurrentLiab = new Set(currentLiabilitiesList(trialBalancePrev).map(r => r.account_id));
+    const nonCurrentLiabilitiesList = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'liability' && !prevSetCurrentLiab.has(r.account_id));
+    const equityList = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'equity');
+    const mergeCodes = Array.from(new Set([...trialBalance.map(r => String(r.account_code || r.account_id)), ...trialBalancePrev.map(r => String(r.account_code || r.account_id))]));
+    const rows: Array<{ label: string; curr: number; prev: number; bold?: boolean }> = [];
+    rows.push({ label: 'ASSETS', curr: 0, prev: 0, bold: true });
+    rows.push({ label: 'VAT Receivable', curr: vatReceivableFor(trialBalance), prev: vatReceivableFor(trialBalancePrev) });
+    rows.push({ label: 'Current Assets', curr: 0, prev: 0, bold: true });
+    listCurrentAssets(trialBalance).forEach(a => {
+      const key = String(a.account_code || a.account_id);
+      const prevRow = mapPrev.get(key);
+      rows.push({ label: `${a.account_code} - ${a.account_name}`, curr: a.balance, prev: prevRow ? prevRow.balance : 0 });
+    });
+    const currCA = rows.filter(r => !r.bold && (listCurrentAssets(trialBalance).some(a => `${a.account_code} - ${a.account_name}` === r.label))).reduce((s, r) => s + r.curr, 0) + vatReceivableFor(trialBalance);
+    const prevCA = rows.filter(r => !r.bold && (listCurrentAssets(trialBalancePrev).some(a => `${a.account_code} - ${a.account_name}` === r.label))).reduce((s, r) => s + r.prev, 0) + vatReceivableFor(trialBalancePrev);
+    rows.push({ label: 'Total Current Assets', curr: currCA, prev: prevCA, bold: true });
+    rows.push({ label: 'Non-current Assets (NBV)', curr: 0, prev: 0, bold: true });
+    nonCurrentAssets(trialBalance).forEach(a => {
+      const key = String(a.account_code || a.account_id);
+      const prevRow = mapPrev.get(key);
+      const currNbv = nbvFor(trialBalance, a);
+      const prevNbv = prevRow ? nbvFor(trialBalancePrev, prevRow) : 0;
+      rows.push({ label: `${a.account_code} - ${a.account_name}`, curr: currNbv, prev: prevNbv });
+    });
+    const currNCA = nonCurrentAssets(trialBalance).reduce((s, a) => s + nbvFor(trialBalance, a), 0);
+    const prevNCA = nonCurrentAssets(trialBalancePrev).reduce((s, a) => s + nbvFor(trialBalancePrev, a), 0);
+    rows.push({ label: 'Total Non-current Assets', curr: currNCA, prev: prevNCA, bold: true });
+    rows.push({ label: 'TOTAL ASSETS', curr: currCA + currNCA, prev: prevCA + prevNCA, bold: true });
+    rows.push({ label: 'LIABILITIES', curr: 0, prev: 0, bold: true });
+    rows.push({ label: 'VAT Payable', curr: vatPayableFor(trialBalance), prev: vatPayableFor(trialBalancePrev) });
+    rows.push({ label: 'Current Liabilities', curr: 0, prev: 0, bold: true });
+    currentLiabilitiesList(trialBalance).forEach(l => {
+      const key = String(l.account_code || l.account_id);
+      const prevRow = mapPrev.get(key);
+      rows.push({ label: `${l.account_code} - ${l.account_name}`, curr: l.balance, prev: prevRow ? prevRow.balance : 0 });
+    });
+    const currCL = currentLiabilitiesList(trialBalance).reduce((s, r) => s + r.balance, 0) + vatPayableFor(trialBalance);
+    const prevCL = currentLiabilitiesList(trialBalancePrev).reduce((s, r) => s + r.balance, 0) + vatPayableFor(trialBalancePrev);
+    rows.push({ label: 'Total Current Liabilities', curr: currCL, prev: prevCL, bold: true });
+    rows.push({ label: 'Non-current Liabilities', curr: 0, prev: 0, bold: true });
+    nonCurrentLiabilitiesList(trialBalance).forEach(l => {
+      const key = String(l.account_code || l.account_id);
+      const prevRow = mapPrev.get(key);
+      rows.push({ label: `${l.account_code} - ${l.account_name}`, curr: l.balance, prev: prevRow ? prevRow.balance : 0 });
+    });
+    const currNCL = nonCurrentLiabilitiesList(trialBalance).reduce((s, r) => s + r.balance, 0);
+    const prevNCL = nonCurrentLiabilitiesList(trialBalancePrev).reduce((s, r) => s + r.balance, 0);
+    rows.push({ label: 'Total Non-current Liabilities', curr: currNCL, prev: prevNCL, bold: true });
+    rows.push({ label: 'TOTAL LIABILITIES', curr: currCL + currNCL, prev: prevCL + prevNCL, bold: true });
+    rows.push({ label: 'EQUITY', curr: 0, prev: 0, bold: true });
+    equityList(trialBalance).forEach(e => {
+      const key = String(e.account_code || e.account_id);
+      const prevRow = mapPrev.get(key);
+      rows.push({ label: `${e.account_code} - ${e.account_name}`, curr: e.balance, prev: prevRow ? prevRow.balance : 0 });
+    });
+    const currEQ = equityList(trialBalance).reduce((s, r) => s + r.balance, 0);
+    const prevEQ = equityList(trialBalancePrev).reduce((s, r) => s + r.balance, 0);
+    rows.push({ label: 'Total Equity', curr: currEQ, prev: prevEQ, bold: true });
+    rows.push({ label: 'TOTAL L & E', curr: currCL + currNCL + currEQ, prev: prevCL + prevNCL + prevEQ, bold: true });
     return (
       <div className="space-y-4">
         <h3 className="text-xl font-bold">Comparative Statement of Financial Position</h3>
@@ -979,82 +1067,64 @@ export const GAAPFinancialStatements = () => {
           <div className="font-semibold text-right">{y}</div>
           <div className="font-semibold text-right">{py}</div>
           <div className="font-semibold text-right">% Change</div>
-          <div className="font-semibold">ASSETS</div>
-          <div></div><div></div><div></div>
-          <div>VAT Receivable</div>
-          <div className="text-right">R {curr.vatReceivable.toLocaleString()}</div>
-          <div className="text-right">R {prev.vatReceivable.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.vatReceivable, prev.vatReceivable))}>{percentChange(curr.vatReceivable, prev.vatReceivable).toFixed(1)}%</div>
-          <div>Current Assets</div>
-          <div className="text-right">R {curr.totalCurrentAssets.toLocaleString()}</div>
-          <div className="text-right">R {prev.totalCurrentAssets.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.totalCurrentAssets, prev.totalCurrentAssets))}>{percentChange(curr.totalCurrentAssets, prev.totalCurrentAssets).toFixed(1)}%</div>
-          <div>Non-current Assets (NBV)</div>
-          <div className="text-right">R {curr.totalNonCurrentAssets.toLocaleString()}</div>
-          <div className="text-right">R {prev.totalNonCurrentAssets.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.totalNonCurrentAssets, prev.totalNonCurrentAssets))}>{percentChange(curr.totalNonCurrentAssets, prev.totalNonCurrentAssets).toFixed(1)}%</div>
-          <div className="font-semibold">TOTAL ASSETS</div>
-          <div className="text-right font-semibold">R {curr.totalAssets.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {prev.totalAssets.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.totalAssets, prev.totalAssets)) + ' text-right font-semibold'}>{percentChange(curr.totalAssets, prev.totalAssets).toFixed(1)}%</div>
-          <div className="font-semibold mt-2">LIABILITIES</div>
-          <div></div><div></div><div></div>
-          <div>VAT Payable</div>
-          <div className="text-right">R {curr.vatPayable.toLocaleString()}</div>
-          <div className="text-right">R {prev.vatPayable.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.vatPayable, prev.vatPayable))}>{percentChange(curr.vatPayable, prev.vatPayable).toFixed(1)}%</div>
-          <div>Current Liabilities</div>
-          <div className="text-right">R {curr.totalCurrentLiabilities.toLocaleString()}</div>
-          <div className="text-right">R {prev.totalCurrentLiabilities.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.totalCurrentLiabilities, prev.totalCurrentLiabilities))}>{percentChange(curr.totalCurrentLiabilities, prev.totalCurrentLiabilities).toFixed(1)}%</div>
-          <div>Non-current Liabilities</div>
-          <div className="text-right">R {curr.totalNonCurrentLiabilities.toLocaleString()}</div>
-          <div className="text-right">R {prev.totalNonCurrentLiabilities.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.totalNonCurrentLiabilities, prev.totalNonCurrentLiabilities))}>{percentChange(curr.totalNonCurrentLiabilities, prev.totalNonCurrentLiabilities).toFixed(1)}%</div>
-          <div className="font-semibold">TOTAL LIABILITIES</div>
-          <div className="text-right font-semibold">R {curr.totalLiabilities.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {prev.totalLiabilities.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.totalLiabilities, prev.totalLiabilities)) + ' text-right font-semibold'}>{percentChange(curr.totalLiabilities, prev.totalLiabilities).toFixed(1)}%</div>
-          <div className="font-semibold mt-2">EQUITY</div>
-          <div></div><div></div><div></div>
-          <div className="font-semibold">Total Equity</div>
-          <div className="text-right font-semibold">R {curr.totalEquity.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {prev.totalEquity.toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.totalEquity, prev.totalEquity)) + ' text-right font-semibold'}>{percentChange(curr.totalEquity, prev.totalEquity).toFixed(1)}%</div>
-          <div className="font-semibold">TOTAL L & E</div>
-          <div className="text-right font-semibold">R {(curr.totalLiabilities + curr.totalEquity).toLocaleString()}</div>
-          <div className="text-right font-semibold">R {(prev.totalLiabilities + prev.totalEquity).toLocaleString()}</div>
-          <div className={pctClass(percentChange(curr.totalLiabilities + curr.totalEquity, prev.totalLiabilities + prev.totalEquity)) + ' text-right font-semibold'}>{percentChange(curr.totalLiabilities + curr.totalEquity, prev.totalLiabilities + prev.totalEquity).toFixed(1)}%</div>
+          {rows.map((r, i) => (
+            <>
+              <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
+              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
+              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
+              <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
+            </>
+          ))}
         </div>
       </div>
     );
   };
 
   const renderComparativeIncomeStatement = () => {
-    const revenueCurr = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
-    const expensesCurr = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
-    const costOfSalesCurr = expensesCurr.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
-    const operatingExpensesCurr = expensesCurr.filter(r => !costOfSalesCurr.includes(r)).filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
-    const totalRevenueCurr = revenueCurr.reduce((sum, r) => sum + r.balance, 0);
-    const totalCostOfSalesCurrRaw = costOfSalesCurr.reduce((sum, r) => sum + r.balance, 0);
-    const totalCostOfSalesCurr = totalCostOfSalesCurrRaw > 0 ? totalCostOfSalesCurrRaw : fallbackCOGS;
-    const grossProfitCurr = totalRevenueCurr - totalCostOfSalesCurr;
-    const totalOperatingExpensesCurr = operatingExpensesCurr.reduce((sum, r) => sum + r.balance, 0);
-    const netProfitCurr = grossProfitCurr - totalOperatingExpensesCurr;
-
-    const revenuePrev = trialBalancePrev.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
-    const expensesPrev = trialBalancePrev.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
-    const costOfSalesPrev = expensesPrev.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
-    const operatingExpensesPrev = expensesPrev.filter(r => !costOfSalesPrev.includes(r)).filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
-    const totalRevenuePrev = revenuePrev.reduce((sum, r) => sum + r.balance, 0);
-    const totalCostOfSalesPrevRaw = costOfSalesPrev.reduce((sum, r) => sum + r.balance, 0);
-    const totalCostOfSalesPrev = totalCostOfSalesPrevRaw > 0 ? totalCostOfSalesPrevRaw : fallbackCOGSPrev;
-    const grossProfitPrev = totalRevenuePrev - totalCostOfSalesPrev;
-    const totalOperatingExpensesPrev = operatingExpensesPrev.reduce((sum, r) => sum + r.balance, 0);
-    const netProfitPrev = grossProfitPrev - totalOperatingExpensesPrev;
-
     const y = selectedYear;
     const py = selectedYear - 1;
+    const revenueCurr = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+    const revenuePrev = trialBalancePrev.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+    const expensesCurr = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
+    const expensesPrev = trialBalancePrev.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
+    const costOfSalesCurr = expensesCurr.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+    const costOfSalesPrev = expensesPrev.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+    const operatingExpensesCurr = expensesCurr.filter(r => !costOfSalesCurr.includes(r)).filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
+    const operatingExpensesPrev = expensesPrev.filter(r => !costOfSalesPrev.includes(r)).filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
+    const sum = (arr: TrialBalanceRow[]) => arr.reduce((s, r) => s + r.balance, 0);
+    const totalRevenueCurr = sum(revenueCurr);
+    const totalRevenuePrev = sum(revenuePrev);
+    const totalCostOfSalesCurrRaw = sum(costOfSalesCurr);
+    const totalCostOfSalesPrevRaw = sum(costOfSalesPrev);
+    const totalCostOfSalesCurr = totalCostOfSalesCurrRaw > 0 ? totalCostOfSalesCurrRaw : fallbackCOGS;
+    const totalCostOfSalesPrev = totalCostOfSalesPrevRaw > 0 ? totalCostOfSalesPrevRaw : fallbackCOGSPrev;
+    const grossProfitCurr = totalRevenueCurr - totalCostOfSalesCurr;
+    const grossProfitPrev = totalRevenuePrev - totalCostOfSalesPrev;
+    const totalOperatingExpensesCurr = sum(operatingExpensesCurr);
+    const totalOperatingExpensesPrev = sum(operatingExpensesPrev);
+    const netProfitCurr = grossProfitCurr - totalOperatingExpensesCurr;
+    const netProfitPrev = grossProfitPrev - totalOperatingExpensesPrev;
+    const rows: Array<{ label: string; curr: number; prev: number; bold?: boolean }> = [];
+    rows.push({ label: 'REVENUE', curr: 0, prev: 0, bold: true });
+    revenueCurr.forEach(r => {
+      const prevMatch = revenuePrev.find(p => p.account_code === r.account_code);
+      rows.push({ label: `${r.account_code} - ${r.account_name}`, curr: r.balance, prev: prevMatch ? prevMatch.balance : 0 });
+    });
+    rows.push({ label: 'Total Revenue', curr: totalRevenueCurr, prev: totalRevenuePrev, bold: true });
+    rows.push({ label: 'COST OF SALES', curr: 0, prev: 0, bold: true });
+    costOfSalesCurr.forEach(r => {
+      const prevMatch = costOfSalesPrev.find(p => p.account_code === r.account_code);
+      rows.push({ label: `${r.account_code} - ${r.account_name}`, curr: r.balance, prev: prevMatch ? prevMatch.balance : 0 });
+    });
+    rows.push({ label: 'Total Cost of Sales', curr: totalCostOfSalesCurr, prev: totalCostOfSalesPrev, bold: true });
+    rows.push({ label: 'GROSS PROFIT', curr: grossProfitCurr, prev: grossProfitPrev, bold: true });
+    rows.push({ label: 'OPERATING EXPENSES', curr: 0, prev: 0, bold: true });
+    operatingExpensesCurr.forEach(r => {
+      const prevMatch = operatingExpensesPrev.find(p => p.account_code === r.account_code);
+      rows.push({ label: `${r.account_code} - ${r.account_name}`, curr: r.balance, prev: prevMatch ? prevMatch.balance : 0 });
+    });
+    rows.push({ label: 'Total Operating Expenses', curr: totalOperatingExpensesCurr, prev: totalOperatingExpensesPrev, bold: true });
+    rows.push({ label: 'NET PROFIT/(LOSS)', curr: netProfitCurr, prev: netProfitPrev, bold: true });
     return (
       <div className="space-y-4">
         <h3 className="text-xl font-bold">Comparative Income Statement</h3>
@@ -1063,68 +1133,75 @@ export const GAAPFinancialStatements = () => {
           <div className="font-semibold text-right">{y}</div>
           <div className="font-semibold text-right">{py}</div>
           <div className="font-semibold text-right">% Change</div>
-          <div className="font-semibold">REVENUE</div>
-          <div></div><div></div><div></div>
-          <div>Revenue</div>
-          <div className="text-right">R {totalRevenueCurr.toLocaleString()}</div>
-          <div className="text-right">R {totalRevenuePrev.toLocaleString()}</div>
-          <div className={pctClass(percentChange(totalRevenueCurr, totalRevenuePrev))}>{percentChange(totalRevenueCurr, totalRevenuePrev).toFixed(1)}%</div>
-          <div className="font-semibold mt-2">COST OF SALES</div>
-          <div></div><div></div><div></div>
-          <div>Cost of Sales</div>
-          <div className="text-right">R {totalCostOfSalesCurr.toLocaleString()}</div>
-          <div className="text-right">R {totalCostOfSalesPrev.toLocaleString()}</div>
-          <div className={pctClass(percentChange(totalCostOfSalesCurr, totalCostOfSalesPrev))}>{percentChange(totalCostOfSalesCurr, totalCostOfSalesPrev).toFixed(1)}%</div>
-          <div className="font-semibold">Gross Profit</div>
-          <div className="text-right font-semibold">R {grossProfitCurr.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {grossProfitPrev.toLocaleString()}</div>
-          <div className={pctClass(percentChange(grossProfitCurr, grossProfitPrev)) + ' text-right font-semibold'}>{percentChange(grossProfitCurr, grossProfitPrev).toFixed(1)}%</div>
-          <div className="font-semibold mt-2">OPERATING EXPENSES</div>
-          <div></div><div></div><div></div>
-          <div>Operating Expenses</div>
-          <div className="text-right">R {totalOperatingExpensesCurr.toLocaleString()}</div>
-          <div className="text-right">R {totalOperatingExpensesPrev.toLocaleString()}</div>
-          <div className={pctClass(percentChange(totalOperatingExpensesCurr, totalOperatingExpensesPrev))}>{percentChange(totalOperatingExpensesCurr, totalOperatingExpensesPrev).toFixed(1)}%</div>
-          <div className="font-semibold">Net Profit/(Loss)</div>
-          <div className="text-right font-semibold">R {netProfitCurr.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {netProfitPrev.toLocaleString()}</div>
-          <div className={pctClass(percentChange(netProfitCurr, netProfitPrev)) + ' text-right font-semibold'}>{percentChange(netProfitCurr, netProfitPrev).toFixed(1)}%</div>
+          {rows.map((r, i) => (
+            <>
+              <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
+              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
+              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
+              <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
+            </>
+          ))}
         </div>
       </div>
     );
   };
 
   const renderComparativeCashFlow = () => {
-    const cfCurr = cashFlowCurrComparative || {
-      operating_inflows: 0,
-      operating_outflows: 0,
-      net_cash_from_operations: 0,
-      investing_inflows: 0,
-      investing_outflows: 0,
-      net_cash_from_investing: 0,
-      financing_inflows: 0,
-      financing_outflows: 0,
-      net_cash_from_financing: 0,
-      opening_cash_balance: 0,
-      closing_cash_balance: 0,
-      net_change_in_cash: 0,
-    };
-    const cfPrev = cashFlowPrev || {
-      operating_inflows: 0,
-      operating_outflows: 0,
-      net_cash_from_operations: 0,
-      investing_inflows: 0,
-      investing_outflows: 0,
-      net_cash_from_investing: 0,
-      financing_inflows: 0,
-      financing_outflows: 0,
-      net_cash_from_financing: 0,
-      opening_cash_balance: 0,
-      closing_cash_balance: 0,
-      net_change_in_cash: 0,
-    };
+    const cfCurr = cashFlowCurrComparative || { operating_inflows: 0, operating_outflows: 0, net_cash_from_operations: 0, investing_inflows: 0, investing_outflows: 0, net_cash_from_investing: 0, financing_inflows: 0, financing_outflows: 0, net_cash_from_financing: 0, opening_cash_balance: 0, closing_cash_balance: 0, net_change_in_cash: 0 };
+    const cfPrev = cashFlowPrev || { operating_inflows: 0, operating_outflows: 0, net_cash_from_operations: 0, investing_inflows: 0, investing_outflows: 0, net_cash_from_investing: 0, financing_inflows: 0, financing_outflows: 0, net_cash_from_financing: 0, opening_cash_balance: 0, closing_cash_balance: 0, net_change_in_cash: 0 };
     const y = selectedYear;
     const py = selectedYear - 1;
+    const buildLower = (tb: TrialBalanceRow[]) => tb.map(a => ({ account_id: a.account_id, account_code: String(a.account_code || ''), account_name: String(a.account_name || '').toLowerCase(), account_type: String(a.account_type || '').toLowerCase(), balance: Number(a.balance || 0) }));
+    const lowerCurr = buildLower(trialBalance);
+    const lowerPrev = buildLower(trialBalancePrev);
+    const sum = (arr: any[]) => arr.reduce((s, x) => s + Number(x.balance || 0), 0);
+    const revenueBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'revenue' || a.account_type === 'income'));
+    const cogsBal = (arr: any[]) => sum(arr.filter(a => (String(a.account_code || '')).startsWith('50') || a.account_name.includes('cost of')));
+    const opexBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'expense' && !((String(a.account_code || '')).startsWith('50') || a.account_name.includes('cost of'))).filter(a => !a.account_name.includes('vat')));
+    const depAmortBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'expense' && (a.account_name.includes('depreciation') || a.account_name.includes('amortisation') || a.account_name.includes('amortization'))));
+    const impairmentBal = (arr: any[]) => sum(arr.filter(a => a.account_name.includes('impairment')));
+    const profitDisposalBal = (arr: any[]) => sum(arr.filter(a => (a.account_code === '9500') || (a.account_name.includes('gain on sale') || a.account_name.includes('disposal gain'))));
+    const lossDisposalBal = (arr: any[]) => sum(arr.filter(a => (a.account_code === '9600') || (a.account_name.includes('loss on sale') || a.account_name.includes('disposal loss'))));
+    const financeCostsBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'expense' && (a.account_name.includes('finance cost') || a.account_name.includes('interest expense'))));
+    const interestIncomeBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('interest')));
+    const fxUnrealisedBal = (arr: any[]) => sum(arr.filter(a => a.account_name.includes('unrealised') && (a.account_name.includes('foreign exchange') || a.account_name.includes('fx') || a.account_name.includes('currency'))));
+    const provisionsMoveBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'liability' || a.account_type === 'expense') && a.account_name.includes('provision')));
+    const fairValueAdjBal = (arr: any[]) => sum(arr.filter(a => a.account_name.includes('fair value')));
+    const otherNonCashBal = (arr: any[]) => sum(arr.filter(a => a.account_name.includes('non-cash') || a.account_name.includes('non cash')));
+    const interestReceivedBal = (arr: any[]) => interestIncomeBal(arr);
+    const interestPaidBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'expense' && (a.account_name.includes('interest') || a.account_name.includes('finance cost'))));
+    const dividendsReceivedBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('dividend')));
+    const dividendsPaidBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'expense' || a.account_type === 'equity') && a.account_name.includes('dividend')));
+    const taxPaidBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'expense' || a.account_type === 'liability') && a.account_name.includes('tax') && !a.account_name.includes('vat')));
+    const profitBeforeTaxCurr = revenueBal(lowerCurr) - (cogsBal(lowerCurr) > 0 ? cogsBal(lowerCurr) : fallbackCOGS) - opexBal(lowerCurr);
+    const profitBeforeTaxPrev = revenueBal(lowerPrev) - (cogsBal(lowerPrev) > 0 ? cogsBal(lowerPrev) : fallbackCOGSPrev) - opexBal(lowerPrev);
+    const rows: Array<{ label: string; curr: number; prev: number; bold?: boolean }> = [];
+    rows.push({ label: 'CASH FLOWS FROM OPERATING ACTIVITIES', curr: 0, prev: 0, bold: true });
+    rows.push({ label: 'Profit before tax', curr: profitBeforeTaxCurr, prev: profitBeforeTaxPrev });
+    rows.push({ label: 'Depreciation and amortisation', curr: depAmortBal(lowerCurr), prev: depAmortBal(lowerPrev) });
+    rows.push({ label: 'Impairment losses / reversals', curr: impairmentBal(lowerCurr), prev: impairmentBal(lowerPrev) });
+    rows.push({ label: 'Profit on disposal of assets', curr: profitDisposalBal(lowerCurr), prev: profitDisposalBal(lowerPrev) });
+    rows.push({ label: 'Loss on disposal of assets', curr: lossDisposalBal(lowerCurr), prev: lossDisposalBal(lowerPrev) });
+    rows.push({ label: 'Finance costs', curr: financeCostsBal(lowerCurr), prev: financeCostsBal(lowerPrev) });
+    rows.push({ label: 'Interest income', curr: interestIncomeBal(lowerCurr), prev: interestIncomeBal(lowerPrev) });
+    rows.push({ label: 'Unrealised foreign exchange differences', curr: fxUnrealisedBal(lowerCurr), prev: fxUnrealisedBal(lowerPrev) });
+    rows.push({ label: 'Movements in provisions', curr: provisionsMoveBal(lowerCurr), prev: provisionsMoveBal(lowerPrev) });
+    rows.push({ label: 'Fair value adjustments', curr: fairValueAdjBal(lowerCurr), prev: fairValueAdjBal(lowerPrev) });
+    rows.push({ label: 'Other non-cash items', curr: otherNonCashBal(lowerCurr), prev: otherNonCashBal(lowerPrev) });
+    rows.push({ label: 'Cash generated from operations', curr: cfCurr.net_cash_from_operations, prev: cfPrev.net_cash_from_operations, bold: true });
+    rows.push({ label: 'Interest received', curr: interestReceivedBal(lowerCurr), prev: interestReceivedBal(lowerPrev) });
+    rows.push({ label: 'Interest paid', curr: -Math.abs(interestPaidBal(lowerCurr)), prev: -Math.abs(interestPaidBal(lowerPrev)) });
+    rows.push({ label: 'Dividends received', curr: dividendsReceivedBal(lowerCurr), prev: dividendsReceivedBal(lowerPrev) });
+    rows.push({ label: 'Dividends paid', curr: -Math.abs(dividendsPaidBal(lowerCurr)), prev: -Math.abs(dividendsPaidBal(lowerPrev)) });
+    rows.push({ label: 'Tax paid', curr: -Math.abs(taxPaidBal(lowerCurr)), prev: -Math.abs(taxPaidBal(lowerPrev)) });
+    rows.push({ label: 'Net cash from operating activities', curr: cfCurr.net_cash_from_operations, prev: cfPrev.net_cash_from_operations, bold: true });
+    rows.push({ label: 'CASH FLOWS FROM INVESTING ACTIVITIES', curr: 0, prev: 0, bold: true });
+    rows.push({ label: 'Net cash from investing activities', curr: cfCurr.net_cash_from_investing, prev: cfPrev.net_cash_from_investing, bold: true });
+    rows.push({ label: 'CASH FLOWS FROM FINANCING ACTIVITIES', curr: 0, prev: 0, bold: true });
+    rows.push({ label: 'Net cash from financing activities', curr: cfCurr.net_cash_from_financing, prev: cfPrev.net_cash_from_financing, bold: true });
+    rows.push({ label: 'Net change in cash and cash equivalents', curr: cfCurr.net_change_in_cash, prev: cfPrev.net_change_in_cash, bold: true });
+    rows.push({ label: 'Cash and cash equivalents at beginning of period', curr: cfCurr.opening_cash_balance, prev: cfPrev.opening_cash_balance });
+    rows.push({ label: 'Cash and cash equivalents at end of period', curr: cfCurr.closing_cash_balance, prev: cfPrev.closing_cash_balance, bold: true });
     return (
       <div className="space-y-4">
         <h3 className="text-xl font-bold">Comparative Cash Flow Statement</h3>
@@ -1133,54 +1210,14 @@ export const GAAPFinancialStatements = () => {
           <div className="font-semibold text-right">{y}</div>
           <div className="font-semibold text-right">{py}</div>
           <div className="font-semibold text-right">% Change</div>
-          <div>Operating Inflows</div>
-          <div className="text-right">R {cfCurr.operating_inflows.toLocaleString()}</div>
-          <div className="text-right">R {cfPrev.operating_inflows.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.operating_inflows, cfPrev.operating_inflows))}>{percentChange(cfCurr.operating_inflows, cfPrev.operating_inflows).toFixed(1)}%</div>
-          <div>Operating Outflows</div>
-          <div className="text-right">(R {Math.abs(cfCurr.operating_outflows).toLocaleString()})</div>
-          <div className="text-right">(R {Math.abs(cfPrev.operating_outflows).toLocaleString()})</div>
-          <div className={pctClass(percentChange(-Math.abs(cfCurr.operating_outflows), -Math.abs(cfPrev.operating_outflows)))}>{percentChange(-Math.abs(cfCurr.operating_outflows), -Math.abs(cfPrev.operating_outflows)).toFixed(1)}%</div>
-          <div className="font-semibold">Net Cash from Operations</div>
-          <div className="text-right font-semibold">R {cfCurr.net_cash_from_operations.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {cfPrev.net_cash_from_operations.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.net_cash_from_operations, cfPrev.net_cash_from_operations)) + ' text-right font-semibold'}>{percentChange(cfCurr.net_cash_from_operations, cfPrev.net_cash_from_operations).toFixed(1)}%</div>
-          <div>Investing Inflows</div>
-          <div className="text-right">R {cfCurr.investing_inflows.toLocaleString()}</div>
-          <div className="text-right">R {cfPrev.investing_inflows.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.investing_inflows, cfPrev.investing_inflows))}>{percentChange(cfCurr.investing_inflows, cfPrev.investing_inflows).toFixed(1)}%</div>
-          <div>Investing Outflows</div>
-          <div className="text-right">(R {Math.abs(cfCurr.investing_outflows).toLocaleString()})</div>
-          <div className="text-right">(R {Math.abs(cfPrev.investing_outflows).toLocaleString()})</div>
-          <div className={pctClass(percentChange(-Math.abs(cfCurr.investing_outflows), -Math.abs(cfPrev.investing_outflows)))}>{percentChange(-Math.abs(cfCurr.investing_outflows), -Math.abs(cfPrev.investing_outflows)).toFixed(1)}%</div>
-          <div className="font-semibold">Net Cash from Investing</div>
-          <div className="text-right font-semibold">R {cfCurr.net_cash_from_investing.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {cfPrev.net_cash_from_investing.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.net_cash_from_investing, cfPrev.net_cash_from_investing)) + ' text-right font-semibold'}>{percentChange(cfCurr.net_cash_from_investing, cfPrev.net_cash_from_investing).toFixed(1)}%</div>
-          <div>Financing Inflows</div>
-          <div className="text-right">R {cfCurr.financing_inflows.toLocaleString()}</div>
-          <div className="text-right">R {cfPrev.financing_inflows.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.financing_inflows, cfPrev.financing_inflows))}>{percentChange(cfCurr.financing_inflows, cfPrev.financing_inflows).toFixed(1)}%</div>
-          <div>Financing Outflows</div>
-          <div className="text-right">(R {Math.abs(cfCurr.financing_outflows).toLocaleString()})</div>
-          <div className="text-right">(R {Math.abs(cfPrev.financing_outflows).toLocaleString()})</div>
-          <div className={pctClass(percentChange(-Math.abs(cfCurr.financing_outflows), -Math.abs(cfPrev.financing_outflows)))}>{percentChange(-Math.abs(cfCurr.financing_outflows), -Math.abs(cfPrev.financing_outflows)).toFixed(1)}%</div>
-          <div className="font-semibold">Net Cash from Financing</div>
-          <div className="text-right font-semibold">R {cfCurr.net_cash_from_financing.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {cfPrev.net_cash_from_financing.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.net_cash_from_financing, cfPrev.net_cash_from_financing)) + ' text-right font-semibold'}>{percentChange(cfCurr.net_cash_from_financing, cfPrev.net_cash_from_financing).toFixed(1)}%</div>
-          <div className="font-semibold">Net Change in Cash</div>
-          <div className="text-right font-semibold">R {cfCurr.net_change_in_cash.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {cfPrev.net_change_in_cash.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.net_change_in_cash, cfPrev.net_change_in_cash)) + ' text-right font-semibold'}>{percentChange(cfCurr.net_change_in_cash, cfPrev.net_change_in_cash).toFixed(1)}%</div>
-          <div>Opening Cash Balance</div>
-          <div className="text-right">R {cfCurr.opening_cash_balance.toLocaleString()}</div>
-          <div className="text-right">R {cfPrev.opening_cash_balance.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.opening_cash_balance, cfPrev.opening_cash_balance))}>{percentChange(cfCurr.opening_cash_balance, cfPrev.opening_cash_balance).toFixed(1)}%</div>
-          <div className="font-semibold">Closing Cash Balance</div>
-          <div className="text-right font-semibold">R {cfCurr.closing_cash_balance.toLocaleString()}</div>
-          <div className="text-right font-semibold">R {cfPrev.closing_cash_balance.toLocaleString()}</div>
-          <div className={pctClass(percentChange(cfCurr.closing_cash_balance, cfPrev.closing_cash_balance)) + ' text-right font-semibold'}>{percentChange(cfCurr.closing_cash_balance, cfPrev.closing_cash_balance).toFixed(1)}%</div>
+          {rows.map((r, i) => (
+            <>
+              <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
+              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
+              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
+              <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
+            </>
+          ))}
         </div>
       </div>
     );

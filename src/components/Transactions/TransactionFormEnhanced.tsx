@@ -375,7 +375,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         interestRate: "",
         loanTerm: "",
         loanTermType: "short",
-        installmentNumber: ""
+        installmentNumber: "",
+        assetFinancedByLoan: false
       });
       setDebitSearch("");
       setCreditSearch("");

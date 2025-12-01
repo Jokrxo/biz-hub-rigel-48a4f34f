@@ -65,7 +65,7 @@ export const DashboardOverview = () => {
   const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean; hasProducts: boolean; hasCustomers: boolean; hasSuppliers: boolean; hasEmployees: boolean }>({ hasCoa: true, hasBank: true, hasProducts: true, hasCustomers: true, hasSuppliers: true, hasEmployees: true });
   const [userName, setUserName] = useState<string>("");
   const [companyId, setCompanyId] = useState<string>("");
-  const [chartMonths, setChartMonths] = useState<number>(6);
+  const [chartMonths, setChartMonths] = useState<number>(12);
   const [onboardingOpen, setOnboardingOpen] = useState<boolean>(false);
   const loadingRef = useRef(false);
   
@@ -1286,18 +1286,18 @@ export const DashboardOverview = () => {
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
-                  <Pie
-                    data={incomeWheelInner}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={30}
-                    outerRadius={50}
-                    dataKey="value"
-                  >
+                <Pie
+                  data={incomeWheelInner}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={30}
+                  outerRadius={50}
+                  dataKey="value"
+                >
                     {incomeWheelInner.map((entry, index) => (
-                      <Cell key={`income-inner-${index}`} fill={index === 0 ? '#3B82F6' : '#22C55E'} />
+                      <Cell key={`income-inner-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
-                  </Pie>
+                </Pie>
                   <Pie
                     data={incomeBreakdown}
                     cx="50%"

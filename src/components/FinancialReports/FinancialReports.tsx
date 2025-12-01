@@ -252,20 +252,20 @@ export const FinancialReports = () => {
       if (data && data.length > 0) {
         const cf = data[0];
         const cfData: FinancialReportLine[] = [
-          { account: 'CASH FLOW FROM OPERATING ACTIVITIES', amount: 0, type: 'header' },
-          { account: 'Operating Activities', amount: cf.operating_activities || 0, type: 'income' },
+          { account: 'CASH FLOWS FROM OPERATING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Net cash from operating activities', amount: cf.operating_activities || 0, type: 'subtotal' },
           { account: '', amount: 0, type: 'spacer' },
-          { account: 'CASH FLOW FROM INVESTING ACTIVITIES', amount: 0, type: 'header' },
-          { account: 'Investing Activities', amount: cf.investing_activities || 0, type: 'expense' },
+          { account: 'CASH FLOWS FROM INVESTING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Net cash from investing activities', amount: cf.investing_activities || 0, type: 'subtotal' },
           { account: '', amount: 0, type: 'spacer' },
-          { account: 'CASH FLOW FROM FINANCING ACTIVITIES', amount: 0, type: 'header' },
-          { account: 'Financing Activities', amount: cf.financing_activities || 0, type: 'income' },
+          { account: 'CASH FLOWS FROM FINANCING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Net cash from financing activities', amount: cf.financing_activities || 0, type: 'subtotal' },
           { account: '', amount: 0, type: 'spacer' },
-          { account: 'Net Cash Flow', amount: cf.net_cash_flow || 0, type: 'subtotal' },
+          { account: 'Net change in cash and cash equivalents', amount: cf.net_cash_flow || 0, type: 'subtotal' },
           { account: '', amount: 0, type: 'spacer' },
-          { account: 'Opening Cash Balance', amount: cf.opening_cash || 0, type: 'asset' },
-          { account: 'Net Cash Flow', amount: cf.net_cash_flow || 0, type: 'asset' },
-          { account: 'Closing Cash Balance', amount: cf.closing_cash || 0, type: 'final' },
+          { account: 'Cash and cash equivalents at beginning of period', amount: cf.opening_cash || 0, type: 'asset' },
+          { account: 'Net change in cash and cash equivalents', amount: cf.net_cash_flow || 0, type: 'asset' },
+          { account: 'Cash and cash equivalents at end of period', amount: cf.closing_cash || 0, type: 'final' },
         ];
         setCashFlowData(cfData);
       }
