@@ -1,4 +1,5 @@
 import { useState } from "react";
+import stellaLogo from "@/assets/stellkhygugvyt.jpg";
 import { Sidebar } from "./Sidebar";
 import { DashboardHeader } from "./DashboardHeader";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,10 @@ export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
         <main className="p-4 sm:p-6">
           <div className="mx-auto max-w-7xl">
             {children}
+            <div className="mt-12 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <img src={stellaLogo} alt="Stella Lumen" className="h-5 w-5 rounded object-cover border" />
+              <span>Powered by Stella Lumen</span>
+            </div>
           </div>
         </main>
 

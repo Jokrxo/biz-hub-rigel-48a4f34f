@@ -103,6 +103,12 @@ export const GAAPFinancialStatements = () => {
   const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
   const [vatNet, setVatNet] = useState<number>(0);
   const [ppeDisposalProceeds, setPpeDisposalProceeds] = useState<number>(0);
+  const [investingPurchasesCurr, setInvestingPurchasesCurr] = useState<number>(0);
+  const [investingPurchasesPrev, setInvestingPurchasesPrev] = useState<number>(0);
+  const [investingProceedsCurr, setInvestingProceedsCurr] = useState<number>(0);
+  const [investingProceedsPrev, setInvestingProceedsPrev] = useState<number>(0);
+  const [loanFinancedAcqCurr, setLoanFinancedAcqCurr] = useState<number>(0);
+  const [loanFinancedAcqPrev, setLoanFinancedAcqPrev] = useState<number>(0);
   const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd]);
@@ -296,6 +302,92 @@ export const GAAPFinancialStatements = () => {
       const cfCurr = await getCashFlowForPeriod(companyProfile.company_id, currStart, currEnd);
       setCashFlowPrev(cfPrev);
       setCashFlowCurrComparative(cfCurr);
+      try {
+        const { data: invPrevPurch } = await supabase
+          .from('transactions')
+          .select('total_amount, status')
+          .eq('company_id', companyProfile.company_id)
+          .eq('transaction_type', 'asset_purchase')
+          .gte('transaction_date', start)
+          .lte('transaction_date', end)
+          .in('status', ['approved','posted','pending']);
+        const { data: invPrevProc } = await supabase
+          .from('transactions')
+          .select('total_amount, status')
+          .eq('company_id', companyProfile.company_id)
+          .eq('transaction_type', 'asset_disposal')
+          .gte('transaction_date', start)
+          .lte('transaction_date', end)
+          .in('status', ['approved','posted','pending']);
+        const { data: invCurrPurch } = await supabase
+          .from('transactions')
+          .select('total_amount, status')
+          .eq('company_id', companyProfile.company_id)
+          .eq('transaction_type', 'asset_purchase')
+          .gte('transaction_date', currStart)
+          .lte('transaction_date', currEnd)
+          .in('status', ['approved','posted','pending']);
+        const { data: invCurrProc } = await supabase
+          .from('transactions')
+          .select('total_amount, status')
+          .eq('company_id', companyProfile.company_id)
+          .eq('transaction_type', 'asset_disposal')
+          .gte('transaction_date', currStart)
+          .lte('transaction_date', currEnd)
+          .in('status', ['approved','posted','pending']);
+        const sumAmt = (arr: any[] | null | undefined) => (arr || []).reduce((s: number, t: any) => s + Math.max(0, Number(t.total_amount || 0)), 0);
+        setInvestingPurchasesPrev(sumAmt(invPrevPurch));
+        setInvestingProceedsPrev(sumAmt(invPrevProc));
+        setInvestingPurchasesCurr(sumAmt(invCurrPurch));
+        setInvestingProceedsCurr(sumAmt(invCurrProc));
+        try {
+          const { data: accounts } = await supabase
+            .from('chart_of_accounts')
+            .select('id, account_name, account_type')
+            .eq('company_id', companyProfile.company_id);
+          const accMap = new Map<string, { name: string; type: string }>((accounts || []).map((a: any) => [String(a.id), { name: String(a.account_name || ''), type: String(a.account_type || '') }]));
+          const computeLoanFinanced = async (s: string, e: string) => {
+            const { data: entries } = await supabase
+              .from('transaction_entries')
+              .select(`transaction_id, account_id, debit, credit, transactions!inner ( transaction_date, transaction_type, company_id )`)
+              .eq('transactions.company_id', companyProfile.company_id)
+              .eq('transactions.transaction_type', 'asset_purchase')
+              .gte('transactions.transaction_date', s)
+              .lte('transactions.transaction_date', e);
+            const byTx = new Map<string, any[]>();
+            (entries || []).forEach((e: any) => {
+              const tid = String(e.transaction_id || '');
+              if (!byTx.has(tid)) byTx.set(tid, []);
+              byTx.get(tid)!.push(e);
+            });
+            let total = 0;
+            byTx.forEach((rows) => {
+              const hasLoanCredit = rows.some((r: any) => {
+                const acc = accMap.get(String(r.account_id || ''));
+                const t = String(acc?.type || '').toLowerCase();
+                const n = String(acc?.name || '').toLowerCase();
+                return Number(r.credit || 0) > 0 && t === 'liability' && (n.includes('loan') || n.includes('borrow'));
+              });
+              if (hasLoanCredit) {
+                const assetDebit = rows.filter((r: any) => {
+                  const acc = accMap.get(String(r.account_id || ''));
+                  const t = String(acc?.type || '').toLowerCase();
+                  const n = String(acc?.name || '').toLowerCase();
+                  const isPpe = t === 'asset' && (n.includes('property') || n.includes('plant') || n.includes('equipment') || n.includes('machinery') || n.includes('vehicle'));
+                  const isInt = t === 'asset' && (n.includes('intangible') || n.includes('software') || n.includes('patent') || n.includes('goodwill'));
+                  return Number(r.debit || 0) > 0 && (isPpe || isInt);
+                }).reduce((s: number, r: any) => s + Number(r.debit || 0), 0);
+                total += assetDebit;
+              }
+            });
+            return total;
+          };
+          const prevLoanFin = await computeLoanFinanced(start, end);
+          const currLoanFin = await computeLoanFinanced(currStart, currEnd);
+          setLoanFinancedAcqPrev(prevLoanFin);
+          setLoanFinancedAcqCurr(currLoanFin);
+        } catch {}
+      } catch {}
     } catch {
     } finally {
       setComparativeLoading(false);
@@ -1188,17 +1280,20 @@ export const GAAPFinancialStatements = () => {
     rows.push({ label: 'Movements in provisions', curr: provisionsMoveBal(lowerCurr), prev: provisionsMoveBal(lowerPrev) });
     rows.push({ label: 'Fair value adjustments', curr: fairValueAdjBal(lowerCurr), prev: fairValueAdjBal(lowerPrev) });
     rows.push({ label: 'Other non-cash items', curr: otherNonCashBal(lowerCurr), prev: otherNonCashBal(lowerPrev) });
-    rows.push({ label: 'Cash generated from operations', curr: cfCurr.net_cash_from_operations, prev: cfPrev.net_cash_from_operations, bold: true });
+    rows.push({ label: 'Cash generated from operations', curr: cfCurr.net_cash_from_operations - loanFinancedAcqCurr, prev: cfPrev.net_cash_from_operations - loanFinancedAcqPrev, bold: true });
     rows.push({ label: 'Interest received', curr: interestReceivedBal(lowerCurr), prev: interestReceivedBal(lowerPrev) });
     rows.push({ label: 'Interest paid', curr: -Math.abs(interestPaidBal(lowerCurr)), prev: -Math.abs(interestPaidBal(lowerPrev)) });
     rows.push({ label: 'Dividends received', curr: dividendsReceivedBal(lowerCurr), prev: dividendsReceivedBal(lowerPrev) });
     rows.push({ label: 'Dividends paid', curr: -Math.abs(dividendsPaidBal(lowerCurr)), prev: -Math.abs(dividendsPaidBal(lowerPrev)) });
     rows.push({ label: 'Tax paid', curr: -Math.abs(taxPaidBal(lowerCurr)), prev: -Math.abs(taxPaidBal(lowerPrev)) });
-    rows.push({ label: 'Net cash from operating activities', curr: cfCurr.net_cash_from_operations, prev: cfPrev.net_cash_from_operations, bold: true });
+    rows.push({ label: 'Net cash from operating activities', curr: cfCurr.net_cash_from_operations - loanFinancedAcqCurr, prev: cfPrev.net_cash_from_operations - loanFinancedAcqPrev, bold: true });
     rows.push({ label: 'CASH FLOWS FROM INVESTING ACTIVITIES', curr: 0, prev: 0, bold: true });
+    rows.push({ label: 'Purchase of property, plant and equipment', curr: -(Math.abs(investingPurchasesCurr) + Math.abs(loanFinancedAcqCurr)), prev: -(Math.abs(investingPurchasesPrev) + Math.abs(loanFinancedAcqPrev)) });
+    rows.push({ label: 'Proceeds from disposal of property, plant and equipment', curr: investingProceedsCurr, prev: investingProceedsPrev });
     rows.push({ label: 'Net cash from investing activities', curr: cfCurr.net_cash_from_investing, prev: cfPrev.net_cash_from_investing, bold: true });
     rows.push({ label: 'CASH FLOWS FROM FINANCING ACTIVITIES', curr: 0, prev: 0, bold: true });
-    rows.push({ label: 'Net cash from financing activities', curr: cfCurr.net_cash_from_financing, prev: cfPrev.net_cash_from_financing, bold: true });
+    rows.push({ label: 'Proceeds from borrowings', curr: loanFinancedAcqCurr, prev: loanFinancedAcqPrev });
+    rows.push({ label: 'Net cash from financing activities', curr: cfCurr.net_cash_from_financing + loanFinancedAcqCurr, prev: cfPrev.net_cash_from_financing + loanFinancedAcqPrev, bold: true });
     rows.push({ label: 'Net change in cash and cash equivalents', curr: cfCurr.net_change_in_cash, prev: cfPrev.net_change_in_cash, bold: true });
     rows.push({ label: 'Cash and cash equivalents at beginning of period', curr: cfCurr.opening_cash_balance, prev: cfPrev.opening_cash_balance });
     rows.push({ label: 'Cash and cash equivalents at end of period', curr: cfCurr.closing_cash_balance, prev: cfPrev.closing_cash_balance, bold: true });
@@ -1462,13 +1557,13 @@ export const GAAPFinancialStatements = () => {
               {nz(wcInventories) && (<div className="flex justify-between"><span>(Increase)/Decrease in inventories</span><span className="font-mono">R {wcInventories.toLocaleString()}</span></div>)}
               {nz(wcOtherReceivables) && (<div className="flex justify-between"><span>(Increase)/Decrease in other receivables</span><span className="font-mono">R {wcOtherReceivables.toLocaleString()}</span></div>)}
               {nz(wcTradePayables) && (<div className="flex justify-between"><span>Increase/(Decrease) in trade payables</span><span className="font-mono">R {wcTradePayables.toLocaleString()}</span></div>)}
-              <div className="flex justify-between font-semibold border-t pt-2"><span>Cash generated from operations</span><span className="font-mono">R {cf.net_cash_from_operations.toLocaleString()}</span></div>
+              <div className="flex justify-between font-semibold border-t pt-2"><span>Cash generated from operations</span><span className="font-mono">R {(cf.net_cash_from_operations - proceedsBorrowings).toLocaleString()}</span></div>
               {nz(interestReceivedCF) && (<div className="flex justify-between"><span>Interest received</span><span className="font-mono">R {interestReceivedCF.toLocaleString()}</span></div>)}
               {nz(interestPaidCF) && (<div className="flex justify-between"><span>Interest paid</span><span className="font-mono">(R {Math.abs(interestPaidCF).toLocaleString()})</span></div>)}
               {nz(dividendsReceivedCF) && (<div className="flex justify-between"><span>Dividends received</span><span className="font-mono">R {dividendsReceivedCF.toLocaleString()}</span></div>)}
               {nz(dividendsPaidCF) && (<div className="flex justify-between"><span>Dividends paid</span><span className="font-mono">(R {Math.abs(dividendsPaidCF).toLocaleString()})</span></div>)}
               {nz(taxPaidCF) && (<div className="flex justify-between"><span>Tax paid</span><span className="font-mono">(R {Math.abs(taxPaidCF).toLocaleString()})</span></div>)}
-              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash from operating activities</span><span className="font-mono">R {cf.net_cash_from_operations.toLocaleString()}</span></div>
+              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash from operating activities</span><span className="font-mono">R {(cf.net_cash_from_operations - proceedsBorrowings).toLocaleString()}</span></div>
             </div>
           </div>
 

@@ -33,6 +33,110 @@ export const FinancialReports = () => {
   const [activeReport, setActiveReport] = useState<'pl' | 'bs' | 'cf'>('pl');
   const { toast } = useToast();
 
+  async function generateCashFlow(companyId: string) {
+    try {
+      const currentYear = new Date().getFullYear();
+      const periodStart = `${currentYear}-01-01`;
+      const periodEnd = `${currentYear}-12-31`;
+
+      const { data, error } = await supabase
+        .rpc('generate_cash_flow', {
+          _company_id: companyId,
+          _period_start: periodStart,
+          _period_end: periodEnd
+        });
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const cf = data[0];
+        const { data: purchRows } = await supabase
+          .from('transactions')
+          .select('total_amount, status')
+          .eq('company_id', companyId)
+          .eq('transaction_type', 'asset_purchase')
+          .gte('transaction_date', periodStart)
+          .lte('transaction_date', periodEnd)
+          .in('status', ['approved','posted','pending']);
+        const { data: procRows } = await supabase
+          .from('transactions')
+          .select('total_amount, status')
+          .eq('company_id', companyId)
+          .eq('transaction_type', 'asset_disposal')
+          .gte('transaction_date', periodStart)
+          .lte('transaction_date', periodEnd)
+          .in('status', ['approved','posted','pending']);
+        const { data: accounts } = await supabase
+          .from('chart_of_accounts')
+          .select('id, account_name, account_type')
+          .eq('company_id', companyId);
+        const accMap = new Map<string, { name: string; type: string }>((accounts || []).map((a: any) => [String(a.id), { name: String(a.account_name || ''), type: String(a.account_type || '') }]));
+        const { data: assetPurchaseEntries } = await supabase
+          .from('transaction_entries')
+          .select(`transaction_id, account_id, debit, credit, transactions!inner ( transaction_date, transaction_type, company_id )`)
+          .eq('transactions.company_id', companyId)
+          .eq('transactions.transaction_type', 'asset_purchase')
+          .gte('transactions.transaction_date', periodStart)
+          .lte('transactions.transaction_date', periodEnd);
+        const byTx = new Map<string, any[]>();
+        (assetPurchaseEntries || []).forEach((e: any) => {
+          const tid = String(e.transaction_id || '');
+          if (!byTx.has(tid)) byTx.set(tid, []);
+          byTx.get(tid)!.push(e);
+        });
+        let loanFinancedAcq = 0;
+        byTx.forEach((rows) => {
+          const hasLoanCredit = rows.some((r: any) => {
+            const acc = accMap.get(String(r.account_id || ''));
+            const t = String(acc?.type || '').toLowerCase();
+            const n = String(acc?.name || '').toLowerCase();
+            return Number(r.credit || 0) > 0 && t === 'liability' && (n.includes('loan') || n.includes('borrow'));
+          });
+          if (hasLoanCredit) {
+            const assetDebit = rows.filter((r: any) => {
+              const acc = accMap.get(String(r.account_id || ''));
+              const t = String(acc?.type || '').toLowerCase();
+              const n = String(acc?.name || '').toLowerCase();
+              const isPpe = t === 'asset' && (n.includes('property') || n.includes('plant') || n.includes('equipment') || n.includes('machinery') || n.includes('vehicle'));
+              const isInt = t === 'asset' && (n.includes('intangible') || n.includes('software') || n.includes('patent') || n.includes('goodwill'));
+              return Number(r.debit || 0) > 0 && (isPpe || isInt);
+            }).reduce((s: number, r: any) => s + Number(r.debit || 0), 0);
+            loanFinancedAcq += assetDebit;
+          }
+        });
+        const sumAmt = (arr: any[] | null | undefined) => (arr || []).reduce((s: number, t: any) => s + Math.max(0, Number(t.total_amount || 0)), 0);
+        const ppePurchases = sumAmt(purchRows);
+        const ppeProceeds = sumAmt(procRows);
+        const operatingAdjusted = (cf.operating_activities || 0) - loanFinancedAcq;
+        const financingAdjusted = (cf.financing_activities || 0) + loanFinancedAcq;
+        const netChangeDisplay = operatingAdjusted + (cf.investing_activities || 0) + financingAdjusted;
+        const cfData: FinancialReportLine[] = [
+          { account: 'CASH FLOWS FROM OPERATING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Net cash from operating activities', amount: operatingAdjusted, type: 'subtotal' },
+          { account: '', amount: 0, type: 'spacer' },
+          { account: 'CASH FLOWS FROM INVESTING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Purchase of property, plant and equipment', amount: -(Math.abs(ppePurchases) + Math.abs(loanFinancedAcq)), type: 'expense' },
+          { account: 'Proceeds from disposal of property, plant and equipment', amount: ppeProceeds, type: 'income' },
+          { account: 'Net cash from investing activities', amount: cf.investing_activities || 0, type: 'subtotal' },
+          { account: '', amount: 0, type: 'spacer' },
+          { account: 'CASH FLOWS FROM FINANCING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Proceeds from borrowings', amount: loanFinancedAcq, type: 'income' },
+          { account: 'Net cash from financing activities', amount: financingAdjusted, type: 'subtotal' },
+          { account: '', amount: 0, type: 'spacer' },
+          { account: 'Net change in cash and cash equivalents', amount: netChangeDisplay, type: 'subtotal' },
+          { account: '', amount: 0, type: 'spacer' },
+          { account: 'Cash and cash equivalents at beginning of period', amount: cf.opening_cash || 0, type: 'asset' },
+          { account: 'Net change in cash and cash equivalents', amount: netChangeDisplay, type: 'asset' },
+          { account: 'Cash and cash equivalents at end of period', amount: cf.closing_cash || 0, type: 'final' },
+        ];
+        setCashFlowData(cfData);
+      }
+    } catch (error) {
+      console.error('Error generating cash flow:', error);
+      toast({ title: 'Error', description: 'Failed to generate cash flow statement', variant: 'destructive' });
+    }
+  }
+
   const loadFinancialData = useCallback(async () => {
     try {
       setLoading(true);
@@ -44,27 +148,18 @@ export const FinancialReports = () => {
         .eq('user_id', user.id)
         .single();
       if (!profile?.company_id) return;
-      const { data: storedStatements, error: fsError } = await supabase
-        .rpc('get_latest_financial_statements', { _company_id: profile.company_id });
-      if (fsError) throw fsError;
-      if (storedStatements && (storedStatements.balance_sheet || storedStatements.income_statement || storedStatements.cash_flow_statement)) {
-        if (storedStatements.balance_sheet) { parseStoredBalanceSheet(storedStatements.balance_sheet); }
-        if (storedStatements.income_statement) { parseStoredIncomeStatement(storedStatements.income_statement); }
-        if (storedStatements.cash_flow_statement) { parseStoredCashFlowStatement(storedStatements.cash_flow_statement); }
-      } else {
-        const { data: trialBalance, error: tbError } = await supabase.rpc('get_trial_balance_for_company');
-        if (tbError) throw tbError;
-        if (trialBalance) {
-          generateProfitLoss(trialBalance);
-          generateBalanceSheet(trialBalance);
-          await generateCashFlow(profile.company_id);
-        }
+      const { data: trialBalance, error: tbError } = await supabase.rpc('get_trial_balance_for_company');
+      if (tbError) throw tbError;
+      if (trialBalance) {
+        generateProfitLoss(trialBalance);
+        generateBalanceSheet(trialBalance);
+        await generateCashFlow(profile.company_id);
       }
     } catch (error) {
       console.error('Error loading financial data:', error);
       toast({ title: "Error", description: "Failed to load financial reports", variant: "destructive" });
     } finally { setLoading(false); }
-  }, [toast, generateCashFlow]);
+  }, [toast]);
   useEffect(() => { loadFinancialData(); }, [loadFinancialData]);
 
 
@@ -233,51 +328,7 @@ export const FinancialReports = () => {
     setBalanceSheetData(bsData);
   };
 
-  const generateCashFlow = async (companyId: string) => {
-    try {
-      // Get date range (current year)
-      const currentYear = new Date().getFullYear();
-      const periodStart = `${currentYear}-01-01`;
-      const periodEnd = `${currentYear}-12-31`;
-
-      const { data, error } = await supabase
-        .rpc('generate_cash_flow', {
-          _company_id: companyId,
-          _period_start: periodStart,
-          _period_end: periodEnd
-        });
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
-        const cf = data[0];
-        const cfData: FinancialReportLine[] = [
-          { account: 'CASH FLOWS FROM OPERATING ACTIVITIES', amount: 0, type: 'header' },
-          { account: 'Net cash from operating activities', amount: cf.operating_activities || 0, type: 'subtotal' },
-          { account: '', amount: 0, type: 'spacer' },
-          { account: 'CASH FLOWS FROM INVESTING ACTIVITIES', amount: 0, type: 'header' },
-          { account: 'Net cash from investing activities', amount: cf.investing_activities || 0, type: 'subtotal' },
-          { account: '', amount: 0, type: 'spacer' },
-          { account: 'CASH FLOWS FROM FINANCING ACTIVITIES', amount: 0, type: 'header' },
-          { account: 'Net cash from financing activities', amount: cf.financing_activities || 0, type: 'subtotal' },
-          { account: '', amount: 0, type: 'spacer' },
-          { account: 'Net change in cash and cash equivalents', amount: cf.net_cash_flow || 0, type: 'subtotal' },
-          { account: '', amount: 0, type: 'spacer' },
-          { account: 'Cash and cash equivalents at beginning of period', amount: cf.opening_cash || 0, type: 'asset' },
-          { account: 'Net change in cash and cash equivalents', amount: cf.net_cash_flow || 0, type: 'asset' },
-          { account: 'Cash and cash equivalents at end of period', amount: cf.closing_cash || 0, type: 'final' },
-        ];
-        setCashFlowData(cfData);
-      }
-    } catch (error) {
-      console.error('Error generating cash flow:', error);
-      toast({
-        title: "Error",
-        description: "Failed to generate cash flow statement",
-        variant: "destructive"
-      });
-    }
-  };
+  // moved above
 
   const handleExportPDF = () => {
     const data = activeReport === 'pl' ? profitLossData : activeReport === 'bs' ? balanceSheetData : cashFlowData;
