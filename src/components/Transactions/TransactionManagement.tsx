@@ -4,6 +4,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
  
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -47,6 +49,27 @@ export const TransactionManagement = () => {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [totalCount, setTotalCount] = useState(0);
+
+  const [allocationOpen, setAllocationOpen] = useState(false);
+  const [allocDate, setAllocDate] = useState<string>(new Date().toISOString().slice(0,10));
+  const [allocType, setAllocType] = useState<'income'|'expense'>('income');
+  const [allocPayment, setAllocPayment] = useState<'cash'|'accrual'>('cash');
+  const [allocBankId, setAllocBankId] = useState<string>('');
+  const [allocVatOn, setAllocVatOn] = useState<'yes'|'no'>('no');
+  const [allocVatRate, setAllocVatRate] = useState<string>('0');
+  const [allocAccountId, setAllocAccountId] = useState<string>('');
+  const [allocSettlement, setAllocSettlement] = useState<'receivable'|'payable'|'other'>('receivable');
+  const [allocSettlementAccountId, setAllocSettlementAccountId] = useState<string>('');
+  const [allocationTx, setAllocationTx] = useState<any>(null);
+
+  const [coaIncome, setCoaIncome] = useState<any[]>([]);
+  const [coaExpense, setCoaExpense] = useState<any[]>([]);
+  const [coaReceivable, setCoaReceivable] = useState<any[]>([]);
+  const [coaPayable, setCoaPayable] = useState<any[]>([]);
+  const [coaOther, setCoaOther] = useState<any[]>([]);
+  const [banks, setBanks] = useState<any[]>([]);
+  const [allocAccountSearch, setAllocAccountSearch] = useState<string>("");
+  const [allocSettlementSearch, setAllocSettlementSearch] = useState<string>("");
 
   const load = React.useCallback(async () => {
     try {
@@ -283,6 +306,72 @@ export const TransactionManagement = () => {
       }
     } catch {}
   }, [location.search]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!allocationOpen) return;
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("company_id")
+          .eq("user_id", user.id)
+          .single();
+        const companyId = (profile as any)?.company_id;
+        if (!companyId) return;
+        const { data: accounts } = await supabase
+          .from('chart_of_accounts')
+          .select('id, account_code, account_name, account_type')
+          .eq('company_id', companyId)
+          .eq('is_active', true)
+          .order('account_code');
+        const list = accounts || [];
+        setCoaIncome(list.filter((a: any) => {
+          const t = String(a.account_type || '').toLowerCase();
+          return t === 'income' || t === 'revenue';
+        }));
+        setCoaExpense(list.filter((a: any) => String(a.account_type || '').toLowerCase() === 'expense'));
+        setCoaReceivable(list.filter((a: any) => {
+          const t = String(a.account_type || '').toLowerCase();
+          const n = String(a.account_name || '').toLowerCase();
+          return t === 'asset' && (n.includes('receivable') || n.includes('debtors'));
+        }));
+        setCoaPayable(list.filter((a: any) => {
+          const t = String(a.account_type || '').toLowerCase();
+          const n = String(a.account_name || '').toLowerCase();
+          return t === 'liability' && (n.includes('payable') || n.includes('creditors'));
+        }));
+        setCoaOther(list.filter((a: any) => {
+          const t = String(a.account_type || '').toLowerCase();
+          return ['asset','liability','equity'].includes(t);
+        }));
+        const { data: bankList } = await supabase
+          .from('bank_accounts')
+          .select('id, bank_name, account_number')
+          .eq('company_id', companyId)
+          .order('bank_name');
+        setBanks(bankList || []);
+      } catch {}
+    })();
+  }, [allocationOpen]);
+
+  useEffect(() => {
+    if (allocVatOn === 'no') setAllocVatRate('0');
+  }, [allocVatOn]);
+
+  useEffect(() => {
+    if (allocVatOn === 'yes') {
+      const r = Number(allocVatRate || '0');
+      if (!r || r <= 0) setAllocVatRate('15');
+    }
+  }, [allocVatOn, allocVatRate]);
+
+  useEffect(() => {
+    if (allocPayment === 'accrual') {
+      setAllocSettlement(allocType === 'income' ? 'receivable' : 'payable');
+    }
+  }, [allocPayment, allocType]);
 
   const derived = useMemo(() => {
     const tx = items.map(t => ({
@@ -759,6 +848,218 @@ export const TransactionManagement = () => {
             headless={headless}
           />
         </Suspense>
+        <Dialog open={allocationOpen} onOpenChange={setAllocationOpen}>
+          <DialogContent className="sm:max-w-[600px]">
+            <DialogHeader>
+              <DialogTitle>EXpense and income allocation</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Date</Label>
+                  <Input type="date" value={allocDate} onChange={(e) => setAllocDate(e.target.value)} />
+                </div>
+                <div>
+                  <Label>Type</Label>
+                  <Select value={allocType} onValueChange={(v: any) => setAllocType(v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="income">Income</SelectItem>
+                      <SelectItem value="expense">Expense</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Amount</Label>
+                  <Input readOnly value={String(Math.abs(Number(allocationTx?.total_amount || 0)))} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Payment Method</Label>
+                  <Select value={allocPayment} onValueChange={(v: any) => setAllocPayment(v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="accrual">Accrual</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {allocPayment === 'cash' && (
+                  <div>
+                    <Label>Bank</Label>
+                    <Select value={allocBankId} onValueChange={(v: any) => setAllocBankId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
+                      <SelectContent>
+                        {banks.map(b => (
+                          <SelectItem key={b.id} value={String(b.id)}>{b.bank_name} ({b.account_number})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>VAT</Label>
+                  <Select value={allocVatOn} onValueChange={(v: any) => setAllocVatOn(v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Yes</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>VAT Rate (%)</Label>
+                  <Input type="number" min="0" max="100" value={allocVatRate} onChange={(e) => setAllocVatRate(e.target.value)} disabled={allocVatOn === 'no'} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>{allocType === 'income' ? 'Income Account' : 'Expense Account'}</Label>
+                  <div className="flex gap-2 items-center mt-1">
+                    <Input placeholder="Search account" value={allocAccountSearch} onChange={(e) => setAllocAccountSearch(e.target.value)} />
+                  </div>
+                  <Select value={allocAccountId} onValueChange={(v: any) => setAllocAccountId(v)}>
+                    <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
+                    <SelectContent>
+                      {(allocType === 'income' ? coaIncome : coaExpense)
+                        .filter(a => {
+                          const q = allocAccountSearch.toLowerCase();
+                          if (!q) return true;
+                          return String(a.account_name || '').toLowerCase().includes(q) || String(a.account_code || '').toLowerCase().includes(q);
+                        })
+                        .map(a => (
+                        <SelectItem key={a.id} value={String(a.id)}>{a.account_code} - {a.account_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {allocPayment === 'accrual' && (
+                  <div>
+                    <Label>Settlement</Label>
+                    <Select value={allocSettlement} onValueChange={(v: any) => setAllocSettlement(v)} disabled>
+                      <SelectTrigger disabled><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="receivable">Receivable</SelectItem>
+                        <SelectItem value="payable">Payable</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              {allocPayment === 'accrual' && (
+                <div>
+                  <Label>{allocSettlement === 'receivable' ? 'Receivable Account' : allocSettlement === 'payable' ? 'Payable Account' : 'Other Account'}</Label>
+                  <div className="flex gap-2 items-center mt-1">
+                    <Input placeholder="Search account" value={allocSettlementSearch} onChange={(e) => setAllocSettlementSearch(e.target.value)} />
+                  </div>
+                  <Select value={allocSettlementAccountId} onValueChange={(v: any) => setAllocSettlementAccountId(v)}>
+                    <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
+                    <SelectContent>
+                      {(allocSettlement === 'receivable' ? coaReceivable : allocSettlement === 'payable' ? coaPayable : coaOther)
+                        .filter(a => {
+                          const q = allocSettlementSearch.toLowerCase();
+                          if (!q) return true;
+                          return String(a.account_name || '').toLowerCase().includes(q) || String(a.account_code || '').toLowerCase().includes(q);
+                        })
+                        .map(a => (
+                        <SelectItem key={a.id} value={String(a.id)}>{a.account_code} - {a.account_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAllocationOpen(false)}>Cancel</Button>
+              <Button onClick={async () => {
+                try {
+                  if (allocPayment === 'cash' && !allocBankId) return;
+                  if (!allocAccountId) return;
+                  if (allocPayment === 'accrual' && !allocSettlementAccountId) return;
+                  const txId = String(allocationTx?.id || '');
+                  if (!txId) return;
+                  const isIncome = allocType === 'income';
+                  const total = Math.abs(Number(allocationTx?.total_amount || 0));
+                  let debitAccount = '';
+                  let creditAccount = '';
+                  if (allocPayment === 'cash') {
+                    if (isIncome) { debitAccount = ''; creditAccount = allocAccountId; }
+                    else { debitAccount = allocAccountId; creditAccount = ''; }
+                  } else {
+                    const settleId = allocSettlementAccountId;
+                    if (isIncome) { debitAccount = settleId; creditAccount = allocAccountId; }
+                    else { debitAccount = allocAccountId; creditAccount = settleId; }
+                  }
+
+                  const rate = allocVatOn === 'yes' ? Number(allocVatRate || '0') : 0;
+                  const isPurchase = allocType === 'expense';
+                  const vatAmount = rate > 0 ? (isPurchase ? (total * rate) / 100 : (total * rate) / (100 + rate)) : 0;
+                  const netAmount = rate > 0 ? (isPurchase ? total : total - vatAmount) : total;
+
+                  if (rate > 0 && vatAmount > 0) {
+                    try {
+                      const { data: { user } } = await supabase.auth.getUser();
+                      if (user) {
+                        const { data: profile } = await supabase
+                          .from('profiles')
+                          .select('company_id')
+                          .eq('user_id', user.id)
+                          .single();
+                        const companyId = (profile as any)?.company_id;
+                        if (companyId) {
+                          const { data: vatAccounts } = await supabase
+                            .from('chart_of_accounts')
+                            .select('id, account_name, account_code, account_type')
+                            .eq('company_id', companyId)
+                            .or('account_name.ilike.%vat%,account_name.ilike.%tax%');
+                          const hasVat = (vatAccounts || []).length > 0;
+                          if (!hasVat) {
+                            if (isIncome) {
+                              await supabase
+                                .from('chart_of_accounts')
+                                .insert({ company_id: companyId, account_code: '2100', account_name: 'VAT Output', account_type: 'liability', is_active: true });
+                            } else {
+                              await supabase
+                                .from('chart_of_accounts')
+                                .insert({ company_id: companyId, account_code: '1400', account_name: 'VAT Input', account_type: 'asset', is_active: true });
+                            }
+                          }
+                        }
+                      }
+                    } catch {}
+                  }
+
+                  const { error: upErr } = await supabase
+                    .from('transactions')
+                    .update({
+                      transaction_date: allocDate,
+                      bank_account_id: allocPayment === 'cash' ? allocBankId : null,
+                      debit_account_id: debitAccount || null,
+                      credit_account_id: creditAccount || null,
+                      vat_rate: rate > 0 ? rate : null,
+                      vat_amount: vatAmount > 0 ? vatAmount : null,
+                      base_amount: netAmount,
+                      vat_inclusive: isPurchase ? false : (rate > 0)
+                    })
+                    .eq('id', txId);
+                  if (upErr) throw upErr;
+
+                  await setTransactionStatus(txId, 'approved');
+                  setAllocationOpen(false);
+                  toast({ title: 'Success', description: 'Transaction posted/allocated' });
+                } catch (e: any) {
+                  toast({ title: 'Error', description: e.message || 'Failed to allocate', variant: 'destructive' });
+                }
+              }}>Continue</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="flex justify-between items-center">
@@ -846,10 +1147,24 @@ export const TransactionManagement = () => {
                           <DropdownMenuContent align="end">
                             {(transaction.statusKey === "pending" || transaction.statusKey === "unposted") && (
                               <>
-                                <DropdownMenuItem onClick={() => { 
-                                  const full = items.find(i => i.id === transaction.id);
-                                  setEditData(full || transaction);
-                                  setOpen(true);
+                                <DropdownMenuItem onClick={() => {
+                                  const full = items.find(i => i.id === transaction.id) || null;
+                                  setAllocationTx(full);
+                                  const amt = Number(full?.total_amount || 0);
+                                  const isIncome = amt >= 0;
+                                  setAllocType(isIncome ? 'income' : 'expense');
+                                  setAllocDate(String(full?.transaction_date || new Date().toISOString().slice(0,10)));
+                                  const hasBank = Boolean(full?.bank_account_id);
+                                  setAllocPayment(hasBank ? 'cash' : 'accrual');
+                                  setAllocBankId(String(full?.bank_account_id || ''));
+                                  const vatRate = Number((full as any)?.vat_rate || 0);
+                                  const vatAmount = Number((full as any)?.vat_amount || 0);
+                                  setAllocVatOn(vatRate > 0 || vatAmount > 0 ? 'yes' : 'no');
+                                  setAllocVatRate(String(vatRate || 0));
+                                  setAllocSettlement(isIncome ? 'receivable' : 'payable');
+                                  setAllocSettlementAccountId('');
+                                  setAllocAccountId('');
+                                  setAllocationOpen(true);
                                 }}>
                                   <CheckCircle className="mr-2 h-4 w-4" />
                                   <span>Approve</span>

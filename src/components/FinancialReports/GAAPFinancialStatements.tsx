@@ -67,6 +67,37 @@ export const GAAPFinancialStatements = () => {
     closing_cash_balance: number;
     net_change_in_cash: number;
   } | null>(null);
+  const [cashFlowPrev, setCashFlowPrev] = useState<{
+    operating_inflows: number;
+    operating_outflows: number;
+    net_cash_from_operations: number;
+    investing_inflows: number;
+    investing_outflows: number;
+    net_cash_from_investing: number;
+    financing_inflows: number;
+    financing_outflows: number;
+    net_cash_from_financing: number;
+    opening_cash_balance: number;
+    closing_cash_balance: number;
+    net_change_in_cash: number;
+  } | null>(null);
+  const [cashFlowCurrComparative, setCashFlowCurrComparative] = useState<{
+    operating_inflows: number;
+    operating_outflows: number;
+    net_cash_from_operations: number;
+    investing_inflows: number;
+    investing_outflows: number;
+    net_cash_from_investing: number;
+    financing_inflows: number;
+    financing_outflows: number;
+    net_cash_from_financing: number;
+    opening_cash_balance: number;
+    closing_cash_balance: number;
+    net_change_in_cash: number;
+  } | null>(null);
+  const [trialBalancePrev, setTrialBalancePrev] = useState<TrialBalanceRow[]>([]);
+  const [fallbackCOGSPrev, setFallbackCOGSPrev] = useState<number>(0);
+  const [comparativeLoading, setComparativeLoading] = useState(false);
   const [ppeBookValue, setPpeBookValue] = useState<number>(0);
   const [openingEquityTotal, setOpeningEquityTotal] = useState<number>(0);
   const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
@@ -93,6 +124,7 @@ export const GAAPFinancialStatements = () => {
 
   // Load cash flow whenever cash-flow tab is active or period changes
   useEffect(() => { if (activeTab === 'cash-flow') { loadCashFlow(); } }, [activeTab, periodStart, periodEnd]);
+  useEffect(() => { if (activeTab === 'comparative') { loadComparativeData(); } }, [activeTab, selectedYear]);
 
   async function loadFinancialData() {
     setLoading(true);
@@ -224,6 +256,49 @@ export const GAAPFinancialStatements = () => {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadComparativeData() {
+    if (periodMode !== 'annual') {
+      return;
+    }
+    setComparativeLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: companyProfile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .single();
+      if (!companyProfile?.company_id) return;
+      const prevYear = selectedYear - 1;
+      const start = new Date(prevYear, 0, 1).toISOString().split('T')[0];
+      const end = new Date(prevYear, 11, 31).toISOString().split('T')[0];
+      const tbPrevData = await fetchTrialBalanceForPeriod(companyProfile.company_id, start, end);
+      const normalizedPrev = (tbPrevData || []).map((r: any) => ({
+        account_id: String(r.account_id || ''),
+        account_code: String(r.account_code || ''),
+        account_name: String(r.account_name || ''),
+        account_type: String(r.account_type || ''),
+        normal_balance: String(r.normal_balance || 'debit'),
+        total_debits: Number(r.total_debits || 0),
+        total_credits: Number(r.total_credits || 0),
+        balance: Number(r.balance || 0),
+      }));
+      setTrialBalancePrev(normalizedPrev);
+      const cogsPrev = await calculateCOGSFromInvoices(companyProfile.company_id, start, end);
+      setFallbackCOGSPrev(cogsPrev);
+      const currStart = new Date(selectedYear, 0, 1).toISOString().split('T')[0];
+      const currEnd = new Date(selectedYear, 11, 31).toISOString().split('T')[0];
+      const cfPrev = await getCashFlowForPeriod(companyProfile.company_id, start, end);
+      const cfCurr = await getCashFlowForPeriod(companyProfile.company_id, currStart, currEnd);
+      setCashFlowPrev(cfPrev);
+      setCashFlowCurrComparative(cfCurr);
+    } catch {
+    } finally {
+      setComparativeLoading(false);
     }
   }
 
@@ -824,6 +899,293 @@ export const GAAPFinancialStatements = () => {
     );
   };
 
+  const bsGroups = (tb: TrialBalanceRow[]) => {
+    const currentAssets = tb.filter(r =>
+      r.account_type.toLowerCase() === 'asset' &&
+      (r.account_name.toLowerCase().includes('cash') ||
+       r.account_name.toLowerCase().includes('bank') ||
+       r.account_name.toLowerCase().includes('receivable') ||
+       r.account_name.toLowerCase().includes('inventory') ||
+       parseInt(r.account_code) < 1500) &&
+      !String(r.account_name || '').toLowerCase().includes('vat') &&
+      !['1210','2110','2210'].includes(String(r.account_code || ''))
+    );
+    const nonCurrentAssetsAll = tb.filter(r => r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r));
+    const accDepRows = nonCurrentAssetsAll.filter(r => String(r.account_name || '').toLowerCase().includes('accumulated'));
+    const nonCurrentAssets = nonCurrentAssetsAll.filter(r => !String(r.account_name || '').toLowerCase().includes('accumulated'));
+    const normalizeName = (name: string) => name.toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    const nbvFor = (assetRow: TrialBalanceRow) => {
+      const base = normalizeName(assetRow.account_name);
+      const related = accDepRows.filter(ad => {
+        const adBase = normalizeName(ad.account_name);
+        return adBase.includes(base) || base.includes(adBase);
+      });
+      const accTotal = related.reduce((sum, r) => sum + r.balance, 0);
+      return assetRow.balance - accTotal;
+    };
+    const vatInputAsAssets = tb.filter(r => (String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable')));
+    const vatPayableRows = tb.filter(r => r.account_type.toLowerCase() === 'liability' && String(r.account_name || '').toLowerCase().includes('vat'));
+    const vatReceivable = vatInputAsAssets.reduce((s, r) => s + r.balance, 0);
+    const vatPayable = vatPayableRows.reduce((s, r) => s + r.balance, 0);
+    const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0) + vatReceivable;
+    const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + nbvFor(r), 0);
+    const liabilitiesExVat = tb.filter(r => r.account_type.toLowerCase() === 'liability' && !String(r.account_name || '').toLowerCase().includes('vat') && !['2100','2200'].includes(String(r.account_code || '')));
+    const currentLiabilities = liabilitiesExVat.filter(r => {
+      const name = String(r.account_name || '').toLowerCase();
+      const code = String(r.account_code || '');
+      const isLoan = name.includes('loan');
+      const isLongLoan = isLoan && (code === '2400' || name.includes('long'));
+      const isShortLoan = isLoan && (code === '2300' || name.includes('short'));
+      const isPayableOrTax = (name.includes('payable') || name.includes('sars'));
+      return (isPayableOrTax && !isLongLoan) || isShortLoan;
+    });
+    const currentSet = new Set(currentLiabilities.map(r => r.account_id));
+    const nonCurrentLiabilities = tb.filter(r => r.account_type.toLowerCase() === 'liability' && !currentSet.has(r.account_id));
+    const equity = tb.filter(r => r.account_type.toLowerCase() === 'equity');
+    const totalEquity = equity.reduce((sum, r) => sum + r.balance, 0);
+    const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
+    const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0);
+    const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
+    const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities + vatPayable;
+    return {
+      totalCurrentAssets,
+      totalNonCurrentAssets,
+      totalAssets,
+      totalCurrentLiabilities,
+      totalNonCurrentLiabilities,
+      totalLiabilities,
+      totalEquity,
+      vatReceivable,
+      vatPayable,
+    };
+  };
+
+  const percentChange = (curr: number, prev: number) => {
+    const p = Math.abs(prev);
+    if (p < 0.00001) return 0;
+    return ((curr - prev) / p) * 100;
+  };
+
+  const renderComparativeBalanceSheet = () => {
+    const curr = bsGroups(trialBalance);
+    const prev = bsGroups(trialBalancePrev);
+    const y = selectedYear;
+    const py = selectedYear - 1;
+    return (
+      <div className="space-y-4">
+        <h3 className="text-xl font-bold">Comparative Statement of Financial Position</h3>
+        <div className="grid grid-cols-4 gap-2 text-sm">
+          <div className="font-semibold">Item</div>
+          <div className="font-semibold text-right">{y}</div>
+          <div className="font-semibold text-right">{py}</div>
+          <div className="font-semibold text-right">% Change</div>
+          <div className="font-semibold">ASSETS</div>
+          <div></div><div></div><div></div>
+          <div>VAT Receivable</div>
+          <div className="text-right">R {curr.vatReceivable.toLocaleString()}</div>
+          <div className="text-right">R {prev.vatReceivable.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.vatReceivable, prev.vatReceivable))}>{percentChange(curr.vatReceivable, prev.vatReceivable).toFixed(1)}%</div>
+          <div>Current Assets</div>
+          <div className="text-right">R {curr.totalCurrentAssets.toLocaleString()}</div>
+          <div className="text-right">R {prev.totalCurrentAssets.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.totalCurrentAssets, prev.totalCurrentAssets))}>{percentChange(curr.totalCurrentAssets, prev.totalCurrentAssets).toFixed(1)}%</div>
+          <div>Non-current Assets (NBV)</div>
+          <div className="text-right">R {curr.totalNonCurrentAssets.toLocaleString()}</div>
+          <div className="text-right">R {prev.totalNonCurrentAssets.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.totalNonCurrentAssets, prev.totalNonCurrentAssets))}>{percentChange(curr.totalNonCurrentAssets, prev.totalNonCurrentAssets).toFixed(1)}%</div>
+          <div className="font-semibold">TOTAL ASSETS</div>
+          <div className="text-right font-semibold">R {curr.totalAssets.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {prev.totalAssets.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.totalAssets, prev.totalAssets)) + ' text-right font-semibold'}>{percentChange(curr.totalAssets, prev.totalAssets).toFixed(1)}%</div>
+          <div className="font-semibold mt-2">LIABILITIES</div>
+          <div></div><div></div><div></div>
+          <div>VAT Payable</div>
+          <div className="text-right">R {curr.vatPayable.toLocaleString()}</div>
+          <div className="text-right">R {prev.vatPayable.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.vatPayable, prev.vatPayable))}>{percentChange(curr.vatPayable, prev.vatPayable).toFixed(1)}%</div>
+          <div>Current Liabilities</div>
+          <div className="text-right">R {curr.totalCurrentLiabilities.toLocaleString()}</div>
+          <div className="text-right">R {prev.totalCurrentLiabilities.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.totalCurrentLiabilities, prev.totalCurrentLiabilities))}>{percentChange(curr.totalCurrentLiabilities, prev.totalCurrentLiabilities).toFixed(1)}%</div>
+          <div>Non-current Liabilities</div>
+          <div className="text-right">R {curr.totalNonCurrentLiabilities.toLocaleString()}</div>
+          <div className="text-right">R {prev.totalNonCurrentLiabilities.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.totalNonCurrentLiabilities, prev.totalNonCurrentLiabilities))}>{percentChange(curr.totalNonCurrentLiabilities, prev.totalNonCurrentLiabilities).toFixed(1)}%</div>
+          <div className="font-semibold">TOTAL LIABILITIES</div>
+          <div className="text-right font-semibold">R {curr.totalLiabilities.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {prev.totalLiabilities.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.totalLiabilities, prev.totalLiabilities)) + ' text-right font-semibold'}>{percentChange(curr.totalLiabilities, prev.totalLiabilities).toFixed(1)}%</div>
+          <div className="font-semibold mt-2">EQUITY</div>
+          <div></div><div></div><div></div>
+          <div className="font-semibold">Total Equity</div>
+          <div className="text-right font-semibold">R {curr.totalEquity.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {prev.totalEquity.toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.totalEquity, prev.totalEquity)) + ' text-right font-semibold'}>{percentChange(curr.totalEquity, prev.totalEquity).toFixed(1)}%</div>
+          <div className="font-semibold">TOTAL L & E</div>
+          <div className="text-right font-semibold">R {(curr.totalLiabilities + curr.totalEquity).toLocaleString()}</div>
+          <div className="text-right font-semibold">R {(prev.totalLiabilities + prev.totalEquity).toLocaleString()}</div>
+          <div className={pctClass(percentChange(curr.totalLiabilities + curr.totalEquity, prev.totalLiabilities + prev.totalEquity)) + ' text-right font-semibold'}>{percentChange(curr.totalLiabilities + curr.totalEquity, prev.totalLiabilities + prev.totalEquity).toFixed(1)}%</div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderComparativeIncomeStatement = () => {
+    const revenueCurr = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+    const expensesCurr = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
+    const costOfSalesCurr = expensesCurr.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+    const operatingExpensesCurr = expensesCurr.filter(r => !costOfSalesCurr.includes(r)).filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
+    const totalRevenueCurr = revenueCurr.reduce((sum, r) => sum + r.balance, 0);
+    const totalCostOfSalesCurrRaw = costOfSalesCurr.reduce((sum, r) => sum + r.balance, 0);
+    const totalCostOfSalesCurr = totalCostOfSalesCurrRaw > 0 ? totalCostOfSalesCurrRaw : fallbackCOGS;
+    const grossProfitCurr = totalRevenueCurr - totalCostOfSalesCurr;
+    const totalOperatingExpensesCurr = operatingExpensesCurr.reduce((sum, r) => sum + r.balance, 0);
+    const netProfitCurr = grossProfitCurr - totalOperatingExpensesCurr;
+
+    const revenuePrev = trialBalancePrev.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+    const expensesPrev = trialBalancePrev.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
+    const costOfSalesPrev = expensesPrev.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+    const operatingExpensesPrev = expensesPrev.filter(r => !costOfSalesPrev.includes(r)).filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
+    const totalRevenuePrev = revenuePrev.reduce((sum, r) => sum + r.balance, 0);
+    const totalCostOfSalesPrevRaw = costOfSalesPrev.reduce((sum, r) => sum + r.balance, 0);
+    const totalCostOfSalesPrev = totalCostOfSalesPrevRaw > 0 ? totalCostOfSalesPrevRaw : fallbackCOGSPrev;
+    const grossProfitPrev = totalRevenuePrev - totalCostOfSalesPrev;
+    const totalOperatingExpensesPrev = operatingExpensesPrev.reduce((sum, r) => sum + r.balance, 0);
+    const netProfitPrev = grossProfitPrev - totalOperatingExpensesPrev;
+
+    const y = selectedYear;
+    const py = selectedYear - 1;
+    return (
+      <div className="space-y-4">
+        <h3 className="text-xl font-bold">Comparative Income Statement</h3>
+        <div className="grid grid-cols-4 gap-2 text-sm">
+          <div className="font-semibold">Item</div>
+          <div className="font-semibold text-right">{y}</div>
+          <div className="font-semibold text-right">{py}</div>
+          <div className="font-semibold text-right">% Change</div>
+          <div className="font-semibold">REVENUE</div>
+          <div></div><div></div><div></div>
+          <div>Revenue</div>
+          <div className="text-right">R {totalRevenueCurr.toLocaleString()}</div>
+          <div className="text-right">R {totalRevenuePrev.toLocaleString()}</div>
+          <div className={pctClass(percentChange(totalRevenueCurr, totalRevenuePrev))}>{percentChange(totalRevenueCurr, totalRevenuePrev).toFixed(1)}%</div>
+          <div className="font-semibold mt-2">COST OF SALES</div>
+          <div></div><div></div><div></div>
+          <div>Cost of Sales</div>
+          <div className="text-right">R {totalCostOfSalesCurr.toLocaleString()}</div>
+          <div className="text-right">R {totalCostOfSalesPrev.toLocaleString()}</div>
+          <div className={pctClass(percentChange(totalCostOfSalesCurr, totalCostOfSalesPrev))}>{percentChange(totalCostOfSalesCurr, totalCostOfSalesPrev).toFixed(1)}%</div>
+          <div className="font-semibold">Gross Profit</div>
+          <div className="text-right font-semibold">R {grossProfitCurr.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {grossProfitPrev.toLocaleString()}</div>
+          <div className={pctClass(percentChange(grossProfitCurr, grossProfitPrev)) + ' text-right font-semibold'}>{percentChange(grossProfitCurr, grossProfitPrev).toFixed(1)}%</div>
+          <div className="font-semibold mt-2">OPERATING EXPENSES</div>
+          <div></div><div></div><div></div>
+          <div>Operating Expenses</div>
+          <div className="text-right">R {totalOperatingExpensesCurr.toLocaleString()}</div>
+          <div className="text-right">R {totalOperatingExpensesPrev.toLocaleString()}</div>
+          <div className={pctClass(percentChange(totalOperatingExpensesCurr, totalOperatingExpensesPrev))}>{percentChange(totalOperatingExpensesCurr, totalOperatingExpensesPrev).toFixed(1)}%</div>
+          <div className="font-semibold">Net Profit/(Loss)</div>
+          <div className="text-right font-semibold">R {netProfitCurr.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {netProfitPrev.toLocaleString()}</div>
+          <div className={pctClass(percentChange(netProfitCurr, netProfitPrev)) + ' text-right font-semibold'}>{percentChange(netProfitCurr, netProfitPrev).toFixed(1)}%</div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderComparativeCashFlow = () => {
+    const cfCurr = cashFlowCurrComparative || {
+      operating_inflows: 0,
+      operating_outflows: 0,
+      net_cash_from_operations: 0,
+      investing_inflows: 0,
+      investing_outflows: 0,
+      net_cash_from_investing: 0,
+      financing_inflows: 0,
+      financing_outflows: 0,
+      net_cash_from_financing: 0,
+      opening_cash_balance: 0,
+      closing_cash_balance: 0,
+      net_change_in_cash: 0,
+    };
+    const cfPrev = cashFlowPrev || {
+      operating_inflows: 0,
+      operating_outflows: 0,
+      net_cash_from_operations: 0,
+      investing_inflows: 0,
+      investing_outflows: 0,
+      net_cash_from_investing: 0,
+      financing_inflows: 0,
+      financing_outflows: 0,
+      net_cash_from_financing: 0,
+      opening_cash_balance: 0,
+      closing_cash_balance: 0,
+      net_change_in_cash: 0,
+    };
+    const y = selectedYear;
+    const py = selectedYear - 1;
+    return (
+      <div className="space-y-4">
+        <h3 className="text-xl font-bold">Comparative Cash Flow Statement</h3>
+        <div className="grid grid-cols-4 gap-2 text-sm">
+          <div className="font-semibold">Item</div>
+          <div className="font-semibold text-right">{y}</div>
+          <div className="font-semibold text-right">{py}</div>
+          <div className="font-semibold text-right">% Change</div>
+          <div>Operating Inflows</div>
+          <div className="text-right">R {cfCurr.operating_inflows.toLocaleString()}</div>
+          <div className="text-right">R {cfPrev.operating_inflows.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.operating_inflows, cfPrev.operating_inflows))}>{percentChange(cfCurr.operating_inflows, cfPrev.operating_inflows).toFixed(1)}%</div>
+          <div>Operating Outflows</div>
+          <div className="text-right">(R {Math.abs(cfCurr.operating_outflows).toLocaleString()})</div>
+          <div className="text-right">(R {Math.abs(cfPrev.operating_outflows).toLocaleString()})</div>
+          <div className={pctClass(percentChange(-Math.abs(cfCurr.operating_outflows), -Math.abs(cfPrev.operating_outflows)))}>{percentChange(-Math.abs(cfCurr.operating_outflows), -Math.abs(cfPrev.operating_outflows)).toFixed(1)}%</div>
+          <div className="font-semibold">Net Cash from Operations</div>
+          <div className="text-right font-semibold">R {cfCurr.net_cash_from_operations.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {cfPrev.net_cash_from_operations.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.net_cash_from_operations, cfPrev.net_cash_from_operations)) + ' text-right font-semibold'}>{percentChange(cfCurr.net_cash_from_operations, cfPrev.net_cash_from_operations).toFixed(1)}%</div>
+          <div>Investing Inflows</div>
+          <div className="text-right">R {cfCurr.investing_inflows.toLocaleString()}</div>
+          <div className="text-right">R {cfPrev.investing_inflows.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.investing_inflows, cfPrev.investing_inflows))}>{percentChange(cfCurr.investing_inflows, cfPrev.investing_inflows).toFixed(1)}%</div>
+          <div>Investing Outflows</div>
+          <div className="text-right">(R {Math.abs(cfCurr.investing_outflows).toLocaleString()})</div>
+          <div className="text-right">(R {Math.abs(cfPrev.investing_outflows).toLocaleString()})</div>
+          <div className={pctClass(percentChange(-Math.abs(cfCurr.investing_outflows), -Math.abs(cfPrev.investing_outflows)))}>{percentChange(-Math.abs(cfCurr.investing_outflows), -Math.abs(cfPrev.investing_outflows)).toFixed(1)}%</div>
+          <div className="font-semibold">Net Cash from Investing</div>
+          <div className="text-right font-semibold">R {cfCurr.net_cash_from_investing.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {cfPrev.net_cash_from_investing.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.net_cash_from_investing, cfPrev.net_cash_from_investing)) + ' text-right font-semibold'}>{percentChange(cfCurr.net_cash_from_investing, cfPrev.net_cash_from_investing).toFixed(1)}%</div>
+          <div>Financing Inflows</div>
+          <div className="text-right">R {cfCurr.financing_inflows.toLocaleString()}</div>
+          <div className="text-right">R {cfPrev.financing_inflows.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.financing_inflows, cfPrev.financing_inflows))}>{percentChange(cfCurr.financing_inflows, cfPrev.financing_inflows).toFixed(1)}%</div>
+          <div>Financing Outflows</div>
+          <div className="text-right">(R {Math.abs(cfCurr.financing_outflows).toLocaleString()})</div>
+          <div className="text-right">(R {Math.abs(cfPrev.financing_outflows).toLocaleString()})</div>
+          <div className={pctClass(percentChange(-Math.abs(cfCurr.financing_outflows), -Math.abs(cfPrev.financing_outflows)))}>{percentChange(-Math.abs(cfCurr.financing_outflows), -Math.abs(cfPrev.financing_outflows)).toFixed(1)}%</div>
+          <div className="font-semibold">Net Cash from Financing</div>
+          <div className="text-right font-semibold">R {cfCurr.net_cash_from_financing.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {cfPrev.net_cash_from_financing.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.net_cash_from_financing, cfPrev.net_cash_from_financing)) + ' text-right font-semibold'}>{percentChange(cfCurr.net_cash_from_financing, cfPrev.net_cash_from_financing).toFixed(1)}%</div>
+          <div className="font-semibold">Net Change in Cash</div>
+          <div className="text-right font-semibold">R {cfCurr.net_change_in_cash.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {cfPrev.net_change_in_cash.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.net_change_in_cash, cfPrev.net_change_in_cash)) + ' text-right font-semibold'}>{percentChange(cfCurr.net_change_in_cash, cfPrev.net_change_in_cash).toFixed(1)}%</div>
+          <div>Opening Cash Balance</div>
+          <div className="text-right">R {cfCurr.opening_cash_balance.toLocaleString()}</div>
+          <div className="text-right">R {cfPrev.opening_cash_balance.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.opening_cash_balance, cfPrev.opening_cash_balance))}>{percentChange(cfCurr.opening_cash_balance, cfPrev.opening_cash_balance).toFixed(1)}%</div>
+          <div className="font-semibold">Closing Cash Balance</div>
+          <div className="text-right font-semibold">R {cfCurr.closing_cash_balance.toLocaleString()}</div>
+          <div className="text-right font-semibold">R {cfPrev.closing_cash_balance.toLocaleString()}</div>
+          <div className={pctClass(percentChange(cfCurr.closing_cash_balance, cfPrev.closing_cash_balance)) + ' text-right font-semibold'}>{percentChange(cfCurr.closing_cash_balance, cfPrev.closing_cash_balance).toFixed(1)}%</div>
+        </div>
+      </div>
+    );
+  };
+
   // GAAP Income Statement
   const renderIncomeStatement = () => {
     const revenue = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
@@ -1196,11 +1558,12 @@ export const GAAPFinancialStatements = () => {
       )}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="balance-sheet">Statement of Financial Position</TabsTrigger>
-          <TabsTrigger value="income">Income Statement</TabsTrigger>
-          <TabsTrigger value="cash-flow">Cash Flow Statement</TabsTrigger>
-        </TabsList>
+      <TabsList>
+        <TabsTrigger value="balance-sheet">Statement of Financial Position</TabsTrigger>
+        <TabsTrigger value="income">Income Statement</TabsTrigger>
+        <TabsTrigger value="cash-flow">Cash Flow Statement</TabsTrigger>
+        <TabsTrigger value="comparative">Comparative</TabsTrigger>
+      </TabsList>
 
         <TabsContent value="balance-sheet">
           <Card>
@@ -1222,6 +1585,21 @@ export const GAAPFinancialStatements = () => {
           <Card>
             <CardContent className="pt-6">
               {renderCashFlowStatement()}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="comparative">
+          <Card>
+            <CardContent className="pt-6">
+              {comparativeLoading ? (
+                <div className="flex justify-center items-center h-32"><LoadingSpinner /></div>
+              ) : (
+                <div className="space-y-8">
+                  {renderComparativeBalanceSheet()}
+                  {renderComparativeIncomeStatement()}
+                  {renderComparativeCashFlow()}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -1555,3 +1933,90 @@ const computeOpeningCashOnly = async (companyId: string, start: string) => {
   const totalOpening = (banks || []).reduce((s: number, b: any) => s + Number(b.opening_balance || 0), 0);
   return totalOpening;
 };
+
+const getCashFlowForPeriod = async (companyId: string, start: string, end: string) => {
+  try {
+    const opening = await computeOpeningCashOnly(companyId, start);
+    try {
+      const { data, error } = await supabase.rpc('get_cash_flow_statement' as any, {
+        _company_id: companyId,
+        _period_start: start,
+        _period_end: end,
+      });
+      if (error) throw error;
+      if (Array.isArray(data) && data.length > 0) {
+        const cf = (data as any)[0];
+        const nets = (
+          Number(cf.net_cash_from_operations || 0) +
+          Number(cf.net_cash_from_investing || 0) +
+          Number(cf.net_cash_from_financing || 0)
+        );
+        return {
+          ...cf,
+          opening_cash_balance: opening,
+          net_change_in_cash: nets,
+          closing_cash_balance: opening + nets,
+        };
+      }
+    } catch {}
+
+    const { data: legacy, error: legacyErr } = await supabase.rpc('generate_cash_flow' as any, {
+      _company_id: companyId,
+      _period_start: start,
+      _period_end: end,
+    });
+    if (legacyErr) throw legacyErr;
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      const d: any = legacy[0] || {};
+      const toNumber = (v: any) => {
+        const n = typeof v === 'number' ? v : parseFloat(String(v || 0));
+        return isNaN(n) ? 0 : n;
+      };
+      const oa = toNumber(d.operating_activities);
+      const ia = toNumber(d.investing_activities);
+      const fa = toNumber(d.financing_activities);
+      const cf = {
+        operating_inflows: toNumber(d.operating_inflows ?? (oa > 0 ? oa : 0)),
+        operating_outflows: toNumber(d.operating_outflows ?? (oa < 0 ? -oa : 0)),
+        net_cash_from_operations: toNumber(d.net_cash_from_operations ?? oa),
+        investing_inflows: toNumber(d.investing_inflows ?? (ia > 0 ? ia : 0)),
+        investing_outflows: toNumber(d.investing_outflows ?? (ia < 0 ? -ia : 0)),
+        net_cash_from_investing: toNumber(d.net_cash_from_investing ?? ia),
+        financing_inflows: toNumber(d.financing_inflows ?? (fa > 0 ? fa : 0)),
+        financing_outflows: toNumber(d.financing_outflows ?? (fa < 0 ? -fa : 0)),
+        net_cash_from_financing: toNumber(d.net_cash_from_financing ?? fa),
+        opening_cash_balance: toNumber(d.opening_cash_balance ?? d.opening_cash),
+        closing_cash_balance: toNumber(d.closing_cash_balance ?? d.closing_cash),
+        net_change_in_cash: toNumber(d.net_change_in_cash ?? d.net_cash_flow),
+      };
+      const nets = cf.net_cash_from_operations + cf.net_cash_from_investing + cf.net_cash_from_financing;
+      const updated = { ...cf, opening_cash_balance: opening, net_change_in_cash: nets, closing_cash_balance: opening + nets };
+      const isAllZero = [
+        updated.operating_inflows,
+        updated.operating_outflows,
+        updated.net_cash_from_operations,
+        updated.investing_inflows,
+        updated.investing_outflows,
+        updated.net_cash_from_investing,
+        updated.financing_inflows,
+        updated.financing_outflows,
+        updated.net_cash_from_financing,
+        updated.opening_cash_balance,
+        updated.closing_cash_balance,
+        updated.net_change_in_cash,
+      ].every(v => Math.abs(v || 0) < 0.001);
+      if (isAllZero) {
+        const local = await computeCashFlowFallback(companyId, start, end);
+        return local;
+      }
+      return updated;
+    } else {
+      const local = await computeCashFlowFallback(companyId, start, end);
+      return local;
+    }
+  } catch (e) {
+    console.error('getCashFlowForPeriod error', e);
+    return null;
+  }
+};
+  const pctClass = (v: number) => (v > 0 ? 'text-green-600 dark:text-green-400' : v < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground');

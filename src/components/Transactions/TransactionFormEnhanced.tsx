@@ -261,7 +261,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
   useEffect(() => {
     if (!form.bankAccountId || !form.element || accounts.length === 0) return;
-    const bankLedger = accounts.find(a => (a.account_type || '').toLowerCase() === 'asset' && (a.account_name || '').toLowerCase().includes('bank'));
+    const bankLedger =
+      accounts.find(a => (a.account_type || '').toLowerCase() === 'asset' && String(a.account_code || '') === '1100') ||
+      accounts.find(a => {
+        const type = (a.account_type || '').toLowerCase();
+        const name = (a.account_name || '').toLowerCase();
+        return type === 'asset' && (name.includes('bank') || name.includes('cash'));
+      });
     if (!bankLedger) return;
     if (form.element === 'income' || form.element === 'receipt' || form.element === 'asset_disposal' || form.element === 'loan_received') {
       setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || bankLedger.id }));
@@ -735,17 +741,21 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if (paymentMethod.value === 'accrual') {
           creditAccount = credits.find(acc => (acc.account_type || '').toLowerCase() === 'liability' && ((acc.account_code || '').toString() === '2000' || (acc.account_name || '').toLowerCase().includes('accounts payable') || (acc.account_name || '').toLowerCase().includes('payable')));
         } else {
-          creditAccount = credits.find(acc => 
-            keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
-          );
+          creditAccount =
+            credits.find(acc => (acc.account_type || '').toLowerCase() === 'asset' && String(acc.account_code || '') === '1100') ||
+            credits.find(acc => 
+              keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
+            );
         }
         if (creditAccount) {
           setForm(prev => ({ ...prev, creditAccount: prev.creditAccount || creditAccount.id }));
         }
       } else if (form.element === 'income' || form.element === 'equity') {
-        const debitAccount = debits.find(acc => 
-          keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
-        );
+        const debitAccount =
+          debits.find(acc => (acc.account_type || '').toLowerCase() === 'asset' && String(acc.account_code || '') === '1100') ||
+          debits.find(acc => 
+            keywords.some(kw => (acc.account_name || '').toLowerCase().includes(kw.trim()))
+          );
         if (debitAccount) {
           setForm(prev => ({ ...prev, debitAccount: prev.debitAccount || debitAccount.id }));
         }
