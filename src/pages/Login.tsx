@@ -28,10 +28,12 @@ export default function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const { toast } = useToast();
+  const signupMsg = params.get('signup') === 'success' || (typeof localStorage !== 'undefined' && localStorage.getItem('just_signed_up') === 'true');
+  useEffect(() => { if (signupMsg) { try { localStorage.removeItem('just_signed_up'); } catch {} } }, [signupMsg]);
 
   useEffect(() => {
-    if (user) navigate("/", { replace: true });
-  }, [user, navigate]);
+    if (user && !signupMsg) navigate("/", { replace: true });
+  }, [user, navigate, signupMsg]);
 
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { email: "", password: "", remember: true } });
 
@@ -83,6 +85,13 @@ export default function Login() {
             <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
             <p className="text-sm text-muted-foreground mt-2">Enterprise Accounting & Financial Management</p>
           </header>
+
+          {signupMsg && (
+            <div className="mb-4 rounded-md border bg-muted/40 p-3">
+              <div className="text-sm font-medium">Account created successfully</div>
+              <div className="text-xs text-muted-foreground">Please sign in to access your dashboard. We’ve sent a verification email if required.</div>
+            </div>
+          )}
 
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
