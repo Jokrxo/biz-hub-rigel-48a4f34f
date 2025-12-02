@@ -265,3 +265,60 @@ export const exportCustomerStatementToPDF = (
 
   doc.save(`${filename}.pdf`);
 };
+
+export interface ComparativeCashFlowRow { label: string; yearA: number; yearB: number; percent?: number; bold?: boolean }
+
+export const exportComparativeCashFlowToExcel = (
+  rows: ComparativeCashFlowRow[],
+  yearA: number,
+  yearB: number,
+  filename = `Comparative_Cash_Flow_${yearA}_vs_${yearB}`
+) => {
+  const header = [{ Item: 'Item', [String(yearA)]: String(yearA), [String(yearB)]: String(yearB), '% Change': '% Change' }];
+  const data = rows.map(r => ({
+    Item: r.label,
+    [String(yearA)]: r.yearA,
+    [String(yearB)]: r.yearB,
+    '% Change': typeof r.percent === 'number' ? `${r.percent.toFixed(1)}%` : ''
+  }));
+  const ws = XLSX.utils.json_to_sheet([...header, ...data]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `Cash Flow ${yearA} vs ${yearB}`);
+  XLSX.writeFile(wb, `${filename}.xlsx`);
+};
+
+export const exportComparativeCashFlowToPDF = (
+  rows: ComparativeCashFlowRow[],
+  yearA: number,
+  yearB: number,
+  filename = `Comparative_Cash_Flow_${yearA}_vs_${yearB}`
+) => {
+  const doc = new jsPDF();
+  doc.setFontSize(20);
+  doc.text('Comparative Cash Flow', 14, 22);
+  doc.setFontSize(10);
+  doc.text(`Years: ${yearA} vs ${yearB}`, 14, 30);
+  doc.text(`Generated on: ${new Date().toLocaleDateString('en-ZA')}`, 14, 36);
+  const body = rows.map(r => [
+    r.label,
+    `R ${Number(r.yearA || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+    `R ${Number(r.yearB || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+    typeof r.percent === 'number' ? `${r.percent.toFixed(1)}%` : ''
+  ]);
+  autoTable(doc, {
+    head: [['Item', String(yearA), String(yearB), '% Change']],
+    body,
+    startY: 45,
+    styles: { fontSize: 9, cellPadding: 3 },
+    headStyles: { fillColor: [34, 139, 34], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 248, 248] },
+    didParseCell: (dataCell) => {
+      const r = rows[dataCell.row.index];
+      if (r?.bold) {
+        dataCell.cell.styles.fontStyle = 'bold';
+        dataCell.cell.styles.fillColor = [240, 240, 240];
+      }
+    }
+  });
+  doc.save(`${filename}.pdf`);
+};

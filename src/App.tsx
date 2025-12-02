@@ -5,6 +5,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
@@ -34,6 +35,8 @@ const Budget = lazy(() => import("./pages/Budget"));
 const Payroll = lazy(() => import("./pages/Payroll"));
 const Loans = lazy(() => import("./pages/Loans"));
 const PaymentPortal = lazy(() => import("./pages/PaymentPortal"));
+const License = lazy(() => import("./pages/License"));
+const LicenseAdmin = lazy(() => import("./pages/LicenseAdmin"));
 import About from "./pages/About";
 
 const queryClient = new QueryClient();
@@ -83,6 +86,7 @@ const App = () => {
             } catch {}
             return null;
           })()}
+          <ErrorBoundary>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
@@ -106,6 +110,8 @@ const App = () => {
             <Route path="/loans" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Loans /></Suspense></ProtectedRoute>} />
             <Route path="/payroll" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Payroll /></Suspense></ProtectedRoute>} />
             <Route path="/billing" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense></ProtectedRoute>} />
+            <Route path="/license" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><License /></Suspense></ProtectedRoute>} />
+            <Route path="/license-admin" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><LicenseAdmin /></Suspense></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Settings /></Suspense></ProtectedRoute>} />
             <Route path="/about" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
             <Route path="/about-us" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
@@ -115,6 +121,7 @@ const App = () => {
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </ErrorBoundary>
           <InstallPrompt />
         </BrowserRouter>
       </AuthProvider>

@@ -2903,6 +2903,8 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  const [pageEmp, setPageEmp] = useState(0);
+  const pageSizeEmp = 7;
   const [filterYear, setFilterYear] = useState<number>(new Date().getFullYear());
   const [filterMonth, setFilterMonth] = useState<number>(new Date().getMonth() + 1);
   const [form, setForm] = useState({
@@ -3228,6 +3230,7 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
         </CardHeader>
         <CardContent>
           {loading ? (<div className="py-8 text-center text-muted-foreground">Loading…</div>) : (
+            <>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -3243,7 +3246,7 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {employees.map(e => (
+                {employees.slice(pageEmp * pageSizeEmp, pageEmp * pageSizeEmp + pageSizeEmp).map(e => (
                   <TableRow key={e.id}>
                     <TableCell>
                       <Checkbox checked={!!selected[e.id]} onCheckedChange={(v: any) => setSelected(prev => ({ ...prev, [e.id]: !!v }))} />
@@ -3263,6 +3266,14 @@ function EmployeesSimple({ companyId, canEdit }: { companyId: string; canEdit: b
                 ))}
               </TableBody>
             </Table>
+            <div className="flex items-center justify-between mt-3">
+              <div className="text-sm text-muted-foreground">Page {pageEmp + 1} of {Math.max(1, Math.ceil(employees.length / pageSizeEmp))}</div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" disabled={pageEmp === 0} onClick={() => setPageEmp(p => Math.max(0, p - 1))}>Previous</Button>
+                <Button variant="outline" disabled={(pageEmp + 1) >= Math.ceil(employees.length / pageSizeEmp)} onClick={() => setPageEmp(p => p + 1)}>Next</Button>
+              </div>
+            </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -3466,6 +3477,10 @@ function PayrollHistory({ companyId }: { companyId: string }) {
   const [runs, setRuns] = useState<PayRun[]>([]);
   const [viewRun, setViewRun] = useState<PayRun | null>(null);
   const [runLines, setRunLines] = useState<any[]>([]);
+  const [pageRuns, setPageRuns] = useState(0);
+  const pageSizeRuns = 7;
+  const [pageLines, setPageLines] = useState(0);
+  const pageSizeLines = 7;
   useEffect(() => { const load = async () => { const { data } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false }); setRuns((data || []) as any); }; if (companyId) load(); }, [companyId]);
   const openView = async (r: PayRun) => { setViewRun(r); const { data } = await supabase.from("pay_run_lines" as any).select("*").eq("pay_run_id", r.id); setRunLines((data || []) as any); };
   const totals = useMemo(() => ({ count: runLines.length, net: runLines.reduce((s, l: any) => s + (l.net || 0), 0) }), [runLines]);
@@ -3474,7 +3489,7 @@ function PayrollHistory({ companyId }: { companyId: string }) {
       <Table>
         <TableHeader><TableRow><TableHead>Period</TableHead><TableHead>Employees</TableHead><TableHead>Status</TableHead><TableHead>Total Net Pay</TableHead><TableHead></TableHead></TableRow></TableHeader>
         <TableBody>
-          {runs.map(r => (
+          {runs.slice(pageRuns * pageSizeRuns, pageRuns * pageSizeRuns + pageSizeRuns).map(r => (
             <TableRow key={r.id}>
               <TableCell>{new Date(r.period_start).toLocaleDateString()} - {new Date(r.period_end).toLocaleDateString()}</TableCell>
               <TableCell>-</TableCell>
@@ -3485,6 +3500,13 @@ function PayrollHistory({ companyId }: { companyId: string }) {
           ))}
         </TableBody>
       </Table>
+      <div className="flex items-center justify-between mt-3">
+        <div className="text-sm text-muted-foreground">Page {pageRuns + 1} of {Math.max(1, Math.ceil(runs.length / pageSizeRuns))}</div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" disabled={pageRuns === 0} onClick={() => setPageRuns(p => Math.max(0, p - 1))}>Previous</Button>
+          <Button variant="outline" disabled={(pageRuns + 1) >= Math.ceil(runs.length / pageSizeRuns)} onClick={() => setPageRuns(p => p + 1)}>Next</Button>
+        </div>
+      </div>
       <Dialog open={!!viewRun} onOpenChange={(o) => { if (!o) { setViewRun(null); setRunLines([]); } }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Payroll Summary</DialogTitle></DialogHeader>
@@ -3498,7 +3520,7 @@ function PayrollHistory({ companyId }: { companyId: string }) {
               <Table>
                 <TableHeader><TableRow><TableHead>Employee</TableHead><TableHead className="text-right">Net</TableHead><TableHead></TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {runLines.map(l => (
+                  {runLines.slice(pageLines * pageSizeLines, pageLines * pageSizeLines + pageSizeLines).map(l => (
                     <TableRow key={l.id}>
                       <TableCell>{l.employee_id}</TableCell>
                       <TableCell className="text-right">R {Number(l.net || 0).toFixed(2)}</TableCell>
@@ -3507,6 +3529,13 @@ function PayrollHistory({ companyId }: { companyId: string }) {
                   ))}
                 </TableBody>
               </Table>
+              <div className="flex items-center justify-between mt-3">
+                <div className="text-sm text-muted-foreground">Page {pageLines + 1} of {Math.max(1, Math.ceil(runLines.length / pageSizeLines))}</div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" disabled={pageLines === 0} onClick={() => setPageLines(p => Math.max(0, p - 1))}>Previous</Button>
+                  <Button variant="outline" disabled={(pageLines + 1) >= Math.ceil(runLines.length / pageSizeLines)} onClick={() => setPageLines(p => p + 1)}>Next</Button>
+                </div>
+              </div>
             </div>
           )}
         </DialogContent>

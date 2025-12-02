@@ -2,6 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Separator } from "@/components/ui/separator";
 import { useAuth } from "@/context/useAuth";
 import { Bell, Menu, Search, Plus, LogOut, Building2 } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
@@ -15,12 +17,14 @@ interface DashboardHeaderProps {
 const UserMenu = () => {
   const { user, logout } = useAuth();
   const [companyName, setCompanyName] = useState("");
+  const [openAccount, setOpenAccount] = useState(false);
+  const [accountInfo, setAccountInfo] = useState<{ name?: string; email?: string; plan?: string; status?: string; expiry?: string; license_key?: string; users_count?: number }>({});
 
   const loadCompanyInfo = useCallback(async () => {
     try {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("company_id")
+        .select("company_id, first_name, last_name, email")
         .eq("user_id", user?.id)
         .single();
       if (profile) {
@@ -30,6 +34,16 @@ const UserMenu = () => {
           .eq("id", profile.company_id)
           .single();
         if (company) setCompanyName(company.name);
+        const { count: usersCount } = await supabase
+          .from("profiles")
+          .select("id", { count: "exact" })
+          .eq("company_id", profile.company_id)
+          .limit(1);
+        setAccountInfo({
+          name: [profile.first_name, profile.last_name].filter(Boolean).join(" ") || user?.user_metadata?.name,
+          email: profile.email || user?.email || "",
+          users_count: (usersCount as number) || 1,
+        });
       }
     } catch (error) { console.error("Error loading company:", error); }
   }, [user?.id]);
@@ -50,12 +64,34 @@ const UserMenu = () => {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Account</DropdownMenuLabel>
+        <DropdownMenuLabel className="cursor-pointer" onClick={() => setOpenAccount(true)}>Account</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={logout} className="text-destructive">
           <LogOut className="h-4 w-4 mr-2" /> Log out
         </DropdownMenuItem>
       </DropdownMenuContent>
+      <Dialog open={openAccount} onOpenChange={setOpenAccount}>
+        <DialogContent className="sm:max-w-md">
+          <div className="absolute inset-0 opacity-10 pointer-events-none flex items-center justify-center">
+            <img src="/Modern Rigel Business Logo Design.png" alt="Rigel Business" className="max-w-[60%]" />
+          </div>
+          <DialogHeader>
+            <DialogTitle>Account Overview</DialogTitle>
+          </DialogHeader>
+          <div className="relative space-y-2">
+            <div className="text-sm">Name: <span className="font-mono">{accountInfo.name || user?.user_metadata?.name || user?.email}</span></div>
+            <div className="text-sm">Email: <span className="font-mono">{accountInfo.email || user?.email}</span></div>
+            <Separator className="my-2" />
+            <div className="text-sm">Company: <span className="font-mono">{companyName || '—'}</span></div>
+            <div className="text-sm">Users in Company: <span className="font-mono">{accountInfo.users_count || 1}</span></div>
+            <Separator className="my-2" />
+            <div className="text-sm">Plan Type: <span className="font-mono">{accountInfo.plan || '—'}</span></div>
+            <div className="text-sm">Status: <span className="font-mono">{accountInfo.status || 'OPEN'}</span></div>
+            <div className="text-sm">Expiry Date: <span className="font-mono">{accountInfo.expiry || '—'}</span></div>
+            <div className="text-sm">License Key: <span className="font-mono">{(accountInfo.license_key || '').slice(0,4)}-****-****-{(accountInfo.license_key || '').slice(-4)}</span></div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </DropdownMenu>
   );
 };

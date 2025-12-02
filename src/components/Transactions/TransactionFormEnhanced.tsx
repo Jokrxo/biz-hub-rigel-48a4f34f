@@ -223,6 +223,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   });
   const [showFixedAssetsUI, setShowFixedAssetsUI] = useState<boolean>(false);
   const [cogsTotal, setCogsTotal] = useState<number>(0);
+  const [amountIncludesVAT, setAmountIncludesVAT] = useState<boolean>(false);
   const [cogsAccount, setCogsAccount] = useState<Account | null>(null);
   const [inventoryAccount, setInventoryAccount] = useState<Account | null>(null);
   const [invoiceIdForRef, setInvoiceIdForRef] = useState<string>("");
@@ -405,6 +406,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       }));
       setLockAccounts(Boolean(editData.lockType));
       setLockType(String(editData.lockType || ''));
+      if (typeof (editData as any).amount_includes_vat !== 'undefined') {
+        setAmountIncludesVAT(Boolean((editData as any).amount_includes_vat));
+      } else {
+        const el = (String(editData.lockType || '') === 'po_sent') ? 'product_purchase' : (editData.transaction_type || '');
+        setAmountIncludesVAT(!(el === 'expense' || el === 'product_purchase'));
+      }
     } catch {}
   }, [open, editData]);
 
@@ -561,7 +568,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
   // Filter accounts based on search input
   const debitSource = debitIncludeAll ? accounts : debitAccounts;
-  const creditSource = creditIncludeAll ? accounts : creditAccounts;
+  const baseCreditSource = creditIncludeAll ? accounts : creditAccounts;
+  const creditSource = (lockAccounts && lockType === 'sent' && form.creditAccount)
+    ? baseCreditSource.filter(a => a.id === form.creditAccount)
+    : baseCreditSource;
 
   const filteredDebitAccounts = debitSource.filter(a =>
     a.account_name.toLowerCase().includes(debitSearch.toLowerCase()) ||
@@ -624,6 +634,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
     }
     if (form.debitAccount) {
       credits = credits.filter(acc => acc.id !== form.debitAccount);
+    }
+
+    // When posting a Sent invoice, hard-lock the credit list to the preset Sales Revenue ledger
+    if (lockAccounts && lockType === 'sent' && form.creditAccount) {
+      credits = credits.filter(acc => acc.id === form.creditAccount);
     }
 
     setDebitAccounts(debits);
@@ -2333,7 +2348,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [globalIncludeAll, setGlobalIncludeAll] = useState(false);
   // Lock debit account for loans (user can only choose credit account - bank/accrual)
   const disableDebitSelection = form.element?.startsWith('loan_') || (lockAccounts && Boolean(form.debitAccount));
-  const disableCreditSelection = form.element?.startsWith('loan_') ? false : (lockAccounts && Boolean(form.creditAccount));
+  const disableCreditSelection = lockType === 'sent' ? true : (form.element?.startsWith('loan_') ? false : (lockAccounts && Boolean(form.creditAccount)));
   const disableAccountSelection = lockAccounts && Boolean(form.debitAccount) && Boolean(form.creditAccount);
 
   useEffect(() => {
@@ -2811,6 +2826,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   <p className="text-xs text-muted-foreground mt-1">
                     Showing {selectedElement?.creditTypes?.join('/')} accounts
                   </p>
+                  {lockAccounts && lockType === 'sent' && (
+                    <p className="text-xs mt-1 text-primary font-medium">Locked: 4000 - Sales Revenue</p>
+                  )}
                 </div>
               </div>
 
@@ -2841,7 +2859,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             </h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                    <Label htmlFor="amount">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' ? '' : (form.element === 'expense' || form.element === 'product_purchase' ? '(excl. VAT)' : '(incl. VAT)')} *</Label>
+              <Label htmlFor="amount">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' || form.element === 'asset_disposal' ? '' : (amountIncludesVAT ? '(incl. VAT)' : '(excl. VAT)')} *</Label>
                 <Input
                   id="amount"
                   type="number"
@@ -2961,13 +2979,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">VAT ({form.vatRate}%):</span>
                       <span className="font-mono">
-                        R {(form.element === 'expense' || form.element === 'product_purchase' ? (parseFloat(form.amount) * parseFloat(form.vatRate) / 100) : (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate)))).toFixed(2)}
+                        R {(amountIncludesVAT ? (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate))) : (parseFloat(form.amount) * parseFloat(form.vatRate) / 100)).toFixed(2)}
                       </span>
                     </div>
                     <div className="flex justify-between text-base font-semibold border-t pt-2">
                       <span>Net Amount:</span>
                       <span className="font-mono">
-                        R {(form.element === 'expense' || form.element === 'product_purchase' ? parseFloat(form.amount) : (parseFloat(form.amount) - (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate))))).toFixed(2)}
+                        R {(amountIncludesVAT ? (parseFloat(form.amount) - (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate)))) : parseFloat(form.amount)).toFixed(2)}
                       </span>
                     </div>
                   </>

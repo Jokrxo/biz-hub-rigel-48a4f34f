@@ -10,8 +10,9 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
 import { useNavigate } from "react-router-dom";
-import { Sparkles, Activity, Link as LinkIcon, ShieldCheck } from "lucide-react";
-import { systemOverview, accountingPrimer } from "./knowledge";
+import { Activity, Link as LinkIcon, ShieldCheck, Sparkles } from "lucide-react";
+import StellaLumenLogo from "@/components/Stella/StellaLumenLogo";
+import { systemOverview, accountingPrimer, plainEnglishGuide, taxQuickTips } from "./knowledge";
 
 interface FeedItem { id: string; title: string; description: string; ts: string }
 interface ChatMsg { role: 'bot' | 'user'; text: string; ts: string }
@@ -29,7 +30,7 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
   const [metrics, setMetrics] = useState<{ tx: number; inv: number; po: number; bills: number; budgets: number; bank: number; customers: number; items: number }>({ tx: 0, inv: 0, po: 0, bills: 0, budgets: 0, bank: 0, customers: 0, items: 0 });
   const [messages, setMessages] = useState<ChatMsg[]>([{ role: 'bot', text: 'Hi, I am Stella. How can I help you today?', ts: new Date().toISOString() }]);
   const [chatInput, setChatInput] = useState("");
-  const [aiEnabled, setAiEnabled] = useState<boolean>(false);
+  const [aiEnabled, setAiEnabled] = useState<boolean>(true);
   const [openaiKey, setOpenaiKey] = useState<string>("");
   const [model, setModel] = useState<string>("gpt-4o-mini");
   useEffect(() => {
@@ -59,8 +60,11 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
       const savedEnabled = localStorage.getItem("stella_ai_enabled");
       const savedKey = localStorage.getItem("stella_openai_key");
       const savedModel = localStorage.getItem("stella_openai_model");
-      setAiEnabled(savedEnabled === "true");
-      setOpenaiKey(savedKey || "");
+      const envKey = (import.meta as any).env?.VITE_OPENAI_API_KEY || "";
+      setAiEnabled(savedEnabled ? (savedEnabled === "true") : true);
+      const useKey = savedKey || envKey || "";
+      setOpenaiKey(useKey);
+      if (useKey) localStorage.setItem("stella_openai_key", useKey);
       setModel(savedModel || "gpt-4o-mini");
     };
     init();
@@ -119,12 +123,20 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
 
   const respond = (q: string) => {
     const lower = q.trim().toLowerCase();
+    const isGreeting = ["hi","hello","hey","hy"].some(g => lower === g || lower.startsWith(g));
     const res: string[] = [];
-    if (lower.includes('budget') && lower.includes('actual')) res.push('Budget actuals are computed from posted transaction entries for the selected month. Open Budget to view details.');
-    if (lower.includes('unpaid') && lower.includes('invoice')) res.push('Unpaid invoices are shown in Sales → Invoices with statuses and aging.');
-    if (lower.includes('bank') && lower.includes('balance')) res.push('Bank balances update on bank-type transactions. Open Bank for account summaries.');
-    if (lower.includes('purchase') || lower.includes('ap')) res.push('AP dashboard provides supplier KPIs and unpaid bills.');
-    if (lower.includes('vat')) res.push('VAT Input/Output entries post when a non-zero VAT rate is set.');
+    if (isGreeting) res.push('Hello! I can help with everyday finance tasks. Try “unpaid invoices”, “bank balance”, “VAT totals”, or “budget actual for November”.');
+    if (lower.includes('budget') && lower.includes('actual')) res.push('Budget actuals: computed from posted entries for the month. Steps: Budget → select month → view “Actual vs Budget”.');
+    if (lower.includes('unpaid') && lower.includes('invoice')) res.push('Unpaid invoices: Sales → Invoices; filter by Status ≠ paid; shows aging so you can follow up.');
+    if (lower.includes('bank') && lower.includes('balance')) res.push('Bank balances update as you record receipts/payments. Steps: Bank → Accounts → Reconcile to match statements.');
+    if (lower.includes('purchase') || lower.includes('ap')) res.push('Payables/AP: Purchase → Bills; record supplier bills, track unpaid and due dates.');
+    if (lower.includes('vat')) res.push('VAT: Input on purchases (claim back), Output on sales (pay). Use VAT exclusive/inclusive rules; Tax → VAT to see totals. Example: Net R100 at 15% → VAT R15, Total R115.');
+    if (lower === 'tax' || lower.includes('tax')) res.push('Tax overview: start with profit, adjust for non-deductibles and allowances; VAT201 from Output minus Input. See Tax module.');
+    if (lower.includes('transactions')) res.push('Transactions: record income/expense; use date/type filters and drill into ledger entries for details.');
+    if (lower.includes('sales')) res.push('Sales: create invoices/quotes; track AR and unpaid invoices, record customer payments.');
+    if (lower.includes('cash flow')) res.push('Cash flow: Operating (day to day), Investing (assets), Financing (loans/shares). Positive net change increases closing cash.');
+    // Add plain-English context for non-accountants
+    res.push('Plain-English: Revenue is money in; expenses are costs; receivables mean customers owe you; payables mean you owe suppliers; VAT Output is what you pay, VAT Input is what you claim back.');
     if (res.length === 0) res.push('I can help with Budget, Transactions, Sales, Purchase, Bank, and VAT. Ask me something like “budget actual for November” or “unpaid invoices”.');
     return res.join(' ');
   };
@@ -136,7 +148,63 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
     setMessages(prev => [...prev, { role: 'user', text: q, ts: now }]);
     const lower = q.toLowerCase();
     let answer: string | null = null;
-    if (companyId && !aiEnabled) {
+    // Quick smart answers with live data where useful
+    const wantsDebtors = ["debtors","receivable","receiv","ar"].some(k => lower.includes(k));
+    const wantsVat = lower.includes("vat");
+    const wantsUnpaidInvoices = lower.includes('unpaid') && lower.includes('invoice');
+    if (companyId && (wantsDebtors || wantsVat || wantsUnpaidInvoices)) {
+      try {
+        if (wantsDebtors) {
+          const { data } = await supabase
+            .from('invoices')
+            .select('total_amount, amount_paid, status')
+            .eq('company_id', companyId)
+            .in('status', ['sent','approved','posted','partial','unpaid']);
+          const outstanding = (data || []).reduce((s: number, r: any) => {
+            const total = Number(r.total_amount || 0);
+            const paid = Number(r.amount_paid || 0);
+            return s + Math.max(0, total - paid);
+          }, 0);
+          answer = `Debtors (accounts receivable) outstanding: R ${Number(outstanding).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}. Plain-English: customers owe you this amount. To collect: Sales → Invoices → filter unpaid → record receipts.`;
+        }
+        if (!answer && wantsVat) {
+          const { data: tx } = await supabase
+            .from('transactions')
+            .select('transaction_type, vat_rate, vat_inclusive, total_amount, vat_amount, base_amount, status')
+            .eq('company_id', companyId)
+            .in('status', ['approved','posted','pending']);
+          let out = 0, inn = 0;
+          (tx || []).forEach((t: any) => {
+            const type = String(t.transaction_type || '').toLowerCase();
+            const isIncome = ['income','sales','receipt'].includes(type);
+            const isPurchase = ['expense','purchase','bill','product_purchase'].includes(type);
+            const rate = Number(t.vat_rate || 0);
+            const total = Number(t.total_amount || 0);
+            const base = Number(t.base_amount || 0);
+            const inclusive = Boolean(t.vat_inclusive);
+            let vat = Number(t.vat_amount || 0);
+            if (vat === 0 && rate > 0) {
+              if (inclusive) {
+                const net = base > 0 ? base : total / (1 + rate / 100);
+                vat = total - net;
+              } else {
+                vat = total - (base > 0 ? base : total);
+              }
+            }
+            if (isIncome) out += Math.max(0, vat);
+            if (isPurchase) inn += Math.max(0, vat);
+          });
+          const net = out - inn;
+          const pos = net >= 0 ? 'payable' : 'receivable';
+          answer = `VAT position: R ${Math.abs(net).toLocaleString('en-ZA', { minimumFractionDigits: 2 })} ${pos}. Plain-English: ${pos === 'payable' ? 'you owe SARS this VAT' : 'SARS owes you a refund'}. Steps: Tax → VAT → prepare VAT201.`;
+        }
+        if (!answer && wantsUnpaidInvoices) {
+          const { count } = await supabase.from('invoices').select('id', { count: 'exact' }).eq('company_id', companyId).neq('status', 'paid').limit(1);
+          answer = `Unpaid invoices: ${count || 0}. Steps: Sales → Invoices → filter Status ≠ paid → follow up.`;
+        }
+      } catch {}
+    }
+    if (!answer && companyId && !aiEnabled) {
       if (lower.includes('unpaid') && lower.includes('invoice')) {
         const { count } = await supabase.from('invoices').select('id', { count: 'exact' }).eq('company_id', companyId).neq('status', 'paid').limit(1);
         answer = `Unpaid invoices: ${count || 0}`;
@@ -157,12 +225,15 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
         ].join(" | ");
         const sys = [
           "You are Stella, an assistant for a finance manager web app.",
-          "Use clear, concise answers. Include short calculations when helpful.",
-          "If the user asks about VAT, respect exclusive vs inclusive rules.",
-          "If the user asks about system behavior, use the provided overview.",
+          "Answer actionable accounting and tax questions with concise, accurate guidance.",
+          "If the user mentions modules (Transactions, Sales, Purchase, Bank, Budget, VAT), explain where in the app to perform the task and add practical steps.",
+          "Always include a short Plain-English explanation suitable for non-accountants.",
+          "When possible, provide brief calculations and IFRS/US GAAP classification notes.",
           `Context: ${context}`,
           systemOverview,
-          accountingPrimer
+          accountingPrimer,
+          plainEnglishGuide,
+          taxQuickTips
         ].join("\n\n");
         const history = messages.map(m => ({ role: m.role === 'bot' ? 'assistant' as const : 'user' as const, content: m.text }));
         const body = { model, messages: [{ role: 'system', content: sys }, ...history, { role: 'user', content: q }], temperature: 0.3 };
@@ -211,7 +282,7 @@ export const StellaBotModal = ({ open, onOpenChange }: StellaBotModalProps) => {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2"><Sparkles className="h-5 w-5 text-primary" /> Stella Bot</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><StellaLumenLogo className="h-5 w-5" /> Stella Bot</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div className="flex flex-wrap gap-2">

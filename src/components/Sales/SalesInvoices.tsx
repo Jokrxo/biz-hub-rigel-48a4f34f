@@ -51,6 +51,8 @@ export const SalesInvoices = () => {
   const todayStr = new Date().toISOString().split("T")[0];
   const [posting, setPosting] = useState(false);
   const [lastPosting, setLastPosting] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize] = useState(7);
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -80,6 +82,7 @@ export const SalesInvoices = () => {
   const [sentDialogOpen, setSentDialogOpen] = useState(false);
   const [sentDate, setSentDate] = useState<string>(todayStr);
   const [sentInvoice, setSentInvoice] = useState<any>(null);
+  const [sentIncludeVAT, setSentIncludeVAT] = useState<boolean>(true);
   const [journalOpen, setJournalOpen] = useState(false);
   const [journalEditData, setJournalEditData] = useState<any>(null);
 
@@ -174,8 +177,8 @@ export const SalesInvoices = () => {
         .update({ status: "sent", sent_at: new Date(sentDate).toISOString() })
         .eq("id", sentInvoice.id);
       if (error) throw error;
-      await openJournalForSent(sentInvoice, sentDate);
-      toast({ title: "Success", description: "Opening transaction form to post AR/Revenue and COGS/Inventory" });
+      await openJournalForSent(sentInvoice, sentDate, sentIncludeVAT);
+      toast({ title: "Success", description: "Opening transaction form to post Debtors (AR), Revenue and VAT; plus COGS/Inventory if applicable" });
       setSentDialogOpen(false);
       setSentInvoice(null);
       loadData();
@@ -466,7 +469,7 @@ export const SalesInvoices = () => {
     }
   };
 
-  const openJournalForSent = async (inv: any, postDateStr?: string) => {
+  const openJournalForSent = async (inv: any, postDateStr?: string, includeVAT?: boolean) => {
     const companyId = await getCompanyId();
     if (!companyId) return;
     try { await (supabase as any).rpc('ensure_core_accounts', { _company_id: companyId }); } catch {}
@@ -508,6 +511,9 @@ export const SalesInvoices = () => {
       accounts = await loadAccounts(companyId);
     }
     const amount = Number(inv.total_amount || inv.subtotal || 0);
+    const net = Number(inv.subtotal || 0);
+    const vat = Number(inv.tax_amount || 0);
+    const rate = net > 0 ? ((vat / net) * 100) : 0;
     const editData = {
       id: null,
       transaction_date: postDateStr || inv.invoice_date,
@@ -517,7 +523,8 @@ export const SalesInvoices = () => {
       payment_method: 'accrual',
       debit_account_id: arId,
       credit_account_id: revId,
-      total_amount: amount,
+      total_amount: includeVAT ? amount : net,
+      vat_rate: includeVAT ? String(rate.toFixed(2)) : '0',
       bank_account_id: null,
       lockType: 'sent',
     };
@@ -859,6 +866,14 @@ export const SalesInvoices = () => {
     return matchesYear && matchesMonth;
   });
 
+  const totalCount = filteredByDateInvoices.length;
+  const start = page * pageSize;
+  const pagedInvoices = filteredByDateInvoices.slice(start, start + pageSize);
+
+  useEffect(() => {
+    setPage(0);
+  }, [statusFilter, yearFilter, monthFilter]);
+
   const exportFilteredInvoicesDate = () => {
     const filename = `invoices_${statusFilter}`;
     exportInvoicesToExcel(filteredByDateInvoices as any, filename);
@@ -933,7 +948,7 @@ export const SalesInvoices = () => {
           <div className="text-center py-8 text-muted-foreground">
             No invoices yet. Click "New Invoice" to create one.
           </div>
-        ) : (
+        ) : (<>
           <Table>
             <TableHeader>
               <TableRow>
@@ -948,7 +963,7 @@ export const SalesInvoices = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredByDateInvoices.map((invoice) => (
+              {pagedInvoices.map((invoice) => (
                 <TableRow key={invoice.id}>
                   <TableCell className="font-medium">{invoice.invoice_number}</TableCell>
                   <TableCell>{invoice.customer_name}</TableCell>
@@ -993,7 +1008,16 @@ export const SalesInvoices = () => {
               ))}
             </TableBody>
           </Table>
-        )}
+          <div className="flex items-center justify-between mt-3">
+            <div className="text-sm text-muted-foreground">
+              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedInvoices.length} of {totalCount}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+              <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+            </div>
+          </div>
+        </>)}
       </CardContent>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -1174,7 +1198,7 @@ export const SalesInvoices = () => {
           <DialogHeader>
             <DialogTitle>Post Sent Invoice</DialogTitle>
             <DialogDescription>
-              Choose the posting date for Debtors and Revenue.
+              Confirm date and amounts to post Debtors (AR), Revenue and VAT.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1182,6 +1206,18 @@ export const SalesInvoices = () => {
               <Label>Posting Date</Label>
               <Input type="date" value={sentDate} max={todayStr} onChange={(e) => setSentDate(e.target.value)} />
             </div>
+            {sentInvoice && (
+              <div className="p-3 border rounded bg-muted/30 space-y-1 text-sm">
+                <div className="flex justify-between"><span>Amount (excl. VAT)</span><span className="font-mono">R {Number(sentInvoice.subtotal || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                <div className="flex justify-between"><span>VAT amount</span><span className="font-mono">R {Number(sentInvoice.tax_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                <div className="flex justify-between"><span>Total</span><span className="font-mono">R {Number(sentInvoice.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                <div className="flex justify-between"><span>Revenue account</span><span className="font-mono">4000 - Sales Revenue</span></div>
+                <div className="flex items-center gap-2 pt-2">
+                  <Label htmlFor="includeVat">Include VAT in posting?</Label>
+                  <input id="includeVat" type="checkbox" checked={sentIncludeVAT} onChange={e => setSentIncludeVAT(e.target.checked)} />
+                </div>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setSentDialogOpen(false)}>Cancel</Button>
               <Button className="bg-gradient-primary" onClick={handleConfirmSent}>Post</Button>

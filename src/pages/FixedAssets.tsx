@@ -75,6 +75,8 @@ export default function FixedAssetsPage() {
     bank_account_id: "",
   });
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const [pageSize] = useState(7);
   const [purchaseForm, setPurchaseForm] = useState({
     purchase_date: new Date().toISOString().split("T")[0],
     amount: "",
@@ -651,6 +653,7 @@ export default function FixedAssetsPage() {
               ) : assets.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">No assets recorded</div>
               ) : (
+                <>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -665,9 +668,12 @@ export default function FixedAssetsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {assets
-                      .filter(a => assetFilter === 'all' ? true : assetFilter === 'opening' ? isOpeningAsset(a) : !isOpeningAsset(a))
-                      .map((asset) => (
+                    {(() => {
+                      const filtered = assets.filter(a => assetFilter === 'all' ? true : assetFilter === 'opening' ? isOpeningAsset(a) : !isOpeningAsset(a));
+                      const totalCount = filtered.length;
+                      const start = page * pageSize;
+                      const paged = filtered.slice(start, start + pageSize);
+                      return paged.map((asset) => (
                       <TableRow key={asset.id}>
                         <TableCell className="font-medium">{asset.description}</TableCell>
                         <TableCell>{new Date(asset.purchase_date).toLocaleDateString()}</TableCell>
@@ -705,9 +711,20 @@ export default function FixedAssetsPage() {
                           )}
                         </TableCell>
                       </TableRow>
-                    ))}
+                      ));
+                    })()}
                   </TableBody>
                 </Table>
+                <div className="flex items-center justify-between mt-3">
+                  <div className="text-sm text-muted-foreground">
+                    Page {page + 1} of {Math.max(1, Math.ceil((assets.filter(a => assetFilter === 'all' ? true : assetFilter === 'opening' ? isOpeningAsset(a) : !isOpeningAsset(a)).length) / pageSize))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+                    <Button variant="outline" disabled={(page + 1) >= Math.ceil((assets.filter(a => assetFilter === 'all' ? true : assetFilter === 'opening' ? isOpeningAsset(a) : !isOpeningAsset(a)).length) / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+                  </div>
+                </div>
+                </>
               )}
             </CardContent>
           </Card>

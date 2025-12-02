@@ -50,6 +50,83 @@ export const FinancialReports = () => {
 
       if (data && data.length > 0) {
         const cf = data[0];
+        const startDateObj = new Date(periodStart);
+        const endDateObj = new Date(periodEnd);
+        endDateObj.setHours(23, 59, 59, 999);
+        const prevYear = (new Date(periodStart).getFullYear()) - 1;
+        const prevStart = `${prevYear}-01-01`;
+        const prevEnd = `${prevYear}-12-31`;
+        const buildTrialBalance = async (start: string, end: string) => {
+          const { data: accounts } = await supabase
+            .from('chart_of_accounts')
+            .select('id, account_code, account_name, account_type')
+            .eq('company_id', companyId)
+            .eq('is_active', true)
+            .order('account_code');
+          const { data: txEntries } = await supabase
+            .from('transaction_entries')
+            .select(`transaction_id, account_id, debit, credit, transactions!inner ( transaction_date )`)
+            .eq('transactions.company_id', companyId)
+            .gte('transactions.transaction_date', start)
+            .lte('transactions.transaction_date', end);
+          const { data: ledgerEntries } = await supabase
+            .from('ledger_entries')
+            .select('transaction_id, account_id, debit, credit, entry_date')
+            .eq('company_id', companyId)
+            .gte('entry_date', start)
+            .lte('entry_date', end);
+          const trial: Array<{ id: string; code: string; name: string; type: string; balance: number }> = [];
+          const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+          const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+          (accounts || []).forEach((acc: any) => {
+            let sumDebit = 0;
+            let sumCredit = 0;
+            filteredTxEntries?.forEach((entry: any) => {
+              if (entry.account_id === acc.id) {
+                sumDebit += Number(entry.debit || 0);
+                sumCredit += Number(entry.credit || 0);
+              }
+            });
+            ledgerEntries?.forEach((entry: any) => {
+              if (entry.account_id === acc.id) {
+                sumDebit += Number(entry.debit || 0);
+                sumCredit += Number(entry.credit || 0);
+              }
+            });
+            const type = String(acc.account_type || '').toLowerCase();
+            const naturalDebit = type === 'asset' || type === 'expense';
+            const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+            trial.push({ id: acc.id, code: acc.account_code, name: acc.account_name, type: acc.account_type, balance });
+          });
+          return trial;
+        };
+        const tbCurr = await buildTrialBalance(periodStart, periodEnd);
+        const tbPrev = await buildTrialBalance(prevStart, prevEnd);
+        const sum = (arr: any[]) => arr.reduce((s, x) => s + Number(x.balance || 0), 0);
+        const lowerCurr = tbCurr.map(a => ({ account_id: a.id, account_code: String(a.code || ''), account_name: String(a.name || '').toLowerCase(), account_type: String(a.type || '').toLowerCase(), balance: Number(a.balance || 0) }));
+        const lowerPrev = tbPrev.map(a => ({ account_id: a.id, account_code: String(a.code || ''), account_name: String(a.name || '').toLowerCase(), account_type: String(a.type || '').toLowerCase(), balance: Number(a.balance || 0) }));
+        const revenueBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'revenue' || a.account_type === 'income'));
+        const cogsBal = (arr: any[]) => sum(arr.filter(a => (String(a.account_code || '')).startsWith('50') || a.account_name.includes('cost of')));
+        const opexBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'expense' && !((String(a.account_code || '')).startsWith('50') || a.account_name.includes('cost of'))).filter(a => !a.account_name.includes('vat')));
+        const depAmortBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'expense' && (a.account_name.includes('depreciation') || a.account_name.includes('amortisation') || a.account_name.includes('amortization'))));
+        const impairmentBal = (arr: any[]) => sum(arr.filter(a => a.account_name.includes('impairment')));
+        const profitDisposalBal = (arr: any[]) => sum(arr.filter(a => (a.account_code === '9500') || (a.account_name.includes('gain on sale') || a.account_name.includes('disposal gain'))));
+        const lossDisposalBal = (arr: any[]) => sum(arr.filter(a => (a.account_code === '9600') || (a.account_name.includes('loss on sale') || a.account_name.includes('disposal loss'))));
+        const financeCostsBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'expense' && (a.account_name.includes('finance cost') || a.account_name.includes('interest expense'))));
+        const interestIncomeBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('interest')));
+        const fxUnrealisedBal = (arr: any[]) => sum(arr.filter(a => a.account_name.includes('unrealised') && (a.account_name.includes('foreign exchange') || a.account_name.includes('fx') || a.account_name.includes('currency'))));
+        const provisionsMoveBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'liability' || a.account_type === 'expense') && a.account_name.includes('provision')));
+        const fairValueAdjBal = (arr: any[]) => sum(arr.filter(a => a.account_name.includes('fair value')));
+        const otherNonCashBal = (arr: any[]) => sum(arr.filter(a => a.account_name.includes('non-cash') || a.account_name.includes('non cash')));
+        const receivablesBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'asset' && (a.account_name.includes('receivable') || a.account_name.includes('debtors') || a.account_name.includes('accounts receivable'))).filter(a => !a.account_name.includes('vat')));
+        const inventoriesBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'asset' && (a.account_name.includes('inventory') || a.account_name.includes('stock'))));
+        const payablesBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'liability' && (a.account_name.includes('payable') || a.account_name.includes('creditors') || a.account_name.includes('accounts payable'))).filter(a => !a.account_name.includes('vat')).filter(a => !a.account_name.includes('loan')));
+        const profitBeforeTaxCurr = revenueBal(lowerCurr) - (cogsBal(lowerCurr)) - opexBal(lowerCurr);
+        const adjustmentsCurr = depAmortBal(lowerCurr) + impairmentBal(lowerCurr) - profitDisposalBal(lowerCurr) + lossDisposalBal(lowerCurr) + financeCostsBal(lowerCurr) - interestIncomeBal(lowerCurr) + fxUnrealisedBal(lowerCurr) + provisionsMoveBal(lowerCurr) + fairValueAdjBal(lowerCurr) + otherNonCashBal(lowerCurr);
+        const receivablesChangeCurr = receivablesBal(lowerCurr) - receivablesBal(lowerPrev);
+        const inventoriesChangeCurr = inventoriesBal(lowerCurr) - inventoriesBal(lowerPrev);
+        const payablesChangeCurr = payablesBal(lowerCurr) - payablesBal(lowerPrev);
+        const workingCapitalCurr = -receivablesChangeCurr + -inventoriesChangeCurr + payablesChangeCurr;
         const { data: purchRows } = await supabase
           .from('transactions')
           .select('total_amount, status')
@@ -107,11 +184,28 @@ export const FinancialReports = () => {
         const sumAmt = (arr: any[] | null | undefined) => (arr || []).reduce((s: number, t: any) => s + Math.max(0, Number(t.total_amount || 0)), 0);
         const ppePurchases = sumAmt(purchRows);
         const ppeProceeds = sumAmt(procRows);
-        const operatingAdjusted = (cf.operating_activities || 0) - loanFinancedAcq;
+        const operatingAdjusted = (profitBeforeTaxCurr + adjustmentsCurr + workingCapitalCurr) - loanFinancedAcq;
         const financingAdjusted = (cf.financing_activities || 0) + loanFinancedAcq;
         const netChangeDisplay = operatingAdjusted + (cf.investing_activities || 0) + financingAdjusted;
         const cfData: FinancialReportLine[] = [
           { account: 'CASH FLOWS FROM OPERATING ACTIVITIES', amount: 0, type: 'header' },
+          { account: 'Profit before tax', amount: profitBeforeTaxCurr, type: 'income' },
+          { account: 'Depreciation and amortisation', amount: depAmortBal(lowerCurr), type: 'expense' },
+          { account: 'Impairment losses / reversals', amount: impairmentBal(lowerCurr), type: 'expense' },
+          { account: 'Profit on disposal of assets', amount: -Math.abs(profitDisposalBal(lowerCurr)), type: 'income' },
+          { account: 'Loss on disposal of assets', amount: Math.abs(lossDisposalBal(lowerCurr)), type: 'expense' },
+          { account: 'Finance costs', amount: financeCostsBal(lowerCurr), type: 'expense' },
+          { account: 'Interest income', amount: -Math.abs(interestIncomeBal(lowerCurr)), type: 'income' },
+          { account: 'Unrealised foreign exchange differences', amount: fxUnrealisedBal(lowerCurr), type: 'expense' },
+          { account: 'Movements in provisions', amount: provisionsMoveBal(lowerCurr), type: 'expense' },
+          { account: 'Fair value adjustments', amount: fairValueAdjBal(lowerCurr), type: 'expense' },
+          { account: 'Other non-cash items', amount: otherNonCashBal(lowerCurr), type: 'expense' },
+          { account: 'Changes in working capital:', amount: workingCapitalCurr, type: 'header' },
+          { account: '(Increase)/Decrease in trade receivables', amount: -receivablesChangeCurr, type: 'expense' },
+          { account: '(Increase)/Decrease in inventories', amount: -inventoriesChangeCurr, type: 'expense' },
+          { account: 'Increase/(Decrease) in trade payables', amount: payablesChangeCurr, type: 'income' },
+          { account: 'Total changes in working capital', amount: workingCapitalCurr, type: 'subtotal' },
+          { account: 'Cash generated from operations', amount: profitBeforeTaxCurr + adjustmentsCurr + workingCapitalCurr, type: 'subtotal' },
           { account: 'Net cash from operating activities', amount: operatingAdjusted, type: 'subtotal' },
           { account: '', amount: 0, type: 'spacer' },
           { account: 'CASH FLOWS FROM INVESTING ACTIVITIES', amount: 0, type: 'header' },

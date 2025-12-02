@@ -43,7 +43,7 @@ const navItems = [
   { icon: CreditCard, label: "Loans", href: "/loans" },
   { icon: DollarSign, label: "Payroll", href: "/payroll" },
   { icon: Users, label: "Customers", href: "/customers" },
-  { icon: Crown, label: "Billing", href: "/billing" },
+  { icon: Crown, label: "License", href: "/license" },
   { icon: Settings, label: "Settings", href: "/settings" },
   { icon: Info, label: "About", href: "/about-us" },
 ];

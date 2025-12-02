@@ -10,6 +10,8 @@ export const PurchaseTransactions = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<Array<{ id: string; date: string; description: string; reference: string; amount: number; status: string }>>([]);
+  const [page, setPage] = useState(0);
+  const [pageSize] = useState(7);
 
   useEffect(() => {
     const load = async () => {
@@ -56,6 +58,10 @@ export const PurchaseTransactions = () => {
     r.description.toLowerCase().includes(search.toLowerCase()) ||
     r.reference.toLowerCase().includes(search.toLowerCase())
   ));
+  const totalCount = filtered.length;
+  const start = page * pageSize;
+  const pagedRows = filtered.slice(start, start + pageSize);
+  useEffect(() => { setPage(0); }, [search]);
 
   return (
     <Card className="card-professional">
@@ -87,7 +93,7 @@ export const PurchaseTransactions = () => {
                 <TableRow><TableCell colSpan={5}>Loading…</TableCell></TableRow>
               ) : filtered.length === 0 ? (
                 <TableRow><TableCell colSpan={5}>No purchase transactions found</TableCell></TableRow>
-              ) : filtered.map(r => (
+              ) : pagedRows.map(r => (
                 <TableRow key={r.id}>
                   <TableCell>{r.date}</TableCell>
                   <TableCell className="font-medium">{r.description}</TableCell>
@@ -106,6 +112,15 @@ export const PurchaseTransactions = () => {
               ))}
             </TableBody>
           </Table>
+          <div className="flex items-center justify-between mt-3">
+            <div className="text-sm text-muted-foreground">
+              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedRows.length} of {totalCount}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+              <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>

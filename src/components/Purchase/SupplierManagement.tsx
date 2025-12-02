@@ -93,6 +93,12 @@ export const SupplierManagement = () => {
   };
 
   const canEdit = isAdmin || isAccountant;
+  const [page, setPage] = useState(0);
+  const [pageSize] = useState(7);
+  const totalCount = suppliers.length;
+  const start = page * pageSize;
+  const pagedSuppliers = suppliers.slice(start, start + pageSize);
+  useEffect(() => { setPage(0); }, [suppliers.length]);
 
   return (
     <Card className="mt-6">
@@ -172,6 +178,7 @@ export const SupplierManagement = () => {
         ) : suppliers.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">No suppliers added yet</div>
         ) : (
+          <>
           <Table>
             <TableHeader>
               <TableRow>
@@ -181,7 +188,7 @@ export const SupplierManagement = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {suppliers.map((supplier) => (
+              {pagedSuppliers.map((supplier) => (
                 <TableRow key={supplier.id}>
                   <TableCell className="font-medium">{supplier.name}</TableCell>
                   <TableCell>
@@ -205,6 +212,16 @@ export const SupplierManagement = () => {
               ))}
             </TableBody>
           </Table>
+          <div className="flex items-center justify-between mt-3">
+            <div className="text-sm text-muted-foreground">
+              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedSuppliers.length} of {totalCount}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+              <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+            </div>
+          </div>
+          </>
         )}
       </CardContent>
     </Card>

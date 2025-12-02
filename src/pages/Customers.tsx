@@ -30,6 +30,8 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [page, setPage] = useState(0);
+  const [pageSize] = useState(7);
   const [statementOpen, setStatementOpen] = useState(false);
   const [statementViewOpen, setStatementViewOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -635,6 +637,7 @@ export default function CustomersPage() {
               ) : customers.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">No customers yet</div>
               ) : (
+                <>
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -647,7 +650,7 @@ export default function CustomersPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {customers.map((customer) => (
+                    {customers.slice(page * pageSize, page * pageSize + pageSize).map((customer) => (
                       <TableRow key={customer.id}>
                         <TableCell className="font-medium">{customer.name}</TableCell>
                         <TableCell>
@@ -691,6 +694,14 @@ export default function CustomersPage() {
                     ))}
                   </TableBody>
                 </Table>
+                <div className="flex items-center justify-between mt-3">
+                  <div className="text-sm text-muted-foreground">Page {page + 1} of {Math.max(1, Math.ceil(customers.length / pageSize))}</div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+                    <Button variant="outline" disabled={(page + 1) >= Math.ceil(customers.length / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+                  </div>
+                </div>
+                </>
               )}
           </CardContent>
           </Card>

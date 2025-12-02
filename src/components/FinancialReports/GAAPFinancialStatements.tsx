@@ -8,7 +8,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
-import { exportFinancialReportToExcel, exportFinancialReportToPDF } from "@/lib/export-utils";
+import { exportFinancialReportToExcel, exportFinancialReportToPDF, exportComparativeCashFlowToExcel, exportComparativeCashFlowToPDF } from "@/lib/export-utils";
+import { systemOverview, accountingPrimer } from "@/components/Stella/knowledge";
+import StellaAdvisor from "@/components/Stella/StellaAdvisor";
 
 interface TrialBalanceRow {
   account_id: string;
@@ -96,8 +98,13 @@ export const GAAPFinancialStatements = () => {
     net_change_in_cash: number;
   } | null>(null);
   const [trialBalancePrev, setTrialBalancePrev] = useState<TrialBalanceRow[]>([]);
+  const [trialBalancePrevPrev, setTrialBalancePrevPrev] = useState<TrialBalanceRow[]>([]);
   const [fallbackCOGSPrev, setFallbackCOGSPrev] = useState<number>(0);
   const [comparativeLoading, setComparativeLoading] = useState(false);
+  const [comparativeYearA, setComparativeYearA] = useState<number>(() => new Date().getFullYear());
+  const [comparativeYearB, setComparativeYearB] = useState<number>(() => new Date().getFullYear() - 1);
+  const [compCFYearA, setCompCFYearA] = useState<any | null>(null);
+  const [compCFYearB, setCompCFYearB] = useState<any | null>(null);
   const [ppeBookValue, setPpeBookValue] = useState<number>(0);
   const [openingEquityTotal, setOpeningEquityTotal] = useState<number>(0);
   const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
@@ -110,6 +117,7 @@ export const GAAPFinancialStatements = () => {
   const [loanFinancedAcqCurr, setLoanFinancedAcqCurr] = useState<number>(0);
   const [loanFinancedAcqPrev, setLoanFinancedAcqPrev] = useState<number>(0);
   const [showFilters, setShowFilters] = useState(false);
+  const [showAdviceModal, setShowAdviceModal] = useState(false);
 
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd]);
 
@@ -130,7 +138,69 @@ export const GAAPFinancialStatements = () => {
 
   // Load cash flow whenever cash-flow tab is active or period changes
   useEffect(() => { if (activeTab === 'cash-flow') { loadCashFlow(); } }, [activeTab, periodStart, periodEnd]);
-  useEffect(() => { if (activeTab === 'comparative') { loadComparativeData(); } }, [activeTab, selectedYear]);
+  useEffect(() => { if (activeTab === 'comparative') { loadComparativeData(); } }, [activeTab, comparativeYearA, comparativeYearB]);
+  useEffect(() => {
+    if (periodMode === 'annual' && activeTab === 'cash-flow') {
+      loadComparativeData();
+    }
+  }, [activeTab, periodMode, selectedYear]);
+
+  useEffect(() => {
+    const toLower = (s: string) => String(s || '').toLowerCase();
+    const assets = trialBalance.filter(r => toLower(r.account_type) === 'asset');
+    const liabilities = trialBalance.filter(r => toLower(r.account_type) === 'liability');
+    const equityRows = trialBalance.filter(r => toLower(r.account_type) === 'equity');
+    const isCurrentAsset = (r: any) => (
+      toLower(r.account_type) === 'asset' && (
+        toLower(r.account_name).includes('cash') ||
+        toLower(r.account_name).includes('bank') ||
+        toLower(r.account_name).includes('receivable') ||
+        toLower(r.account_name).includes('inventory') ||
+        parseInt(String(r.account_code || '0'), 10) < 1500
+      ) && !toLower(r.account_name).includes('vat') && !['1210','2110','2210'].includes(String(r.account_code || ''))
+    );
+    const currentAssets = trialBalance.filter(isCurrentAsset);
+    const totalCurrentAssets = currentAssets.reduce((s, r) => s + Number(r.balance || 0), 0) + Math.max(0, -vatNet);
+    const totalNonCurrentAssets = ppeBookValue;
+    const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
+
+    const liabilitiesExVat = liabilities.filter(r => !toLower(r.account_name).includes('vat') && !['2100','2200'].includes(String(r.account_code || '')));
+    const currentLiabilities = liabilitiesExVat.filter(r => {
+      const name = toLower(r.account_name);
+      const code = String(r.account_code || '');
+      const isLoan = name.includes('loan');
+      const isLongLoan = isLoan && (code === '2400' || name.includes('long'));
+      const isShortLoan = isLoan && (code === '2300' || name.includes('short'));
+      const isPayableOrSars = name.includes('payable') || name.includes('sars');
+      const isCodeCurrent = parseInt(code || '0', 10) < 2300;
+      if (code === '2400') return false;
+      return isShortLoan || ((isPayableOrSars || isCodeCurrent) && !isLongLoan);
+    });
+    const currentSet = new Set(currentLiabilities.map(r => r.account_id));
+    const nonCurrentLiabilities = liabilitiesExVat.filter(r => !currentSet.has(r.account_id));
+    const totalCurrentLiabilities = currentLiabilities.reduce((s, r) => s + Number(r.balance || 0), 0) + Math.max(0, vatNet);
+    const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((s, r) => s + Number(r.balance || 0), 0);
+    const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
+
+    const revenueRows = trialBalance.filter(r => toLower(r.account_type) === 'revenue' || toLower(r.account_type) === 'income');
+    const expenseRows = trialBalance.filter(r => toLower(r.account_type) === 'expense' && !toLower(r.account_name).includes('vat'));
+    const totalRevenue = revenueRows.reduce((s, r) => s + Number(r.balance || 0), 0);
+    const totalExpenses = expenseRows.reduce((s, r) => s + Number(r.balance || 0), 0);
+    const netProfitForPeriod = totalRevenue - totalExpenses;
+    const totalEquityBase = equityRows.reduce((s, r) => s + Number(r.balance || 0), 0);
+    const totalEquity = totalEquityBase + netProfitForPeriod + openingEquityTotal;
+
+    const diff = totalAssets - (totalLiabilities + totalEquity);
+    const ok = Math.abs(diff) < 0.01;
+    setAccountingEquation({
+      is_valid: ok,
+      total_assets: totalAssets,
+      total_liabilities: totalLiabilities,
+      total_equity: totalEquity,
+      difference: diff,
+      error_message: ok ? 'Accounting equation holds for selected period' : `ERROR: Assets (${totalAssets}) ≠ Liabilities (${totalLiabilities}) + Equity (${totalEquity}) | Difference: ${diff}`,
+    });
+  }, [trialBalance, vatNet, ppeBookValue, openingEquityTotal, periodStart, periodEnd]);
 
   async function loadFinancialData() {
     setLoading(true);
@@ -244,14 +314,7 @@ export const GAAPFinancialStatements = () => {
         .reduce((sum: number, t: any) => sum + Math.max(0, Number(t.total_amount || 0)), 0);
       setPpeDisposalProceeds(proceeds);
 
-      // Validate accounting equation
-      const { data: equation, error: eqError } = await supabase
-        .rpc('validate_accounting_equation', { _company_id: companyProfile.company_id });
-
-      if (eqError) throw eqError;
-      if (equation && equation.length > 0) {
-        setAccountingEquation(equation[0]);
-      }
+      // Equation validated locally based on selected period and current filters
 
     } catch (error: any) {
       console.error('Error loading financial data:', error);
@@ -279,11 +342,12 @@ export const GAAPFinancialStatements = () => {
         .eq('user_id', user.id)
         .single();
       if (!companyProfile?.company_id) return;
-      const prevYear = selectedYear - 1;
-      const start = new Date(prevYear, 0, 1).toISOString().split('T')[0];
-      const end = new Date(prevYear, 11, 31).toISOString().split('T')[0];
-      const tbPrevData = await fetchTrialBalanceForPeriod(companyProfile.company_id, start, end);
-      const normalizedPrev = (tbPrevData || []).map((r: any) => ({
+      const yAStart = new Date(comparativeYearA, 0, 1).toISOString().split('T')[0];
+      const yAEnd = new Date(comparativeYearA, 11, 31).toISOString().split('T')[0];
+      const yBStart = new Date(comparativeYearB, 0, 1).toISOString().split('T')[0];
+      const yBEnd = new Date(comparativeYearB, 11, 31).toISOString().split('T')[0];
+      const tbYearBData = await fetchTrialBalanceForPeriod(companyProfile.company_id, yBStart, yBEnd);
+      const normalizedPrev = (tbYearBData || []).map((r: any) => ({
         account_id: String(r.account_id || ''),
         account_code: String(r.account_code || ''),
         account_name: String(r.account_name || ''),
@@ -294,46 +358,59 @@ export const GAAPFinancialStatements = () => {
         balance: Number(r.balance || 0),
       }));
       setTrialBalancePrev(normalizedPrev);
-      const cogsPrev = await calculateCOGSFromInvoices(companyProfile.company_id, start, end);
+      const tbYearAData = await fetchTrialBalanceForPeriod(companyProfile.company_id, yAStart, yAEnd);
+      const normalizedYearA = (tbYearAData || []).map((r: any) => ({
+        account_id: String(r.account_id || ''),
+        account_code: String(r.account_code || ''),
+        account_name: String(r.account_name || ''),
+        account_type: String(r.account_type || ''),
+        normal_balance: String(r.normal_balance || 'debit'),
+        total_debits: Number(r.total_debits || 0),
+        total_credits: Number(r.total_credits || 0),
+        balance: Number(r.balance || 0),
+      }));
+      setTrialBalance(normalizedYearA);
+      setTrialBalancePrevPrev([]);
+      const cogsPrev = await calculateCOGSFromInvoices(companyProfile.company_id, yBStart, yBEnd);
       setFallbackCOGSPrev(cogsPrev);
-      const currStart = new Date(selectedYear, 0, 1).toISOString().split('T')[0];
-      const currEnd = new Date(selectedYear, 11, 31).toISOString().split('T')[0];
-      const cfPrev = await getCashFlowForPeriod(companyProfile.company_id, start, end);
-      const cfCurr = await getCashFlowForPeriod(companyProfile.company_id, currStart, currEnd);
-      setCashFlowPrev(cfPrev);
-      setCashFlowCurrComparative(cfCurr);
+      const cfYearB = await getCashFlowForPeriod(companyProfile.company_id, yBStart, yBEnd);
+      const cfYearA = await getCashFlowForPeriod(companyProfile.company_id, yAStart, yAEnd);
+      setCashFlowPrev(cfYearB);
+      setCashFlowCurrComparative(cfYearA);
+      setCompCFYearB(cfYearB);
+      setCompCFYearA(cfYearA);
       try {
         const { data: invPrevPurch } = await supabase
           .from('transactions')
           .select('total_amount, status')
           .eq('company_id', companyProfile.company_id)
           .eq('transaction_type', 'asset_purchase')
-          .gte('transaction_date', start)
-          .lte('transaction_date', end)
+          .gte('transaction_date', yBStart)
+          .lte('transaction_date', yBEnd)
           .in('status', ['approved','posted','pending']);
         const { data: invPrevProc } = await supabase
           .from('transactions')
           .select('total_amount, status')
           .eq('company_id', companyProfile.company_id)
           .eq('transaction_type', 'asset_disposal')
-          .gte('transaction_date', start)
-          .lte('transaction_date', end)
+          .gte('transaction_date', yBStart)
+          .lte('transaction_date', yBEnd)
           .in('status', ['approved','posted','pending']);
         const { data: invCurrPurch } = await supabase
           .from('transactions')
           .select('total_amount, status')
           .eq('company_id', companyProfile.company_id)
           .eq('transaction_type', 'asset_purchase')
-          .gte('transaction_date', currStart)
-          .lte('transaction_date', currEnd)
+          .gte('transaction_date', yAStart)
+          .lte('transaction_date', yAEnd)
           .in('status', ['approved','posted','pending']);
         const { data: invCurrProc } = await supabase
           .from('transactions')
           .select('total_amount, status')
           .eq('company_id', companyProfile.company_id)
           .eq('transaction_type', 'asset_disposal')
-          .gte('transaction_date', currStart)
-          .lte('transaction_date', currEnd)
+          .gte('transaction_date', yAStart)
+          .lte('transaction_date', yAEnd)
           .in('status', ['approved','posted','pending']);
         const sumAmt = (arr: any[] | null | undefined) => (arr || []).reduce((s: number, t: any) => s + Math.max(0, Number(t.total_amount || 0)), 0);
         setInvestingPurchasesPrev(sumAmt(invPrevPurch));
@@ -382,8 +459,8 @@ export const GAAPFinancialStatements = () => {
             });
             return total;
           };
-          const prevLoanFin = await computeLoanFinanced(start, end);
-          const currLoanFin = await computeLoanFinanced(currStart, currEnd);
+          const prevLoanFin = await computeLoanFinanced(yBStart, yBEnd);
+          const currLoanFin = await computeLoanFinanced(yAStart, yAEnd);
           setLoanFinancedAcqPrev(prevLoanFin);
           setLoanFinancedAcqCurr(currLoanFin);
         } catch {}
@@ -981,9 +1058,13 @@ export const GAAPFinancialStatements = () => {
         {/* Validation */}
         {accountingEquation && (
           <div className={`p-4 rounded-lg ${accountingEquation.is_valid ? 'bg-green-100 dark:bg-green-900/20' : 'bg-red-100 dark:bg-red-900/20'}`}>
-            <p className="font-semibold">{accountingEquation.error_message}</p>
+            <p className="font-semibold">
+              {accountingEquation.is_valid
+                ? 'Accounting equation holds for selected period'
+                : `ERROR: Assets (R ${formatRand(accountingEquation.total_assets)}) ≠ Liabilities (R ${formatRand(accountingEquation.total_liabilities)}) + Equity (R ${formatRand(accountingEquation.total_equity)}) | Difference: R ${formatRand(accountingEquation.difference)}`}
+            </p>
             {!accountingEquation.is_valid && (
-              <p className="text-sm mt-2">Assets: R {accountingEquation.total_assets.toLocaleString()} | Liabilities: R {accountingEquation.total_liabilities.toLocaleString()} | Equity: R {accountingEquation.total_equity.toLocaleString()}</p>
+              <p className="text-sm mt-2">Assets: R {formatRand(accountingEquation.total_assets)} | Liabilities: R {formatRand(accountingEquation.total_liabilities)} | Equity: R {formatRand(accountingEquation.total_equity)}</p>
             )}
           </div>
         )}
@@ -1058,9 +1139,11 @@ export const GAAPFinancialStatements = () => {
     return ((curr - prev) / p) * 100;
   };
 
+  const formatRand = (n: number) => Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
   const renderComparativeBalanceSheet = () => {
-    const y = selectedYear;
-    const py = selectedYear - 1;
+    const y = comparativeYearA;
+    const py = comparativeYearB;
     const normalizeName = (name: string) => name.toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
     const buildMap = (tb: TrialBalanceRow[]) => new Map(tb.map(r => [String(r.account_code || r.account_id), r]));
     const mapCurr = buildMap(trialBalance);
@@ -1173,8 +1256,8 @@ export const GAAPFinancialStatements = () => {
   };
 
   const renderComparativeIncomeStatement = () => {
-    const y = selectedYear;
-    const py = selectedYear - 1;
+    const y = comparativeYearA;
+    const py = comparativeYearB;
     const revenueCurr = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
     const revenuePrev = trialBalancePrev.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
     const expensesCurr = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
@@ -1241,11 +1324,12 @@ export const GAAPFinancialStatements = () => {
   const renderComparativeCashFlow = () => {
     const cfCurr = cashFlowCurrComparative || { operating_inflows: 0, operating_outflows: 0, net_cash_from_operations: 0, investing_inflows: 0, investing_outflows: 0, net_cash_from_investing: 0, financing_inflows: 0, financing_outflows: 0, net_cash_from_financing: 0, opening_cash_balance: 0, closing_cash_balance: 0, net_change_in_cash: 0 };
     const cfPrev = cashFlowPrev || { operating_inflows: 0, operating_outflows: 0, net_cash_from_operations: 0, investing_inflows: 0, investing_outflows: 0, net_cash_from_investing: 0, financing_inflows: 0, financing_outflows: 0, net_cash_from_financing: 0, opening_cash_balance: 0, closing_cash_balance: 0, net_change_in_cash: 0 };
-    const y = selectedYear;
-    const py = selectedYear - 1;
+    const y = comparativeYearA;
+    const py = comparativeYearB;
     const buildLower = (tb: TrialBalanceRow[]) => tb.map(a => ({ account_id: a.account_id, account_code: String(a.account_code || ''), account_name: String(a.account_name || '').toLowerCase(), account_type: String(a.account_type || '').toLowerCase(), balance: Number(a.balance || 0) }));
     const lowerCurr = buildLower(trialBalance);
     const lowerPrev = buildLower(trialBalancePrev);
+    const lowerPrevPrev = buildLower(trialBalancePrevPrev);
     const sum = (arr: any[]) => arr.reduce((s, x) => s + Number(x.balance || 0), 0);
     const revenueBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'revenue' || a.account_type === 'income'));
     const cogsBal = (arr: any[]) => sum(arr.filter(a => (String(a.account_code || '')).startsWith('50') || a.account_name.includes('cost of')));
@@ -1265,38 +1349,97 @@ export const GAAPFinancialStatements = () => {
     const dividendsReceivedBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('dividend')));
     const dividendsPaidBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'expense' || a.account_type === 'equity') && a.account_name.includes('dividend')));
     const taxPaidBal = (arr: any[]) => sum(arr.filter(a => (a.account_type === 'expense' || a.account_type === 'liability') && a.account_name.includes('tax') && !a.account_name.includes('vat')));
+    const receivablesBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'asset' && (a.account_name.includes('receivable') || a.account_name.includes('debtors') || a.account_name.includes('accounts receivable'))).filter(a => !a.account_name.includes('vat')));
+    const inventoriesBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'asset' && (a.account_name.includes('inventory') || a.account_name.includes('stock'))));
+    const payablesBal = (arr: any[]) => sum(arr.filter(a => a.account_type === 'liability' && (a.account_name.includes('payable') || a.account_name.includes('creditors') || a.account_name.includes('accounts payable'))).filter(a => !a.account_name.includes('vat')).filter(a => !a.account_name.includes('loan')));
     const profitBeforeTaxCurr = revenueBal(lowerCurr) - (cogsBal(lowerCurr) > 0 ? cogsBal(lowerCurr) : fallbackCOGS) - opexBal(lowerCurr);
     const profitBeforeTaxPrev = revenueBal(lowerPrev) - (cogsBal(lowerPrev) > 0 ? cogsBal(lowerPrev) : fallbackCOGSPrev) - opexBal(lowerPrev);
+    const receivablesChangeCurr = receivablesBal(lowerCurr) - receivablesBal(lowerPrev);
+    const inventoriesChangeCurr = inventoriesBal(lowerCurr) - inventoriesBal(lowerPrev);
+    const payablesChangeCurr = payablesBal(lowerCurr) - payablesBal(lowerPrev);
+    const receivablesChangePrev = receivablesBal(lowerPrev) - receivablesBal(lowerPrevPrev);
+    const inventoriesChangePrev = inventoriesBal(lowerPrev) - inventoriesBal(lowerPrevPrev);
+    const payablesChangePrev = payablesBal(lowerPrev) - payablesBal(lowerPrevPrev);
+    const workingCapitalCurr = -receivablesChangeCurr + -inventoriesChangeCurr + payablesChangeCurr;
+    const workingCapitalPrev = -receivablesChangePrev + -inventoriesChangePrev + payablesChangePrev;
+    const adjustmentsCurr = depAmortBal(lowerCurr) + impairmentBal(lowerCurr) - profitDisposalBal(lowerCurr) + lossDisposalBal(lowerCurr) + financeCostsBal(lowerCurr) - interestIncomeBal(lowerCurr) + fxUnrealisedBal(lowerCurr) + provisionsMoveBal(lowerCurr) + fairValueAdjBal(lowerCurr) + otherNonCashBal(lowerCurr);
+    const adjustmentsPrev = depAmortBal(lowerPrev) + impairmentBal(lowerPrev) - profitDisposalBal(lowerPrev) + lossDisposalBal(lowerPrev) + financeCostsBal(lowerPrev) - interestIncomeBal(lowerPrev) + fxUnrealisedBal(lowerPrev) + provisionsMoveBal(lowerPrev) + fairValueAdjBal(lowerPrev) + otherNonCashBal(lowerPrev);
+    const cashGeneratedCurr = profitBeforeTaxCurr + adjustmentsCurr + workingCapitalCurr;
+    const cashGeneratedPrev = profitBeforeTaxPrev + adjustmentsPrev + workingCapitalPrev;
+    const netOperatingCurr = cashGeneratedCurr + interestReceivedBal(lowerCurr) - Math.abs(interestPaidBal(lowerCurr)) + dividendsReceivedBal(lowerCurr) - Math.abs(dividendsPaidBal(lowerCurr)) - Math.abs(taxPaidBal(lowerCurr));
+    const netOperatingPrev = cashGeneratedPrev + interestReceivedBal(lowerPrev) - Math.abs(interestPaidBal(lowerPrev)) + dividendsReceivedBal(lowerPrev) - Math.abs(dividendsPaidBal(lowerPrev)) - Math.abs(taxPaidBal(lowerPrev));
+    const isLoanLiability = (a: any) => a.account_type === 'liability' && (a.account_name.includes('loan') || a.account_name.includes('borrow') || a.account_name.includes('debenture') || a.account_name.includes('note payable') || a.account_name.includes('overdraft'));
+    const isShareEquity = (a: any) => a.account_type === 'equity' && (a.account_name.includes('share') || a.account_name.includes('capital') || a.account_name.includes('share premium') || a.account_name.includes('treasury'));
+    const isLeaseLiability = (a: any) => a.account_type === 'liability' && a.account_name.includes('lease');
+    const borrowingsCurr = sum(lowerCurr.filter(isLoanLiability));
+    const borrowingsPrev = sum(lowerPrev.filter(isLoanLiability));
+    const borrowingsPrevPrev = sum(lowerPrevPrev.filter(isLoanLiability));
+    const borrowingsChangeCurr = borrowingsCurr - borrowingsPrev;
+    const borrowingsChangePrev = borrowingsPrev - borrowingsPrevPrev;
+    const proceedsBorrowingsCurr = Math.max(0, borrowingsChangeCurr);
+    const repaymentBorrowingsCurr = Math.max(0, -borrowingsChangeCurr);
+    const proceedsBorrowingsPrev = Math.max(0, borrowingsChangePrev);
+    const repaymentBorrowingsPrev = Math.max(0, -borrowingsChangePrev);
+    const sharesCurr = sum(lowerCurr.filter(isShareEquity));
+    const sharesPrev = sum(lowerPrev.filter(isShareEquity));
+    const sharesPrevPrev = sum(lowerPrevPrev.filter(isShareEquity));
+    const sharesChangeCurr = sharesCurr - sharesPrev;
+    const sharesChangePrev = sharesPrev - sharesPrevPrev;
+    const proceedsSharesCurr = Math.max(0, sharesChangeCurr);
+    const repurchaseSharesCurr = Math.max(0, -sharesChangeCurr);
+    const proceedsSharesPrev = Math.max(0, sharesChangePrev);
+    const repurchaseSharesPrev = Math.max(0, -sharesChangePrev);
+    const leasesCurr = sum(lowerCurr.filter(isLeaseLiability));
+    const leasesPrev = sum(lowerPrev.filter(isLeaseLiability));
+    const leasesPrevPrev = sum(lowerPrevPrev.filter(isLeaseLiability));
+    const leasesChangeCurr = leasesCurr - leasesPrev;
+    const leasesChangePrev = leasesPrev - leasesPrevPrev;
+    const leasesPaidCurr = Math.max(0, -leasesChangeCurr);
+    const leasesPaidPrev = Math.max(0, -leasesChangePrev);
+    const netInvestingCurr = investingProceedsCurr - (Math.abs(investingPurchasesCurr) + Math.abs(loanFinancedAcqCurr));
+    const netInvestingPrev = investingProceedsPrev - (Math.abs(investingPurchasesPrev) + Math.abs(loanFinancedAcqPrev));
+    const netFinancingCurr = proceedsSharesCurr + proceedsBorrowingsCurr - repurchaseSharesCurr - repaymentBorrowingsCurr - leasesPaidCurr;
+    const netFinancingPrev = proceedsSharesPrev + proceedsBorrowingsPrev - repurchaseSharesPrev - repaymentBorrowingsPrev - leasesPaidPrev;
+    const netChangeCurr = netOperatingCurr + netInvestingCurr + netFinancingCurr;
+    const netChangePrev = netOperatingPrev + netInvestingPrev + netFinancingPrev;
     const rows: Array<{ label: string; curr: number; prev: number; bold?: boolean }> = [];
     rows.push({ label: 'CASH FLOWS FROM OPERATING ACTIVITIES', curr: 0, prev: 0, bold: true });
     rows.push({ label: 'Profit before tax', curr: profitBeforeTaxCurr, prev: profitBeforeTaxPrev });
     rows.push({ label: 'Depreciation and amortisation', curr: depAmortBal(lowerCurr), prev: depAmortBal(lowerPrev) });
     rows.push({ label: 'Impairment losses / reversals', curr: impairmentBal(lowerCurr), prev: impairmentBal(lowerPrev) });
-    rows.push({ label: 'Profit on disposal of assets', curr: profitDisposalBal(lowerCurr), prev: profitDisposalBal(lowerPrev) });
-    rows.push({ label: 'Loss on disposal of assets', curr: lossDisposalBal(lowerCurr), prev: lossDisposalBal(lowerPrev) });
+    rows.push({ label: 'Profit on disposal of assets', curr: -Math.abs(profitDisposalBal(lowerCurr)), prev: -Math.abs(profitDisposalBal(lowerPrev)) });
+    rows.push({ label: 'Loss on disposal of assets', curr: Math.abs(lossDisposalBal(lowerCurr)), prev: Math.abs(lossDisposalBal(lowerPrev)) });
     rows.push({ label: 'Finance costs', curr: financeCostsBal(lowerCurr), prev: financeCostsBal(lowerPrev) });
-    rows.push({ label: 'Interest income', curr: interestIncomeBal(lowerCurr), prev: interestIncomeBal(lowerPrev) });
+    rows.push({ label: 'Interest income', curr: -Math.abs(interestIncomeBal(lowerCurr)), prev: -Math.abs(interestIncomeBal(lowerPrev)) });
     rows.push({ label: 'Unrealised foreign exchange differences', curr: fxUnrealisedBal(lowerCurr), prev: fxUnrealisedBal(lowerPrev) });
     rows.push({ label: 'Movements in provisions', curr: provisionsMoveBal(lowerCurr), prev: provisionsMoveBal(lowerPrev) });
     rows.push({ label: 'Fair value adjustments', curr: fairValueAdjBal(lowerCurr), prev: fairValueAdjBal(lowerPrev) });
     rows.push({ label: 'Other non-cash items', curr: otherNonCashBal(lowerCurr), prev: otherNonCashBal(lowerPrev) });
-    rows.push({ label: 'Cash generated from operations', curr: cfCurr.net_cash_from_operations - loanFinancedAcqCurr, prev: cfPrev.net_cash_from_operations - loanFinancedAcqPrev, bold: true });
+    rows.push({ label: 'Changes in working capital:', curr: workingCapitalCurr, prev: workingCapitalPrev, bold: true });
+    rows.push({ label: '(Increase)/Decrease in trade receivables', curr: -receivablesChangeCurr, prev: -receivablesChangePrev });
+    rows.push({ label: '(Increase)/Decrease in inventories', curr: -inventoriesChangeCurr, prev: -inventoriesChangePrev });
+    rows.push({ label: 'Increase/(Decrease) in trade payables', curr: payablesChangeCurr, prev: payablesChangePrev });
+    rows.push({ label: 'Cash generated from operations', curr: cashGeneratedCurr, prev: cashGeneratedPrev, bold: true });
     rows.push({ label: 'Interest received', curr: interestReceivedBal(lowerCurr), prev: interestReceivedBal(lowerPrev) });
     rows.push({ label: 'Interest paid', curr: -Math.abs(interestPaidBal(lowerCurr)), prev: -Math.abs(interestPaidBal(lowerPrev)) });
     rows.push({ label: 'Dividends received', curr: dividendsReceivedBal(lowerCurr), prev: dividendsReceivedBal(lowerPrev) });
     rows.push({ label: 'Dividends paid', curr: -Math.abs(dividendsPaidBal(lowerCurr)), prev: -Math.abs(dividendsPaidBal(lowerPrev)) });
     rows.push({ label: 'Tax paid', curr: -Math.abs(taxPaidBal(lowerCurr)), prev: -Math.abs(taxPaidBal(lowerPrev)) });
-    rows.push({ label: 'Net cash from operating activities', curr: cfCurr.net_cash_from_operations - loanFinancedAcqCurr, prev: cfPrev.net_cash_from_operations - loanFinancedAcqPrev, bold: true });
+    rows.push({ label: 'Net cash from operating activities', curr: netOperatingCurr, prev: netOperatingPrev, bold: true });
     rows.push({ label: 'CASH FLOWS FROM INVESTING ACTIVITIES', curr: 0, prev: 0, bold: true });
     rows.push({ label: 'Purchase of property, plant and equipment', curr: -(Math.abs(investingPurchasesCurr) + Math.abs(loanFinancedAcqCurr)), prev: -(Math.abs(investingPurchasesPrev) + Math.abs(loanFinancedAcqPrev)) });
     rows.push({ label: 'Proceeds from disposal of property, plant and equipment', curr: investingProceedsCurr, prev: investingProceedsPrev });
-    rows.push({ label: 'Net cash from investing activities', curr: cfCurr.net_cash_from_investing, prev: cfPrev.net_cash_from_investing, bold: true });
+    rows.push({ label: 'Net cash from investing activities', curr: netInvestingCurr, prev: netInvestingPrev, bold: true });
     rows.push({ label: 'CASH FLOWS FROM FINANCING ACTIVITIES', curr: 0, prev: 0, bold: true });
-    rows.push({ label: 'Proceeds from borrowings', curr: loanFinancedAcqCurr, prev: loanFinancedAcqPrev });
-    rows.push({ label: 'Net cash from financing activities', curr: cfCurr.net_cash_from_financing + loanFinancedAcqCurr, prev: cfPrev.net_cash_from_financing + loanFinancedAcqPrev, bold: true });
-    rows.push({ label: 'Net change in cash and cash equivalents', curr: cfCurr.net_change_in_cash, prev: cfPrev.net_change_in_cash, bold: true });
+    rows.push({ label: 'Proceeds from issue of shares', curr: proceedsSharesCurr, prev: proceedsSharesPrev });
+    rows.push({ label: 'Repurchase of shares', curr: -Math.abs(repurchaseSharesCurr), prev: -Math.abs(repurchaseSharesPrev) });
+    rows.push({ label: 'Proceeds from borrowings', curr: proceedsBorrowingsCurr, prev: proceedsBorrowingsPrev });
+    rows.push({ label: 'Repayment of borrowings', curr: -Math.abs(repaymentBorrowingsCurr), prev: -Math.abs(repaymentBorrowingsPrev) });
+    rows.push({ label: 'Lease liabilities paid (IFRS 16)', curr: -Math.abs(leasesPaidCurr), prev: -Math.abs(leasesPaidPrev) });
+    rows.push({ label: 'Net cash from financing activities', curr: netFinancingCurr, prev: netFinancingPrev, bold: true });
+    rows.push({ label: 'Net change in cash and cash equivalents', curr: netChangeCurr, prev: netChangePrev, bold: true });
     rows.push({ label: 'Cash and cash equivalents at beginning of period', curr: cfCurr.opening_cash_balance, prev: cfPrev.opening_cash_balance });
-    rows.push({ label: 'Cash and cash equivalents at end of period', curr: cfCurr.closing_cash_balance, prev: cfPrev.closing_cash_balance, bold: true });
+    rows.push({ label: 'Cash and cash equivalents at end of period', curr: cfCurr.opening_cash_balance + netChangeCurr, prev: cfPrev.opening_cash_balance + netChangePrev, bold: true });
     return (
       <div className="space-y-4">
         <h3 className="text-xl font-bold">Comparative Cash Flow Statement</h3>
@@ -1442,6 +1585,9 @@ export const GAAPFinancialStatements = () => {
       balance: Number(a.balance || 0)
     }));
     const sum = (arr: any[]) => arr.reduce((s, x) => s + Number(x.balance || 0), 0);
+    const buildLower = (arr: any[]) => arr.map(a => ({ account_id: a.account_id, account_code: String(a.account_code || ''), account_name: String(a.account_name || '').toLowerCase(), account_type: String(a.account_type || '').toLowerCase(), balance: Number(a.balance || 0) }));
+    const lowerPrevTB = buildLower(trialBalancePrev || []);
+    const useComparativeWC = periodMode === 'annual' && lowerPrevTB.length > 0;
     const revenueCF = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'revenue' || String(r.account_type || '').toLowerCase() === 'income');
     const cogsCF = trialBalance.filter(r => (String(r.account_code || '')).startsWith('50') || (String(r.account_name || '').toLowerCase().includes('cost of')));
     const opexCF = trialBalance
@@ -1462,6 +1608,7 @@ export const GAAPFinancialStatements = () => {
     const provisionsMove = sum(lowerTB.filter(a => (a.account_type === 'liability' || a.account_type === 'expense') && a.account_name.includes('provision')));
     const fairValueAdj = sum(lowerTB.filter(a => a.account_name.includes('fair value')));
     const otherNonCash = sum(lowerTB.filter(a => a.account_name.includes('non-cash') || a.account_name.includes('non cash')));
+    const adjustmentsTotal = depAmort + impairmentNet - Math.abs(profitDisposal) + Math.abs(lossDisposal) + financeCosts - Math.abs(interestIncome) + fxUnrealised + provisionsMove + fairValueAdj + otherNonCash;
     const interestReceivedCF = sum(lowerTB.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('interest')));
     const interestPaidCF = sum(lowerTB.filter(a => a.account_type === 'expense' && (a.account_name.includes('interest') || a.account_name.includes('finance cost'))));
     const dividendsReceivedCF = sum(lowerTB.filter(a => (a.account_type === 'revenue' || a.account_type === 'income') && a.account_name.includes('dividend')));
@@ -1477,15 +1624,21 @@ export const GAAPFinancialStatements = () => {
     const investmentMovement = sum(lowerTB.filter(isInvestment));
     const loansMovement = sum(lowerTB.filter(isLoanReceivable));
     const isShareEquity = (a: any) => a.account_type === 'equity' && (a.account_name.includes('share') || a.account_name.includes('capital') || a.account_name.includes('share premium') || a.account_name.includes('treasury'));
-    const sharesMovement = sum(lowerTB.filter(isShareEquity));
-    const proceedsShares = Math.max(0, sharesMovement);
-    const repurchaseShares = Math.max(0, -sharesMovement);
+    const sharesCurr = sum(lowerTB.filter(isShareEquity));
+    const sharesPrev = sum(lowerPrevTB.filter(isShareEquity));
+    const sharesChange = sharesCurr - sharesPrev;
+    const proceedsShares = Math.max(0, sharesChange);
+    const repurchaseShares = Math.max(0, -sharesChange);
     const isLoanLiability = (a: any) => a.account_type === 'liability' && (a.account_name.includes('loan') || a.account_name.includes('borrow') || a.account_name.includes('debenture') || a.account_name.includes('note payable') || a.account_name.includes('overdraft'));
-    const borrowingsMovement = sum(lowerTB.filter(isLoanLiability));
-    const proceedsBorrowings = Math.max(0, borrowingsMovement);
-    const repaymentBorrowings = Math.max(0, -borrowingsMovement);
+    const borrowingsCurr = sum(lowerTB.filter(isLoanLiability));
+    const borrowingsPrev = sum(lowerPrevTB.filter(isLoanLiability));
+    const borrowingsChange = borrowingsCurr - borrowingsPrev;
+    const proceedsBorrowings = Math.max(0, borrowingsChange);
+    const repaymentBorrowings = Math.max(0, -borrowingsChange);
     const isLeaseLiability = (a: any) => a.account_type === 'liability' && a.account_name.includes('lease');
-    const leasesMovement = sum(lowerTB.filter(isLeaseLiability));
+    const leasesCurr = sum(lowerTB.filter(isLeaseLiability));
+    const leasesPrev = sum(lowerPrevTB.filter(isLeaseLiability));
+    const leasesChange = leasesCurr - leasesPrev;
     const nz = (v: number) => Math.abs(v) > 0.0001;
     const purchasePPE = Math.max(0, ppeMovement);
     const proceedsPPE = ppeDisposalProceeds;
@@ -1495,7 +1648,7 @@ export const GAAPFinancialStatements = () => {
     const investmentsProceeds = Math.max(0, -investmentMovement);
     const loansAdvanced = Math.max(0, loansMovement);
     const loansRepaid = Math.max(0, -loansMovement);
-    const leasesPaid = Math.max(0, -leasesMovement);
+    const leasesPaid = Math.max(0, -leasesChange);
     const financeCostsPaid = Math.abs(financeCosts);
     
     const isAsset = (a: any) => a.account_type === 'asset';
@@ -1512,11 +1665,47 @@ export const GAAPFinancialStatements = () => {
     const tbTradePayables = lowerTB.filter(isTradePayable);
     const tbOtherPayables = lowerTB.filter(isOtherPayable);
 
-    const wcTradeReceivables = -sum(tbTradeReceivables);
-    const wcInventories = -sum(tbInventories);
-    const wcOtherReceivables = -sum(tbOtherReceivables);
-    const wcTradePayables = sum(tbTradePayables);
-    const wcOtherPayables = sum(tbOtherPayables);
+    const prevTradeReceivables = lowerPrevTB.filter(isTradeReceivable);
+    const prevInventories = lowerPrevTB.filter(isInventory);
+    const prevOtherReceivables = lowerPrevTB.filter(isOtherReceivable);
+    const prevTradePayables = lowerPrevTB.filter(isTradePayable);
+    const prevOtherPayables = lowerPrevTB.filter(isOtherPayable);
+
+    const currReceivablesSum = sum(tbTradeReceivables);
+    const prevReceivablesSum = sum(prevTradeReceivables);
+    const currInventoriesSum = sum(tbInventories);
+    const prevInventoriesSum = sum(prevInventories);
+    const currOtherReceivablesSum = sum(tbOtherReceivables);
+    const prevOtherReceivablesSum = sum(prevOtherReceivables);
+    const currTradePayablesSum = sum(tbTradePayables);
+    const prevTradePayablesSum = sum(prevTradePayables);
+    const currOtherPayablesSum = sum(tbOtherPayables);
+    const prevOtherPayablesSum = sum(prevOtherPayables);
+
+    const wcTradeReceivables = useComparativeWC ? (prevReceivablesSum - currReceivablesSum) : -currReceivablesSum;
+    const wcInventories = useComparativeWC ? (prevInventoriesSum - currInventoriesSum) : -currInventoriesSum;
+    const wcOtherReceivables = useComparativeWC ? (prevOtherReceivablesSum - currOtherReceivablesSum) : -currOtherReceivablesSum;
+    const wcTradePayables = useComparativeWC ? (currTradePayablesSum - prevTradePayablesSum) : currTradePayablesSum;
+    const wcOtherPayables = useComparativeWC ? (currOtherPayablesSum - prevOtherPayablesSum) : currOtherPayablesSum;
+    const wcTotal = wcTradeReceivables + wcInventories + wcOtherReceivables + wcTradePayables + wcOtherPayables;
+    const cashGeneratedOpsTotal = profitBeforeTax + adjustmentsTotal + wcTotal;
+    const netOperatingDisplay = cashGeneratedOpsTotal + interestReceivedCF - Math.abs(interestPaidCF) + dividendsReceivedCF - Math.abs(dividendsPaidCF) - Math.abs(taxPaidCF);
+    const netInvestingDisplay = (
+      proceedsPPE + proceedsIntangible + investmentsProceeds + loansRepaid
+    ) - (
+      purchasePPE + purchaseIntangible + investmentsPurchased + loansAdvanced
+    );
+    const netFinancingDisplay = proceedsShares + proceedsBorrowings - repurchaseShares - repaymentBorrowings - leasesPaid;
+    const netChangeDisplay = netOperatingDisplay + netInvestingDisplay + netFinancingDisplay;
+    const adviceLines: string[] = [];
+    if (netOperatingDisplay < 0) adviceLines.push(`Operating cash is negative; review pricing, collections, and cost controls.`);
+    if (wcTradeReceivables < 0) adviceLines.push(`Trade receivables increased; tighten credit terms and follow up on overdue accounts.`);
+    if (wcInventories < 0) adviceLines.push(`Inventories increased; assess stock turnover and purchasing cadence.`);
+    if (wcTradePayables > 0) adviceLines.push(`Trade payables increased; monitor supplier terms and avoid chronic payment delays.`);
+    if (netInvestingDisplay < 0) adviceLines.push(`Investing cash outflows; ensure capex has clear ROI and aligns to strategy.`);
+    if (netFinancingDisplay > 0) adviceLines.push(`Financing inflows fund activities; monitor leverage and debt service capacity.`);
+    if (vatNet > 0) adviceLines.push(`VAT payable position; set aside cash to meet statutory payments.`);
+    if (vatNet < 0) adviceLines.push(`VAT receivable position; consider claiming refunds or offsetting.`);
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -1540,68 +1729,90 @@ export const GAAPFinancialStatements = () => {
           <div className="space-y-2">
             <h3 className="text-xl font-bold">CASH FLOWS FROM OPERATING ACTIVITIES</h3>
             <div className="space-y-1 pl-2">
-              <div className="flex justify-between"><span>Profit before tax</span><span className="font-mono">R {profitBeforeTax.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span>Profit before tax</span><span className="font-mono">R {formatRand(profitBeforeTax)}</span></div>
               <div className="font-semibold mt-2">Adjustments for:</div>
-              {nz(depAmort) && (<div className="flex justify-between"><span>Depreciation and amortisation</span><span className="font-mono">R {depAmort.toLocaleString()}</span></div>)}
-              {nz(impairmentNet) && (<div className="flex justify-between"><span>Impairment losses / reversals</span><span className="font-mono">R {impairmentNet.toLocaleString()}</span></div>)}
-              {nz(profitDisposal) && (<div className="flex justify-between"><span>Profit on disposal of assets</span><span className="font-mono">R {profitDisposal.toLocaleString()}</span></div>)}
-              {nz(lossDisposal) && (<div className="flex justify-between"><span>Loss on disposal of assets</span><span className="font-mono">R {lossDisposal.toLocaleString()}</span></div>)}
-              {nz(financeCosts) && (<div className="flex justify-between"><span>Finance costs</span><span className="font-mono">R {financeCosts.toLocaleString()}</span></div>)}
-              {nz(interestIncome) && (<div className="flex justify-between"><span>Interest income</span><span className="font-mono">R {interestIncome.toLocaleString()}</span></div>)}
-              {nz(fxUnrealised) && (<div className="flex justify-between"><span>Unrealised foreign exchange differences</span><span className="font-mono">R {fxUnrealised.toLocaleString()}</span></div>)}
-              {nz(provisionsMove) && (<div className="flex justify-between"><span>Movements in provisions</span><span className="font-mono">R {provisionsMove.toLocaleString()}</span></div>)}
-              {nz(fairValueAdj) && (<div className="flex justify-between"><span>Fair value adjustments</span><span className="font-mono">R {fairValueAdj.toLocaleString()}</span></div>)}
-              {nz(otherNonCash) && (<div className="flex justify-between"><span>Other non-cash items</span><span className="font-mono">R {otherNonCash.toLocaleString()}</span></div>)}
+              {nz(depAmort) && (<div className="flex justify-between"><span>Depreciation and amortisation</span><span className="font-mono">R {formatRand(depAmort)}</span></div>)}
+              {nz(impairmentNet) && (<div className="flex justify-between"><span>Impairment losses / reversals</span><span className="font-mono">R {formatRand(impairmentNet)}</span></div>)}
+              {nz(profitDisposal) && (<div className="flex justify-between"><span>Profit on disposal of assets</span><span className="font-mono">(R {formatRand(Math.abs(profitDisposal))})</span></div>)}
+              {nz(lossDisposal) && (<div className="flex justify-between"><span>Loss on disposal of assets</span><span className="font-mono">R {formatRand(lossDisposal)}</span></div>)}
+              {nz(financeCosts) && (<div className="flex justify-between"><span>Finance costs</span><span className="font-mono">R {formatRand(financeCosts)}</span></div>)}
+              {nz(interestIncome) && (<div className="flex justify-between"><span>Interest income</span><span className="font-mono">(R {formatRand(Math.abs(interestIncome))})</span></div>)}
+              {nz(fxUnrealised) && (<div className="flex justify-between"><span>Unrealised foreign exchange differences</span><span className="font-mono">R {formatRand(fxUnrealised)}</span></div>)}
+              {nz(provisionsMove) && (<div className="flex justify-between"><span>Movements in provisions</span><span className="font-mono">R {formatRand(provisionsMove)}</span></div>)}
+              {nz(fairValueAdj) && (<div className="flex justify-between"><span>Fair value adjustments</span><span className="font-mono">R {formatRand(fairValueAdj)}</span></div>)}
+              {nz(otherNonCash) && (<div className="flex justify-between"><span>Other non-cash items</span><span className="font-mono">R {formatRand(otherNonCash)}</span></div>)}
               <div className="font-semibold mt-2">Changes in working capital:</div>
-              {nz(wcTradeReceivables) && (<div className="flex justify-between"><span>(Increase)/Decrease in trade receivables</span><span className="font-mono">R {wcTradeReceivables.toLocaleString()}</span></div>)}
-              {nz(wcInventories) && (<div className="flex justify-between"><span>(Increase)/Decrease in inventories</span><span className="font-mono">R {wcInventories.toLocaleString()}</span></div>)}
-              {nz(wcOtherReceivables) && (<div className="flex justify-between"><span>(Increase)/Decrease in other receivables</span><span className="font-mono">R {wcOtherReceivables.toLocaleString()}</span></div>)}
-              {nz(wcTradePayables) && (<div className="flex justify-between"><span>Increase/(Decrease) in trade payables</span><span className="font-mono">R {wcTradePayables.toLocaleString()}</span></div>)}
-              <div className="flex justify-between font-semibold border-t pt-2"><span>Cash generated from operations</span><span className="font-mono">R {(cf.net_cash_from_operations - proceedsBorrowings).toLocaleString()}</span></div>
-              {nz(interestReceivedCF) && (<div className="flex justify-between"><span>Interest received</span><span className="font-mono">R {interestReceivedCF.toLocaleString()}</span></div>)}
-              {nz(interestPaidCF) && (<div className="flex justify-between"><span>Interest paid</span><span className="font-mono">(R {Math.abs(interestPaidCF).toLocaleString()})</span></div>)}
-              {nz(dividendsReceivedCF) && (<div className="flex justify-between"><span>Dividends received</span><span className="font-mono">R {dividendsReceivedCF.toLocaleString()}</span></div>)}
-              {nz(dividendsPaidCF) && (<div className="flex justify-between"><span>Dividends paid</span><span className="font-mono">(R {Math.abs(dividendsPaidCF).toLocaleString()})</span></div>)}
-              {nz(taxPaidCF) && (<div className="flex justify-between"><span>Tax paid</span><span className="font-mono">(R {Math.abs(taxPaidCF).toLocaleString()})</span></div>)}
-              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash from operating activities</span><span className="font-mono">R {(cf.net_cash_from_operations - proceedsBorrowings).toLocaleString()}</span></div>
+              {nz(wcTradeReceivables) && (<div className="flex justify-between"><span>(Increase)/Decrease in trade receivables</span><span className="font-mono">R {formatRand(wcTradeReceivables)}</span></div>)}
+              {nz(wcInventories) && (<div className="flex justify-between"><span>(Increase)/Decrease in inventories</span><span className="font-mono">R {formatRand(wcInventories)}</span></div>)}
+              {nz(wcOtherReceivables) && (<div className="flex justify-between"><span>(Increase)/Decrease in other receivables</span><span className="font-mono">R {formatRand(wcOtherReceivables)}</span></div>)}
+              {nz(wcTradePayables) && (<div className="flex justify-between"><span>Increase/(Decrease) in trade payables</span><span className="font-mono">R {formatRand(wcTradePayables)}</span></div>)}
+              <div className="flex justify-between font-semibold"><span>Total change in working capital</span><span className="font-mono">R {formatRand(wcTotal)}</span></div>
+              <div className="flex justify-between font-semibold border-t pt-2"><span>Cash generated from operations</span><span className="font-mono">R {formatRand(cashGeneratedOpsTotal)}</span></div>
+              {nz(interestReceivedCF) && (<div className="flex justify-between"><span>Interest received</span><span className="font-mono">R {formatRand(interestReceivedCF)}</span></div>)}
+              {nz(interestPaidCF) && (<div className="flex justify-between"><span>Interest paid</span><span className="font-mono">(R {formatRand(Math.abs(interestPaidCF))})</span></div>)}
+              {nz(dividendsReceivedCF) && (<div className="flex justify-between"><span>Dividends received</span><span className="font-mono">R {formatRand(dividendsReceivedCF)}</span></div>)}
+              {nz(dividendsPaidCF) && (<div className="flex justify-between"><span>Dividends paid</span><span className="font-mono">(R {formatRand(Math.abs(dividendsPaidCF))})</span></div>)}
+              {nz(taxPaidCF) && (<div className="flex justify-between"><span>Tax paid</span><span className="font-mono">(R {formatRand(Math.abs(taxPaidCF))})</span></div>)}
+              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash from operating activities</span><span className="font-mono">R {formatRand(netOperatingDisplay)}</span></div>
             </div>
           </div>
 
           <div className="space-y-2">
             <h3 className="text-xl font-bold">CASH FLOWS FROM INVESTING ACTIVITIES</h3>
             <div className="space-y-1 pl-2">
-              {nz(purchasePPE) && (<div className="flex justify-between"><span>Purchase of property, plant and equipment</span><span className="font-mono">(R {purchasePPE.toLocaleString()})</span></div>)}
-              {nz(proceedsPPE) && (<div className="flex justify-between"><span>Proceeds from disposal of property, plant and equipment</span><span className="font-mono">R {proceedsPPE.toLocaleString()}</span></div>)}
-              {nz(purchaseIntangible) && (<div className="flex justify-between"><span>Purchase of intangible assets</span><span className="font-mono">(R {purchaseIntangible.toLocaleString()})</span></div>)}
-              {nz(proceedsIntangible) && (<div className="flex justify-between"><span>Proceeds from sale of intangible assets</span><span className="font-mono">R {proceedsIntangible.toLocaleString()}</span></div>)}
-              {nz(investmentsPurchased) && (<div className="flex justify-between"><span>Investments purchased</span><span className="font-mono">(R {investmentsPurchased.toLocaleString()})</span></div>)}
-              {nz(investmentsProceeds) && (<div className="flex justify-between"><span>Proceeds from sale/maturity of investments</span><span className="font-mono">R {investmentsProceeds.toLocaleString()}</span></div>)}
-              {nz(loansAdvanced) && (<div className="flex justify-between"><span>Loans advanced to other parties</span><span className="font-mono">(R {loansAdvanced.toLocaleString()})</span></div>)}
-              {nz(loansRepaid) && (<div className="flex justify-between"><span>Loans repaid to the entity</span><span className="font-mono">R {loansRepaid.toLocaleString()}</span></div>)}
-              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash used in / from investing activities</span><span className="font-mono">R {cf.net_cash_from_investing.toLocaleString()}</span></div>
+              {nz(purchasePPE) && (<div className="flex justify-between"><span>Purchase of property, plant and equipment</span><span className="font-mono">(R {formatRand(purchasePPE)})</span></div>)}
+              {nz(proceedsPPE) && (<div className="flex justify-between"><span>Proceeds from disposal of property, plant and equipment</span><span className="font-mono">R {formatRand(proceedsPPE)}</span></div>)}
+              {nz(purchaseIntangible) && (<div className="flex justify-between"><span>Purchase of intangible assets</span><span className="font-mono">(R {formatRand(purchaseIntangible)})</span></div>)}
+              {nz(proceedsIntangible) && (<div className="flex justify-between"><span>Proceeds from sale of intangible assets</span><span className="font-mono">R {formatRand(proceedsIntangible)}</span></div>)}
+              {nz(investmentsPurchased) && (<div className="flex justify-between"><span>Investments purchased</span><span className="font-mono">(R {formatRand(investmentsPurchased)})</span></div>)}
+              {nz(investmentsProceeds) && (<div className="flex justify-between"><span>Proceeds from sale/maturity of investments</span><span className="font-mono">R {formatRand(investmentsProceeds)}</span></div>)}
+              {nz(loansAdvanced) && (<div className="flex justify-between"><span>Loans advanced to other parties</span><span className="font-mono">(R {formatRand(loansAdvanced)})</span></div>)}
+              {nz(loansRepaid) && (<div className="flex justify-between"><span>Loans repaid to the entity</span><span className="font-mono">R {formatRand(loansRepaid)}</span></div>)}
+              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash used in / from investing activities</span><span className="font-mono">R {formatRand(netInvestingDisplay)}</span></div>
             </div>
           </div>
 
           <div className="space-y-2">
             <h3 className="text-xl font-bold">CASH FLOWS FROM FINANCING ACTIVITIES</h3>
             <div className="space-y-1 pl-2">
-              {nz(proceedsShares) && (<div className="flex justify-between"><span>Proceeds from issue of shares</span><span className="font-mono">R {proceedsShares.toLocaleString()}</span></div>)}
-              {nz(repurchaseShares) && (<div className="flex justify-between"><span>Repurchase of shares</span><span className="font-mono">(R {repurchaseShares.toLocaleString()})</span></div>)}
-              {nz(proceedsBorrowings) && (<div className="flex justify-between"><span>Proceeds from borrowings</span><span className="font-mono">R {proceedsBorrowings.toLocaleString()}</span></div>)}
-              {nz(repaymentBorrowings) && (<div className="flex justify-between"><span>Repayment of borrowings</span><span className="font-mono">(R {repaymentBorrowings.toLocaleString()})</span></div>)}
-              {nz(leasesPaid) && (<div className="flex justify-between"><span>Lease liabilities paid (IFRS 16)</span><span className="font-mono">(R {leasesPaid.toLocaleString()})</span></div>)}
-              {nz(financeCostsPaid) && (<div className="flex justify-between"><span>Finance costs paid (if treated as financing)</span><span className="font-mono">(R {financeCostsPaid.toLocaleString()})</span></div>)}
-              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash from / used in financing activities</span><span className="font-mono">R {cf.net_cash_from_financing.toLocaleString()}</span></div>
+              {nz(proceedsShares) && (<div className="flex justify-between"><span>Proceeds from issue of shares</span><span className="font-mono">R {formatRand(proceedsShares)}</span></div>)}
+              {nz(repurchaseShares) && (<div className="flex justify-between"><span>Repurchase of shares</span><span className="font-mono">(R {formatRand(repurchaseShares)})</span></div>)}
+              {nz(proceedsBorrowings) && (<div className="flex justify-between"><span>Proceeds from borrowings</span><span className="font-mono">R {formatRand(proceedsBorrowings)}</span></div>)}
+              {nz(repaymentBorrowings) && (<div className="flex justify-between"><span>Repayment of borrowings</span><span className="font-mono">(R {formatRand(repaymentBorrowings)})</span></div>)}
+              {nz(leasesPaid) && (<div className="flex justify-between"><span>Lease liabilities paid (IFRS 16)</span><span className="font-mono">(R {formatRand(leasesPaid)})</span></div>)}
+              <div className="flex justify-between py-2 text-lg font-semibold border-t"><span>Net cash from / used in financing activities</span><span className="font-mono">R {formatRand(netFinancingDisplay)}</span></div>
             </div>
           </div>
 
           <div className="space-y-2">
             <h3 className="text-xl font-bold">NET INCREASE / (DECREASE) IN CASH AND CASH EQUIVALENTS</h3>
             <div className="space-y-1 pl-2">
-              <div className="flex justify-between"><span>Cash at the beginning of the period</span><span className="font-mono">R {cf.opening_cash_balance.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span>Net increase / (decrease) in cash</span><span className="font-mono">R {cf.net_change_in_cash.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span>Cash at the beginning of the period</span><span className="font-mono">R {formatRand(cf.opening_cash_balance)}</span></div>
+              <div className="flex justify-between"><span>Net increase / (decrease) in cash</span><span className="font-mono">R {formatRand(netChangeDisplay)}</span></div>
               <div className="flex justify-between"><span>Effect of exchange rate changes on cash</span><span className="font-mono">R 0</span></div>
-              <div className="flex justify-between font-semibold border-t pt-2"><span>Cash and cash equivalents at end of period</span><span className="font-mono">R {cf.closing_cash_balance.toLocaleString()}</span></div>
+              <div className="flex justify-between font-semibold border-t pt-2"><span>Cash and cash equivalents at end of period</span><span className="font-mono">R {formatRand(cf.opening_cash_balance + netChangeDisplay)}</span></div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-xl font-bold">Advisory Insights</h3>
+            <div className="space-y-1 pl-2">
+              <StellaAdvisor
+                trialBalance={trialBalance}
+                vatNet={vatNet}
+                periodMode={periodMode}
+                periodStart={periodStart}
+                periodEnd={periodEnd}
+                cashFlow={{
+                  netOperating: netOperatingDisplay,
+                  netInvesting: netInvestingDisplay,
+                  netFinancing: netFinancingDisplay,
+                  netChange: netChangeDisplay,
+                }}
+              />
+              <div className="flex justify-end pt-2">
+                <Button variant="outline" size="sm" onClick={() => setShowAdviceModal(true)}>Ask Accounting Expert</Button>
+              </div>
             </div>
           </div>
         </div>
@@ -1727,6 +1938,28 @@ export const GAAPFinancialStatements = () => {
                 <div className="flex justify-center items-center h-32"><LoadingSpinner /></div>
               ) : (
                 <div className="space-y-8">
+                  <div className="flex items-center justify-between">
+                    <div className="flex gap-4 items-end">
+                      <div>
+                        <Label htmlFor="compYearA">Year A</Label>
+                        <Input id="compYearA" type="number" min={1900} max={2100} value={comparativeYearA} onChange={e => setComparativeYearA(parseInt(e.target.value || `${new Date().getFullYear()}`, 10))} />
+                      </div>
+                      <div>
+                        <Label htmlFor="compYearB">Year B</Label>
+                        <Input id="compYearB" type="number" min={1900} max={2100} value={comparativeYearB} onChange={e => setComparativeYearB(parseInt(e.target.value || `${new Date().getFullYear()-1}`, 10))} />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => handleComparativeExport('pdf')}>
+                        <FileDown className="h-4 w-4 mr-2" />
+                        PDF
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handleComparativeExport('excel')}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Excel
+                      </Button>
+                    </div>
+                  </div>
                   {renderComparativeBalanceSheet()}
                   {renderComparativeIncomeStatement()}
                   {renderComparativeCashFlow()}
@@ -1762,6 +1995,23 @@ export const GAAPFinancialStatements = () => {
                   </div>
                 </div>
               ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {showAdviceModal && (
+        <Card className="mt-6">
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <CardTitle>Expert Guidance</CardTitle>
+              <Button variant="outline" size="sm" onClick={() => setShowAdviceModal(false)}>Close</Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="text-sm whitespace-pre-wrap">{systemOverview}</div>
+              <div className="text-sm whitespace-pre-wrap">{accountingPrimer}</div>
             </div>
           </CardContent>
         </Card>
@@ -2152,3 +2402,28 @@ const getCashFlowForPeriod = async (companyId: string, start: string, end: strin
   }
 };
   const pctClass = (v: number) => (v > 0 ? 'text-green-600 dark:text-green-400' : v < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground');
+  const handleComparativeExport = (type: 'pdf' | 'excel') => {
+    try {
+      const yA = comparativeYearA;
+      const yB = comparativeYearB;
+      // Build comparative rows using current computed totals for Cash Flow
+      const rows = (() => {
+        const r: { label: string; yearA: number; yearB: number; percent?: number; bold?: boolean }[] = [];
+        const cfCurr = cashFlowCurrComparative || { net_cash_from_operations: 0, net_cash_from_investing: 0, net_cash_from_financing: 0, net_change_in_cash: 0, opening_cash_balance: 0 } as any;
+        const cfPrev = cashFlowPrev || { net_cash_from_operations: 0, net_cash_from_investing: 0, net_cash_from_financing: 0, net_change_in_cash: 0, opening_cash_balance: 0 } as any;
+        const pct = (a: number, b: number) => percentChange(a, b);
+        r.push({ label: 'Net cash from operating activities', yearA: Number(cfCurr.net_cash_from_operations || 0), yearB: Number(cfPrev.net_cash_from_operations || 0), percent: pct(Number(cfCurr.net_cash_from_operations || 0), Number(cfPrev.net_cash_from_operations || 0)), bold: true });
+        r.push({ label: 'Net cash used in / from investing activities', yearA: Number(cfCurr.net_cash_from_investing || 0), yearB: Number(cfPrev.net_cash_from_investing || 0), percent: pct(Number(cfCurr.net_cash_from_investing || 0), Number(cfPrev.net_cash_from_investing || 0)), bold: true });
+        r.push({ label: 'Net cash from / used in financing activities', yearA: Number(cfCurr.net_cash_from_financing || 0), yearB: Number(cfPrev.net_cash_from_financing || 0), percent: pct(Number(cfCurr.net_cash_from_financing || 0), Number(cfPrev.net_cash_from_financing || 0)), bold: true });
+        r.push({ label: 'Net increase / (decrease) in cash', yearA: Number(cfCurr.net_change_in_cash || 0), yearB: Number(cfPrev.net_change_in_cash || 0), percent: pct(Number(cfCurr.net_change_in_cash || 0), Number(cfPrev.net_change_in_cash || 0)), bold: true });
+        r.push({ label: 'Cash and cash equivalents at beginning of period', yearA: Number(cfCurr.opening_cash_balance || 0), yearB: Number(cfPrev.opening_cash_balance || 0) });
+        r.push({ label: 'Cash and cash equivalents at end of period', yearA: Number(cfCurr.opening_cash_balance || 0) + Number(cfCurr.net_change_in_cash || 0), yearB: Number(cfPrev.opening_cash_balance || 0) + Number(cfPrev.net_change_in_cash || 0), bold: true });
+        return r;
+      })();
+      if (type === 'pdf') {
+        exportComparativeCashFlowToPDF(rows, yA, yB, `Comparative_Cash_Flow_${yA}_vs_${yB}`);
+      } else {
+        exportComparativeCashFlowToExcel(rows, yA, yB, `Comparative_Cash_Flow_${yA}_vs_${yB}`);
+      }
+    } catch {}
+  };

@@ -58,6 +58,12 @@ export const PurchaseOrdersManagement = () => {
   const { toast } = useToast();
   const [journalOpen, setJournalOpen] = useState(false);
   const [journalEditData, setJournalEditData] = useState<any>(null);
+  const [poSentDialogOpen, setPoSentDialogOpen] = useState(false);
+  const [poSentOrder, setPoSentOrder] = useState<PurchaseOrder | null>(null);
+  const [poSentDate, setPoSentDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [poSentIncludeVAT, setPoSentIncludeVAT] = useState<boolean>(true);
+  const [page, setPage] = useState(0);
+  const [pageSize] = useState(7);
 
   const [form, setForm] = useState({
     po_date: new Date().toISOString().slice(0, 10),
@@ -373,13 +379,24 @@ export const PurchaseOrdersManagement = () => {
 
   const markSent = async (order: PurchaseOrder) => {
     try {
-      setSentLoading(order.id);
+      setPoSentOrder(order);
+      setPoSentDate(new Date().toISOString().slice(0, 10));
+      setPoSentIncludeVAT(true);
+      setPoSentDialogOpen(true);
+      return;
+    } catch {}
+  };
+
+  const confirmPOSent = async () => {
+    if (!poSentOrder) return;
+    try {
+      setSentLoading(poSentOrder.id);
       const { error } = await supabase
         .from("purchase_orders")
         .update({ status: "sent" })
-        .eq("id", order.id);
+        .eq("id", poSentOrder.id);
       if (error) throw error;
-      await openJournalForPOSent(order, order.po_date);
+      await openJournalForPOSent(poSentOrder, poSentDate, poSentIncludeVAT);
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
@@ -392,7 +409,7 @@ export const PurchaseOrdersManagement = () => {
             const { data: poItems } = await supabase
               .from("purchase_order_items")
               .select("description, quantity, unit_price")
-              .eq("purchase_order_id", order.id);
+              .eq("purchase_order_id", poSentOrder.id);
             for (const it of (poItems || [])) {
               const name = String(it.description || '').trim();
               if (!name) continue;
@@ -428,8 +445,10 @@ export const PurchaseOrdersManagement = () => {
           }
         }
       } catch {}
-      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: "sent" } : o));
+      setOrders(prev => prev.map(o => o.id === poSentOrder.id ? { ...o, status: "sent" } : o));
       toast({ title: "Success", description: "Purchase order marked as Sent and posted" });
+      setPoSentDialogOpen(false);
+      setPoSentOrder(null);
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
@@ -437,7 +456,7 @@ export const PurchaseOrdersManagement = () => {
     }
   };
 
-  const openJournalForPOSent = async (po: PurchaseOrder, postDateStr?: string) => {
+  const openJournalForPOSent = async (po: PurchaseOrder, postDateStr?: string, includeVAT?: boolean) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
@@ -462,7 +481,9 @@ export const PurchaseOrdersManagement = () => {
       };
       const invId = pick('asset', ['1300'], ['inventory','stock']);
       const apId = pick('liability', ['2000'], ['accounts payable','payable']);
-      const amount = Number(po.total_amount || 0);
+      const net = Number(po.subtotal || 0);
+      const vat = Number(po.tax_amount || 0);
+      const rate = net > 0 ? ((vat / net) * 100) : 0;
       const editData = {
         id: null,
         transaction_date: postDateStr || po.po_date,
@@ -472,10 +493,11 @@ export const PurchaseOrdersManagement = () => {
         payment_method: 'accrual',
         debit_account_id: invId,
         credit_account_id: apId,
-        total_amount: amount,
+        total_amount: includeVAT ? Number(po.total_amount || 0) : net,
         bank_account_id: null,
         lockType: 'po_sent',
-        vat_rate: po.subtotal && po.tax_amount ? Number(((Number(po.tax_amount) / Number(po.subtotal)) * 100).toFixed(2)) : 0,
+        vat_rate: includeVAT ? String(rate.toFixed(2)) : '0',
+        amount_includes_vat: Boolean(includeVAT),
       };
       setJournalEditData(editData);
       setJournalOpen(true);
@@ -536,6 +558,10 @@ export const PurchaseOrdersManagement = () => {
   };
 
   const totals = calculateTotals();
+  const totalCount = orders.length;
+  const start = page * pageSize;
+  const pagedOrders = orders.slice(start, start + pageSize);
+  useEffect(() => { setPage(0); }, [orders.length]);
 
   if (loading) return <div className="p-6">Loading...</div>;
 
@@ -563,6 +589,7 @@ export const PurchaseOrdersManagement = () => {
               <p className="text-muted-foreground">No purchase orders yet</p>
             </div>
           ) : (
+            <>
             <Table>
             <TableHeader>
               <TableRow>
@@ -576,7 +603,7 @@ export const PurchaseOrdersManagement = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {orders.map(order => (
+              {pagedOrders.map(order => (
                 <TableRow key={order.id}>
                   <TableCell className="font-mono">{order.po_number}</TableCell>
                   <TableCell>{new Date(order.po_date).toLocaleDateString("en-ZA")}</TableCell>
@@ -613,9 +640,48 @@ export const PurchaseOrdersManagement = () => {
               ))}
             </TableBody>
           </Table>
+          <div className="flex items-center justify-between mt-3">
+            <div className="text-sm text-muted-foreground">
+              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedOrders.length} of {totalCount}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+              <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+            </div>
+          </div>
+          </>
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={poSentDialogOpen} onOpenChange={setPoSentDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Post Sent Purchase</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Posting Date</Label>
+              <Input type="date" value={poSentDate} onChange={(e) => setPoSentDate(e.target.value)} />
+            </div>
+            {poSentOrder && (
+              <div className="p-3 border rounded bg-muted/30 space-y-1 text-sm">
+                <div className="flex justify-between"><span>Amount (excl. VAT)</span><span className="font-mono">R {Number(poSentOrder.subtotal || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                <div className="flex justify-between"><span>VAT amount</span><span className="font-mono">R {Number(poSentOrder.tax_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                <div className="flex justify-between"><span>Total</span><span className="font-mono">R {Number(poSentOrder.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                <div className="flex items-center gap-2 pt-2">
+                  <Label htmlFor="includeVatPo">Include VAT in posting?</Label>
+                  <input id="includeVatPo" type="checkbox" checked={poSentIncludeVAT} onChange={e => setPoSentIncludeVAT(e.target.checked)} />
+                </div>
+              </div>
+            )}
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setPoSentDialogOpen(false)}>Cancel</Button>
+              <Button className="bg-gradient-primary" onClick={confirmPOSent}>Post</Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showForm} onOpenChange={setShowForm}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">

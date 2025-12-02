@@ -596,6 +596,12 @@ function LoanList({ companyId, onOpenInterest, onOpenRepayment }: { companyId: s
     });
     return filtered;
   }, [items, search, filterType, sortKey]);
+  const [pageLoan, setPageLoan] = useState(0);
+  const pageSizeLoan = 7;
+  const totalLoanCount = derived.length;
+  const startLoan = pageLoan * pageSizeLoan;
+  const pagedLoans = derived.slice(startLoan, startLoan + pageSizeLoan);
+  useEffect(() => { setPageLoan(0); }, [search, filterType, sortKey]);
 
   return (
     <Card>
@@ -626,6 +632,7 @@ function LoanList({ companyId, onOpenInterest, onOpenRepayment }: { companyId: s
         ) : derived.length === 0 ? (
           <div className="py-8 text-center text-muted-foreground">No loans</div>
         ) : (
+          <>
           <Table>
           <TableHeader>
             <TableRow>
@@ -641,7 +648,7 @@ function LoanList({ companyId, onOpenInterest, onOpenRepayment }: { companyId: s
             </TableRow>
           </TableHeader>
           <TableBody>
-            {derived.map((l) => {
+            {pagedLoans.map((l) => {
               return (
                 <TableRow key={l.id}>
                   <TableCell>{l.reference}</TableCell>
@@ -663,11 +670,21 @@ function LoanList({ companyId, onOpenInterest, onOpenRepayment }: { companyId: s
             })}
           </TableBody>
         </Table>
+        <div className="flex items-center justify-between mt-3">
+          <div className="text-sm text-muted-foreground">Page {pageLoan + 1} of {Math.max(1, Math.ceil(totalLoanCount / pageSizeLoan))}</div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" disabled={pageLoan === 0} onClick={() => setPageLoan(p => Math.max(0, p - 1))}>Previous</Button>
+            <Button variant="outline" disabled={(pageLoan + 1) >= Math.ceil(totalLoanCount / pageSizeLoan)} onClick={() => setPageLoan(p => p + 1)}>Next</Button>
+          </div>
+        </div>
+        </>
         )}
       </CardContent>
     </Card>
   );
 }
+
+// removed inline pager component; pager implemented directly in LoanList
 
 function LoanPayments({ companyId }: { companyId: string }) {
   const { toast } = useToast();
@@ -695,6 +712,12 @@ function LoanPayments({ companyId }: { companyId: string }) {
       }
   }, [companyId, toast]);
   useEffect(() => { if (companyId) loadPayments(); }, [companyId, loadPayments]);
+  const [pagePayments, setPagePayments] = useState(0);
+  const pageSizePayments = 7;
+  const totalPayments = payments.length;
+  const startPayments = pagePayments * pageSizePayments;
+  const pagedPayments = payments.slice(startPayments, startPayments + pageSizePayments);
+  useEffect(() => { setPagePayments(0); }, [payments.length]);
 
   return (
     <Card>
@@ -705,6 +728,7 @@ function LoanPayments({ companyId }: { companyId: string }) {
         ) : payments.length === 0 ? (
           <div className="py-8 text-center text-muted-foreground">No payments recorded</div>
         ) : (
+          <>
           <Table>
             <TableHeader>
               <TableRow>
@@ -717,7 +741,7 @@ function LoanPayments({ companyId }: { companyId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {payments.map((payment) => (
+              {pagedPayments.map((payment) => (
                 <TableRow key={payment.id}>
                   <TableCell>{new Date(payment.payment_date).toLocaleDateString()}</TableCell>
                   <TableCell>{(payment as any).loans?.reference || 'N/A'}</TableCell>
@@ -729,6 +753,14 @@ function LoanPayments({ companyId }: { companyId: string }) {
               ))}
             </TableBody>
           </Table>
+          <div className="flex items-center justify-between mt-3">
+            <div className="text-sm text-muted-foreground">Page {pagePayments + 1} of {Math.max(1, Math.ceil(totalPayments / pageSizePayments))}</div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" disabled={pagePayments === 0} onClick={() => setPagePayments(p => Math.max(0, p - 1))}>Previous</Button>
+              <Button variant="outline" disabled={(pagePayments + 1) >= Math.ceil(totalPayments / pageSizePayments)} onClick={() => setPagePayments(p => p + 1)}>Next</Button>
+            </div>
+          </div>
+          </>
         )}
       </CardContent>
     </Card>
@@ -738,6 +770,8 @@ function LoanPayments({ companyId }: { companyId: string }) {
 function LoanReports({ companyId }: { companyId: string }) {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [payments, setPayments] = useState<LoanPayment[]>([]);
+  const [pageReports, setPageReports] = useState(0);
+  const pageSizeReports = 7;
   const loadReports = React.useCallback(async () => {
       const { data: lns } = await supabase.from("loans" as any).select("*").eq("company_id", companyId);
       const { data: pays } = await supabase.from("loan_payments" as any).select("*");
@@ -745,6 +779,7 @@ function LoanReports({ companyId }: { companyId: string }) {
       setPayments((pays || []) as any);
   }, [companyId]);
   useEffect(() => { if (companyId) loadReports(); }, [companyId, loadReports]);
+  useEffect(() => { setPageReports(0); }, [loans.length]);
   const totals = {
     active: loans.filter(l => l.status === 'active').length,
     completed: loans.filter(l => l.status !== 'active').length,
@@ -771,16 +806,25 @@ function LoanReports({ companyId }: { companyId: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {loans.map(l => (
+            {(() => {
+              return loans.slice(pageReports * pageSizeReports, pageReports * pageSizeReports + pageSizeReports).map(l => (
               <TableRow key={l.id}>
                 <TableCell>{l.reference}</TableCell>
                 <TableCell className="capitalize">{l.loan_type}</TableCell>
                 <TableCell className="capitalize">{l.status}</TableCell>
                 <TableCell>R {l.outstanding_balance.toFixed(2)}</TableCell>
               </TableRow>
-            ))}
+            ));
+            })()}
           </TableBody>
         </Table>
+        <div className="flex items-center justify-between mt-3">
+          <div className="text-sm text-muted-foreground">Page {pageReports + 1} of {Math.max(1, Math.ceil(loans.length / pageSizeReports))}</div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" disabled={pageReports === 0} onClick={() => setPageReports(p => Math.max(0, p - 1))}>Previous</Button>
+            <Button variant="outline" disabled={(pageReports + 1) >= Math.ceil(loans.length / pageSizeReports)} onClick={() => setPageReports(p => p + 1)}>Next</Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

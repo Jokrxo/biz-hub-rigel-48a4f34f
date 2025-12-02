@@ -39,6 +39,8 @@ export default function QuotesPage() {
   const [dateFormat, setDateFormat] = useState<string>('DD/MM/YYYY');
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const navigate = useNavigate();
+  const [page, setPage] = useState(0);
+  const [pageSize] = useState(7);
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -313,6 +315,12 @@ export default function QuotesPage() {
     });
   }, [quotes, startDate, endDate]);
 
+  const totalCount = filteredQuotes.length;
+  const start = page * pageSize;
+  const pagedQuotes = filteredQuotes.slice(start, start + pageSize);
+
+  useEffect(() => { setPage(0); }, [startDate, endDate]);
+
   return (
     <>
       <SEO title="Sales Quotes | Rigel Business" description="View and download quotes; create quotes in Sales module" />
@@ -369,6 +377,7 @@ export default function QuotesPage() {
                   {filteredQuotes.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">No quotes in selected range</div>
                   ) : (
+                    <>
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -382,7 +391,7 @@ export default function QuotesPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredQuotes.map((quote) => (
+                        {pagedQuotes.map((quote) => (
                           <TableRow key={quote.id}>
                             <TableCell className="font-medium">{quote.quote_number}</TableCell>
                             <TableCell>{quote.customer_name}</TableCell>
@@ -418,6 +427,16 @@ export default function QuotesPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    <div className="flex items-center justify-between mt-3">
+                      <div className="text-sm text-muted-foreground">
+                        Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedQuotes.length} of {totalCount}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+                        <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+                      </div>
+                    </div>
+                    </>
                   )}
                 </>
               )}
