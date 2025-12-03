@@ -87,7 +87,9 @@ export default function Signup() {
         } catch {}
         try { localStorage.removeItem('pendingInvite'); } catch {}
       }
-      navigate("/", { replace: true });
+      try { await supabase.auth.signOut({ scope: 'local' as any }); } catch {}
+      toast({ title: "Account created", description: "Please sign in to your new account", });
+      navigate("/login?signup=success", { replace: true });
     } catch (e: any) {
       const errorMessage = formatErrorMessage(e);
       toast({ title: "Signup failed", description: errorMessage, variant: "destructive" });
@@ -173,30 +175,28 @@ export default function Signup() {
                         }}
                       />
                     </FormControl>
-                    <FormDescription>
-                      <div className="space-y-1 text-xs mt-2">
-                        <div className={`flex items-center gap-2 ${passwordChecks.minLength ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                          <span>{passwordChecks.minLength ? '✓' : '○'}</span>
-                          <span>At least 8 characters</span>
-                        </div>
-                        <div className={`flex items-center gap-2 ${passwordChecks.hasLowercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                          <span>{passwordChecks.hasLowercase ? '✓' : '○'}</span>
-                          <span>One lowercase letter (a-z)</span>
-                        </div>
-                        <div className={`flex items-center gap-2 ${passwordChecks.hasUppercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                          <span>{passwordChecks.hasUppercase ? '✓' : '○'}</span>
-                          <span>One uppercase letter (A-Z)</span>
-                        </div>
-                        <div className={`flex items-center gap-2 ${passwordChecks.hasNumber ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                          <span>{passwordChecks.hasNumber ? '✓' : '○'}</span>
-                          <span>One number (0-9)</span>
-                        </div>
-                        <div className={`flex items-center gap-2 ${passwordChecks.hasSpecial ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                          <span>{passwordChecks.hasSpecial ? '✓' : '○'}</span>
-                          <span>One special character</span>
-                        </div>
+                    <div className="space-y-1 text-xs mt-2">
+                      <div className={`flex items-center gap-2 ${passwordChecks.minLength ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                        <span>{passwordChecks.minLength ? '✓' : '○'}</span>
+                        <span>At least 8 characters</span>
                       </div>
-                    </FormDescription>
+                      <div className={`flex items-center gap-2 ${passwordChecks.hasLowercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                        <span>{passwordChecks.hasLowercase ? '✓' : '○'}</span>
+                        <span>One lowercase letter (a-z)</span>
+                      </div>
+                      <div className={`flex items-center gap-2 ${passwordChecks.hasUppercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                        <span>{passwordChecks.hasUppercase ? '✓' : '○'}</span>
+                        <span>One uppercase letter (A-Z)</span>
+                      </div>
+                      <div className={`flex items-center gap-2 ${passwordChecks.hasNumber ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                        <span>{passwordChecks.hasNumber ? '✓' : '○'}</span>
+                        <span>One number (0-9)</span>
+                      </div>
+                      <div className={`flex items-center gap-2 ${passwordChecks.hasSpecial ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                        <span>{passwordChecks.hasSpecial ? '✓' : '○'}</span>
+                        <span>One special character</span>
+                      </div>
+                    </div>
                     <FormMessage />
                   </FormItem>
                 )}

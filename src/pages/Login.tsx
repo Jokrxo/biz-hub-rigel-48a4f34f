@@ -11,8 +11,7 @@ import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import SEO from "@/components/SEO";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
-import { Calculator } from "lucide-react";
-import { Github } from "lucide-react";
+import { Calculator, Github, Users } from "lucide-react";
 import stellaLogo from "@/assets/stellkhygugvyt.jpg";
 
 const schema = z.object({
@@ -36,6 +35,7 @@ export default function Login() {
   }, [user, navigate, signupMsg]);
 
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { email: "", password: "", remember: true } });
+  
 
   const onSubmit = async (values: FormValues) => {
     try {
@@ -84,6 +84,7 @@ export default function Login() {
             </div>
             <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
             <p className="text-sm text-muted-foreground mt-2">Enterprise Accounting & Financial Management</p>
+            
           </header>
 
           {signupMsg && (
@@ -184,6 +185,18 @@ export default function Login() {
               <span>Powered by Stella Lumen</span>
               <span className="inline-block h-px w-10 bg-gradient-to-r from-transparent via-border to-transparent" />
             </div>
+          </footer>
+
+          
+
+          <footer className="mt-4 text-center">
+            <a
+              href="/community"
+              className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
+            >
+              <Users className="h-4 w-4" />
+              Rigel Community
+            </a>
           </footer>
         </article>
       </main>

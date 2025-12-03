@@ -294,6 +294,8 @@ export const DashboardOverview = () => {
         incomeSorted = Object.entries(incomeMap).map(([id, val]) => ({ name: nameById.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
         expenseSorted = Object.entries(expenseMap).map(([id, val]) => ({ name: nameById.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
       }
+      // Aggregate over multi-month range using teRange (computed below)
+      // Temporarily set from single-period totals; will overwrite after teRange aggregation
       setIncomeBreakdown(incomeSorted);
       setExpenseBreakdown(expenseSorted);
       setIncomeWheelInner([{ name: 'Expenses', value: totals.expenses }, { name: 'Income', value: totals.income }]);
@@ -324,6 +326,8 @@ export const DashboardOverview = () => {
       const nameByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
       const codeByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
       const buckets: Record<string, { income: number; expenses: number; label: string }> = {};
+      const incAgg: Record<string, number> = {};
+      const expAgg: Record<string, number> = {};
       months.forEach(m => { buckets[m.label] = { income: 0, expenses: 0, label: m.label }; });
       (teRange || []).forEach((e: any) => {
         const dt = new Date(String(e.transactions?.transaction_date || new Date()));
@@ -337,8 +341,15 @@ export const DashboardOverview = () => {
         const credit = Number(e.credit || 0);
         const isIncome = type.includes('income') || type.includes('revenue');
         const isExpense = type.includes('expense') || name.includes('cost of') || String(code).startsWith('5');
-        if (isIncome) buckets[label].income += Math.abs(credit - debit);
-        else if (isExpense) buckets[label].expenses += Math.abs(debit - credit);
+        if (isIncome) {
+          const val = Math.abs(credit - debit);
+          buckets[label].income += val;
+          incAgg[id] = (incAgg[id] || 0) + val;
+        } else if (isExpense) {
+          const val = Math.abs(debit - credit);
+          buckets[label].expenses += val;
+          expAgg[id] = (expAgg[id] || 0) + val;
+        }
       });
       Object.values(buckets).forEach(r => {
         monthlyData.push({ month: r.label, income: Number(r.income.toFixed(2)), expenses: Number(r.expenses.toFixed(2)) });
@@ -368,18 +379,75 @@ export const DashboardOverview = () => {
       setChartData(monthlyData);
       setNetProfitTrend(netTrend);
 
+      // Donut data: aggregate Income vs Expenses over the full selected range using ledger entries (posted/approved)
+      const { data: ledRange } = await supabase
+        .from('ledger_entries')
+        .select('account_id, debit, credit, entry_date')
+        .eq('company_id', profile.company_id)
+        .gte('entry_date', months[0].start.toISOString())
+        .lte('entry_date', months[months.length - 1].end.toISOString());
+      const { data: accMapData } = await supabase
+        .from('chart_of_accounts')
+        .select('id, account_type, account_name, account_code')
+        .eq('company_id', profile.company_id)
+        .eq('is_active', true);
+      const accTypeById = new Map<string, string>((accMapData || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
+      const accNameById = new Map<string, string>((accMapData || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
+      const accCodeById = new Map<string, string>((accMapData || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
+      let incomeTotalAgg = 0;
+      let expenseTotalAgg = 0;
+      const expenseAggByName: Record<string, number> = {};
+      const incomeAggByName: Record<string, number> = {};
+      (ledRange || []).forEach((e: any) => {
+        const id = String(e.account_id || '');
+        const type = (accTypeById.get(id) || '').toLowerCase();
+        const name = String(accNameById.get(id) || '').toLowerCase();
+        const code = String(accCodeById.get(id) || '');
+        const debit = Number(e.debit || 0);
+        const credit = Number(e.credit || 0);
+        const isIncome = type.includes('income') || type.includes('revenue');
+        const isExpense = type.includes('expense') || name.includes('cost of') || code.startsWith('5');
+        if (isIncome) {
+          const val = Math.abs(credit - debit);
+          incomeTotalAgg += val;
+          const key = accNameById.get(id) || id;
+          incomeAggByName[key] = (incomeAggByName[key] || 0) + val;
+        } else if (isExpense) {
+          const val = Math.abs(debit - credit);
+          expenseTotalAgg += val;
+          const key = accNameById.get(id) || id;
+          expenseAggByName[key] = (expenseAggByName[key] || 0) + val;
+        }
+      });
+      const expenseDonutBreak = Object.entries(expenseAggByName)
+        .map(([name, val]) => ({ name, value: Number(val.toFixed(2)) }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10);
+      const incomeDonutBreak = Object.entries(incomeAggByName)
+        .map(([name, val]) => ({ name, value: Number(val.toFixed(2)) }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10);
+      setIncomeWheelInner([{ name: 'Expenses', value: expenseTotalAgg }, { name: 'Income', value: incomeTotalAgg }]);
+      setExpenseWheelInner([{ name: 'Income', value: incomeTotalAgg }, { name: 'Expenses', value: expenseTotalAgg }]);
+      if (expenseDonutBreak.length > 0) setExpenseBreakdown(expenseDonutBreak);
+      if (incomeDonutBreak.length > 0) setIncomeBreakdown(incomeDonutBreak);
+      
+
       const { data: banks } = await supabase
         .from('bank_accounts')
         .select('current_balance')
         .eq('company_id', profile.company_id);
       const bankBalance = (banks || []).reduce((s: number, b: any) => s + Number(b.current_balance || 0), 0);
+      const operatingExpenses12 = monthlyData.reduce((sum: number, d: any) => sum + Number(d.expenses || 0), 0);
+      const incomeBreakAgg = Object.entries(incAgg).map(([id, val]) => ({ name: nameByIdAll.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
+      const expenseBreakAgg = Object.entries(expAgg).map(([id, val]) => ({ name: nameByIdAll.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
       const newMetrics = {
         totalAssets,
         totalLiabilities,
         totalEquity,
         totalIncome: totals.income,
         totalExpenses: totals.expenses,
-        operatingExpenses: Number(operatingExpensesTB.toFixed(2)),
+        operatingExpenses: operatingExpenses12 > 0 ? Number(operatingExpenses12.toFixed(2)) : Number(operatingExpensesTB.toFixed(2)),
         bankBalance
       };
 
@@ -399,7 +467,7 @@ export const DashboardOverview = () => {
             .from('transaction_entries')
             .select(`account_id, debit, credit, status, transactions!inner (transaction_date, company_id, status)`) 
             .eq('transactions.company_id', profile.company_id)
-            .eq('transactions.status', 'posted')
+            .in('transactions.status', ['posted','approved'])
             .gte('transactions.transaction_date', startDate.toISOString())
             .lte('transactions.transaction_date', endDate.toISOString())
             .eq('status', 'approved');
@@ -546,10 +614,10 @@ export const DashboardOverview = () => {
           });
           const incomeBreak = Object.entries(incomeMap).map(([id, val]) => ({ name: nameById.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
           const expenseBreak = Object.entries(expenseMap).map(([id, val]) => ({ name: nameById.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
-          setIncomeBreakdown(incomeBreak);
-          setExpenseBreakdown(expenseBreak);
-          setIncomeWheelInner([{ name: 'Expenses', value: newMetrics.totalExpenses }, { name: 'Income', value: newMetrics.totalIncome }]);
-          setExpenseWheelInner([{ name: 'Income', value: newMetrics.totalIncome }, { name: 'Expenses', value: newMetrics.totalExpenses }]);
+      setIncomeBreakdown(incomeBreakAgg.length > 0 ? incomeBreakAgg : incomeBreak);
+      setExpenseBreakdown(expenseBreakAgg.length > 0 ? expenseBreakAgg : expenseBreak);
+      setIncomeWheelInner([{ name: 'Expenses', value: expenseTotalAgg }, { name: 'Income', value: incomeTotalAgg }]);
+      setExpenseWheelInner([{ name: 'Income', value: incomeTotalAgg }, { name: 'Expenses', value: expenseTotalAgg }]);
 
           if (!banks || banks.length === 0) {
             try {
@@ -631,7 +699,7 @@ export const DashboardOverview = () => {
           .select('reference_number, total_amount, transaction_type, status')
           .in('reference_number', poNumbers)
           .eq('transaction_type', 'payment')
-          .eq('status', 'posted');
+          .in('status', ['posted','approved']);
         (pays || []).forEach((t: any) => {
           const ref = String(t.reference_number || '');
           payMap[ref] = (payMap[ref] || 0) + Number(t.total_amount || 0);
@@ -779,6 +847,16 @@ export const DashboardOverview = () => {
   useEffect(() => {
     loadDashboardData();
   }, [selectedMonth, selectedYear, loadDashboardData]);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('dashboard-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => { loadDashboardData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transaction_entries' }, () => { loadDashboardData(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ledger_entries' }, () => { loadDashboardData(); })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [loadDashboardData]);
 
   const reloadTimerRef = useRef<number | null>(null);
   const lastReloadAtRef = useRef<number>(0);
@@ -937,7 +1015,7 @@ export const DashboardOverview = () => {
     },
     {
       title: "Operating Expenses",
-      value: `R ${metrics.operatingExpenses.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      value: `(R ${metrics.operatingExpenses.toLocaleString('en-ZA', { minimumFractionDigits: 2 })})`,
       icon: TrendingDown,
       color: "text-accent"
     },
@@ -1292,10 +1370,11 @@ export const DashboardOverview = () => {
                   cy="50%"
                   innerRadius={30}
                   outerRadius={50}
+                  label={({ name, percent = 0 }) => `${name}: ${Math.round((percent || 0) * 100)}%`}
                   dataKey="value"
                 >
                     {incomeWheelInner.map((entry, index) => (
-                      <Cell key={`income-inner-${index}`} fill={COLORS[index % COLORS.length]} />
+                      <Cell key={`income-inner-${index}`} fill={index === 0 ? '#3B82F6' : '#22C55E'} />
                     ))}
                 </Pie>
                   <Pie
@@ -1377,6 +1456,7 @@ export const DashboardOverview = () => {
                     cy="50%"
                     innerRadius={30}
                     outerRadius={50}
+                    label={({ name, percent = 0 }) => `${name}: ${Math.round((percent || 0) * 100)}%`}
                     dataKey="value"
                   >
                     {expenseWheelInner.map((entry, index) => (
@@ -1397,6 +1477,7 @@ export const DashboardOverview = () => {
                     ))}
                   </Pie>
                   <Tooltip 
+                    formatter={(value: any, name: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, name]}
                     contentStyle={{ 
                       backgroundColor: 'hsl(var(--card))', 
                       border: '1px solid hsl(var(--border))',
@@ -1630,7 +1711,7 @@ const DashboardBudgetGauge = ({ percentage, onTrack }: { percentage: number; onT
   const ang = start + (pct / 100) * (end - start);
   const nx = cx + r * Math.cos(ang);
   const ny = cy + r * Math.sin(ang);
-  const color = onTrack ? '#22c55e' : '#ef4444';
+  const color = pct <= 50 ? '#22c55e' : pct <= 80 ? '#f59e0b' : '#ef4444';
   const ticks = Array.from({ length: 11 }).map((_, i) => {
     const a = start + (i / 10) * (end - start);
     const x1 = cx + (r - 10) * Math.cos(a);
@@ -1639,16 +1720,28 @@ const DashboardBudgetGauge = ({ percentage, onTrack }: { percentage: number; onT
     const y2 = cy + r * Math.sin(a);
     return { x1, y1, x2, y2, i };
   });
+  const sx = cx + r * Math.cos(start);
+  const sy = cy + r * Math.sin(start);
+  const ex = cx + r * Math.cos(ang);
+  const ey = cy + r * Math.sin(ang);
   return (
-    <svg width={size} height={size / 2 + 40} viewBox={`0 0 ${size} ${size / 2 + 40}`}>
+    <svg width={size} height={size / 2 + 60} viewBox={`0 0 ${size} ${size / 2 + 60}`}>
+      <defs>
+        <linearGradient id="gaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#22c55e" />
+          <stop offset="50%" stopColor="#f59e0b" />
+          <stop offset="100%" stopColor="#ef4444" />
+        </linearGradient>
+      </defs>
       <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="#e5e7eb" strokeWidth={12} />
-      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke={color} strokeWidth={12} strokeLinecap="round" />
+      <path d={`M ${sx} ${sy} A ${r} ${r} 0 0 1 ${ex} ${ey}`} fill="none" stroke={"url(#gaugeGradient)"} strokeWidth={12} strokeLinecap="round" />
       {ticks.map((t) => (
         <line key={t.i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke="#9ca3af" strokeWidth={t.i % 5 === 0 ? 3 : 1.5} />
       ))}
       <circle cx={cx} cy={cy} r={6} fill="#374151" />
       <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={color} strokeWidth={4} />
-      <text x={cx} y={cy - 20} textAnchor="middle" fontSize="18" fill={color}>{`${pct.toFixed(0)}%`}</text>
+      <text x={cx} y={cy - 20} textAnchor="middle" fontSize="20" fill={color}>{`${pct.toFixed(0)}%`}</text>
+      <text x={cx} y={cy + 30} textAnchor="middle" fontSize="12" fill="#6b7280">{onTrack ? 'On Track' : 'Over Budget'}</text>
     </svg>
   );
 };
@@ -1664,7 +1757,7 @@ const DashboardCashGauge = ({ percentage, onTrack }: { percentage: number; onTra
   const ang = start + (pct / 100) * (end - start);
   const nx = cx + r * Math.cos(ang);
   const ny = cy + r * Math.sin(ang);
-  const color = onTrack ? '#22c55e' : '#ef4444';
+  const color = pct <= 50 ? '#22c55e' : pct <= 80 ? '#f59e0b' : '#ef4444';
   const ticks = Array.from({ length: 11 }).map((_, i) => {
     const a = start + (i / 10) * (end - start);
     const x1 = cx + (r - 10) * Math.cos(a);
@@ -1673,16 +1766,28 @@ const DashboardCashGauge = ({ percentage, onTrack }: { percentage: number; onTra
     const y2 = cy + r * Math.sin(a);
     return { x1, y1, x2, y2, i };
   });
+  const sx = cx + r * Math.cos(start);
+  const sy = cy + r * Math.sin(start);
+  const ex = cx + r * Math.cos(ang);
+  const ey = cy + r * Math.sin(ang);
   return (
-    <svg width={size} height={size / 2 + 40} viewBox={`0 0 ${size} ${size / 2 + 40}`}>
+    <svg width={size} height={size / 2 + 60} viewBox={`0 0 ${size} ${size / 2 + 60}`}>
+      <defs>
+        <linearGradient id="cashGaugeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stopColor="#22c55e" />
+          <stop offset="50%" stopColor="#f59e0b" />
+          <stop offset="100%" stopColor="#ef4444" />
+        </linearGradient>
+      </defs>
       <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke="#e5e7eb" strokeWidth={12} />
-      <path d={`M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`} fill="none" stroke={color} strokeWidth={12} strokeLinecap="round" />
+      <path d={`M ${sx} ${sy} A ${r} ${r} 0 0 1 ${ex} ${ey}`} fill="none" stroke={"url(#cashGaugeGradient)"} strokeWidth={12} strokeLinecap="round" />
       {ticks.map((t) => (
         <line key={t.i} x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke="#9ca3af" strokeWidth={t.i % 5 === 0 ? 3 : 1.5} />
       ))}
       <circle cx={cx} cy={cy} r={6} fill="#374151" />
       <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={color} strokeWidth={4} />
-      <text x={cx} y={cy - 20} textAnchor="middle" fontSize="18" fill={color}>{`${pct.toFixed(0)}%`}</text>
+      <text x={cx} y={cy - 20} textAnchor="middle" fontSize="20" fill={color}>{`${pct.toFixed(0)}%`}</text>
+      <text x={cx} y={cy + 30} textAnchor="middle" fontSize="12" fill="#6b7280">{onTrack ? 'Healthy' : 'Below Minimum'}</text>
     </svg>
   );
 };

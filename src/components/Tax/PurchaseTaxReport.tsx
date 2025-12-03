@@ -35,72 +35,27 @@ export const PurchaseTaxReport = () => {
         fromDate.setMonth(fromDate.getMonth() - 6);
         const from = fromDate.toISOString().slice(0, 10);
 
-        const { data } = await supabase
-          .from("transaction_entries")
-          .select(`
-            id, transaction_id, debit, credit,
-            transactions!inner(id, transaction_date, company_id, vat_rate, vat_inclusive, total_amount, description, status, transaction_type),
-            chart_of_accounts!inner(account_name, account_type)
-          `)
-          .eq('transactions.company_id', profile.company_id)
-          .gte('transactions.transaction_date', from)
-          .in('transactions.status', ['approved','posted','pending'])
-          .order('transactions.transaction_date', { ascending: false });
-
-        const filtered = (data || []);
-
-        const byMonth: Record<string, { vatInput: number; purchasesExclVat: number; rate: number }> = {};
-        const processedTx = new Set<string>();
-        const detail: DetailRow[] = [];
-        for (const e of filtered as any[]) {
-          const accName = (e.chart_of_accounts?.account_name || '').toLowerCase();
-          const isVatInput = (
-            accName.includes('vat input') ||
-            accName.includes('input tax') ||
-            accName.includes('vat receivable')
-          ) && !(
-            accName.includes('vat output') ||
-            accName.includes('output tax') ||
-            accName.includes('vat payable')
-          );
-          const isExpenseTx = String(e.transactions?.transaction_type || '').toLowerCase() === 'expense';
-          const isPurchaseTx = String(e.transactions?.transaction_type || '').toLowerCase() === 'purchase';
-          const debit = Number(e.debit || 0);
-          const credit = Number(e.credit || 0);
-          const txDate = e.transactions?.transaction_date || e.created_at?.slice(0, 10);
-          const ym = (txDate || '').slice(0, 7);
-          const rate = Number(e.transactions?.vat_rate || 0);
-          if (!byMonth[ym]) byMonth[ym] = { vatInput: 0, purchasesExclVat: 0, rate };
-          if (isVatInput && debit > credit && rate > 0) {
-            const vatVal = debit - credit;
-            byMonth[ym].vatInput += vatVal;
-            const inclusive = Boolean(e.transactions?.vat_inclusive);
-            const total = Number(e.transactions?.total_amount || 0);
-            const base = Number(e.transactions?.base_amount || 0);
-            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vatVal);
-            byMonth[ym].purchasesExclVat += Math.max(0, net);
-            detail.push({ date: txDate || '', description: e.transactions?.description || '', net: Math.max(0, net), vat: vatVal, total });
-          } else if (isExpenseTx && rate > 0 && Number(e.transactions?.vat_amount || 0) > 0 && !processedTx.has(String(e.transactions?.id || e.transaction_id || ''))) {
-            const inclusive = Boolean(e.transactions?.vat_inclusive);
-            const total = Number(e.transactions?.total_amount || 0);
-            const base = Number(e.transactions?.base_amount || 0);
-            const vat = Number(e.transactions?.vat_amount || 0);
-            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vat);
-            byMonth[ym].vatInput += Math.max(0, vat);
-            byMonth[ym].purchasesExclVat += Math.max(0, net);
-            detail.push({ date: txDate || '', description: e.transactions?.description || '', net, vat, total });
-            processedTx.add(String(e.transactions?.id || e.transaction_id || ''));
-          } else if (isPurchaseTx && rate > 0 && Number(e.transactions?.vat_amount || 0) > 0) {
-            const inclusive = Boolean(e.transactions?.vat_inclusive);
-            const total = Number(e.transactions?.total_amount || 0);
-            const base = Number(e.transactions?.base_amount || 0);
-            const vat = Number(e.transactions?.vat_amount || 0);
-            const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vat);
-            byMonth[ym].vatInput += Math.max(0, vat);
-            byMonth[ym].purchasesExclVat += Math.max(0, net);
-            detail.push({ date: txDate || '', description: e.transactions?.description || '', net, vat, total });
+        const deriveNetAndVat = (total: number, base: number, vat: number, rate: number, inclusive: boolean): { net: number; vat: number } => {
+          // Prefer recomputation for VAT-inclusive rows even if base is present
+          if (inclusive && rate > 0) {
+            const net = total / (1 + rate / 100);
+            const v = Math.max(0, total - net);
+            return { net: Math.max(0, net), vat: Math.max(0, v) };
           }
-        }
+          let net = base > 0 ? base : 0;
+          let v = Math.max(0, vat);
+          if (net === 0) {
+            if (v > 0) {
+              net = Math.max(0, total - v);
+            } else {
+              net = base > 0 ? base : total;
+            }
+          }
+          return { net: Math.max(0, net), vat: Math.max(0, v) };
+        };
+
+        const byMonth: Record<string, { vatInput: number; purchasesExclVat: number; rateWeighted: number; baseForRate: number }> = {};
+        const detail: DetailRow[] = [];
 
         const { data: txs } = await supabase
           .from('transactions')
@@ -111,20 +66,22 @@ export const PurchaseTaxReport = () => {
         for (const t of (txs || []) as any[]) {
           const type = String(t.transaction_type || '').toLowerCase();
           const isPurchase = type === 'expense' || type === 'purchase' || type === 'bill' || type === 'product_purchase';
-          const rate = Number(t.vat_rate || 0);
-          const vat = Number(t.vat_amount || 0);
-          if (!isPurchase || rate <= 0 || vat <= 0) continue;
-          const tid = String(t.id || '');
-          if (processedTx.has(tid)) continue;
+          if (!isPurchase) continue;
           const ym = String(t.transaction_date || '').slice(0, 7);
-          if (!byMonth[ym]) byMonth[ym] = { vatInput: 0, purchasesExclVat: 0, rate };
+          if (!byMonth[ym]) byMonth[ym] = { vatInput: 0, purchasesExclVat: 0, rateWeighted: 0, baseForRate: 0 };
           const total = Number(t.total_amount || 0);
           const base = Number(t.base_amount || 0);
+          const vat = Number(t.vat_amount || 0);
+          const rate = Number(t.vat_rate || 0);
           const inclusive = Boolean(t.vat_inclusive);
-          const net = base > 0 ? base : (inclusive ? total / (1 + rate / 100) : total - vat);
-          byMonth[ym].vatInput += vat;
+          const { net, vat: vAdj } = deriveNetAndVat(total, base, vat, rate, inclusive);
+          byMonth[ym].vatInput += Math.max(0, vAdj);
           byMonth[ym].purchasesExclVat += Math.max(0, net);
-          detail.push({ date: String(t.transaction_date || ''), description: t.description || '', net, vat, total });
+          if (rate > 0 && net > 0) {
+            byMonth[ym].rateWeighted += rate * net;
+            byMonth[ym].baseForRate += net;
+          }
+          detail.push({ date: String(t.transaction_date || ''), description: t.description || '', net: Math.max(0, net), vat: Math.max(0, vAdj), total });
         }
 
         const result: VatRow[] = Object.keys(byMonth)
@@ -133,7 +90,9 @@ export const PurchaseTaxReport = () => {
             period: formatMonth(ym),
             purchasesExclVat: byMonth[ym].purchasesExclVat,
             vatInput: byMonth[ym].vatInput,
-            vatRate: `${byMonth[ym].rate}%`
+            vatRate: (byMonth[ym].baseForRate > 0)
+              ? `${(byMonth[ym].rateWeighted / byMonth[ym].baseForRate).toFixed(2)}%`
+              : ''
           }))
           .reverse();
 
@@ -163,7 +122,7 @@ export const PurchaseTaxReport = () => {
     <Card className="mt-6">
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-2"><FileText className="h-5 w-5 text-primary" /> Tax on Expense (Purchases)</span>
+          <span className="flex items-center gap-2"><FileText className="h-5 w-5 text-primary" /> Tax on Expense (Purchases from Transactions)</span>
           <Button variant="outline" onClick={exportCsv}>Export</Button>
         </CardTitle>
       </CardHeader>
@@ -193,15 +152,15 @@ export const PurchaseTaxReport = () => {
               </TableBody>
             </Table>
             <div className="mt-6">
-              <CardTitle className="text-sm font-medium mb-2">Recent VAT-bearing Expenses</CardTitle>
+              <CardTitle className="text-sm font-medium mb-2">Recent Purchases and Expenses (excl. VAT)</CardTitle>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Date</TableHead>
+                  <TableHead>Date</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Amount (excl. VAT)</TableHead>
-                  <TableHead className="text-right">VAT</TableHead>
                   <TableHead className="text-right">Amount (incl. VAT)</TableHead>
+                  <TableHead className="text-right">VAT</TableHead>
+                  <TableHead className="text-right">Amount (excl. VAT)</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -209,9 +168,9 @@ export const PurchaseTaxReport = () => {
                     <TableRow key={i}>
                       <TableCell>{d.date}</TableCell>
                       <TableCell className="font-medium">{d.description}</TableCell>
-                      <TableCell className="text-right">R {d.net.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
-                      <TableCell className="text-right">R {d.vat.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
                       <TableCell className="text-right">R {d.total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right">R {d.vat.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                      <TableCell className="text-right">R {d.net.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

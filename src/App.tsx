@@ -38,6 +38,7 @@ const PaymentPortal = lazy(() => import("./pages/PaymentPortal"));
 const License = lazy(() => import("./pages/License"));
 const LicenseAdmin = lazy(() => import("./pages/LicenseAdmin"));
 import About from "./pages/About";
+import Community from "./pages/Community";
 
 const queryClient = new QueryClient();
 
@@ -92,6 +93,7 @@ const App = () => {
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/community" element={<Community />} />
 
             <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
             <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />

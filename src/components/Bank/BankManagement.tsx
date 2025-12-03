@@ -63,6 +63,15 @@ export const BankManagement = () => {
     loadMonthlyFlows();
   }, []);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel('bank-management-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_accounts' }, () => { loadBanks(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => { loadMonthlyFlows(); loadBanks(); })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
   const loadMonthlyFlows = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser();

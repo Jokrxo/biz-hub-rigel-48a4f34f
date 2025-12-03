@@ -273,7 +273,7 @@ export const CSVImport = ({ bankAccounts, onImportComplete }: CSVImportProps) =>
           transaction_date: dateStr,
           description: desc,
           reference_number: ref,
-          total_amount: Math.abs(amount),
+          total_amount: amount,
           status: 'pending',
           transaction_type: isInflow ? "income" : "expense",
           category: "Bank Import",

@@ -48,6 +48,19 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
     }
   }, [selectedBank]);
 
+  useEffect(() => {
+    const channel = supabase
+      .channel('bank-recon-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `bank_account_id=eq.${selectedBank}` }, () => {
+        if (selectedBank) loadTransactions();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bank_accounts' }, () => {
+        if (selectedBank) loadTransactions();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [selectedBank]);
+
   const loadTransactions = async () => {
     try {
       setLoading(true);
@@ -211,26 +224,23 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
           entry_date: tx.transaction_date,
           is_reversed: false,
           transaction_id: tx.id,
+          reference_id: tx.id,
           description: l.description,
         }));
         const { error: ledgerErr } = await supabase.from("ledger_entries").insert(ledgerLegs as any);
         if (ledgerErr) throw ledgerErr;
 
         // Update transaction status to approved to indicate fully posted
-        await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id);
+        await supabase.from('transactions').update({ status: 'approved' }).eq('id', tx.id);
 
-        // Update bank running balance via RPC if available
+        // Update bank running balance via RPC only
         try {
           await supabase.rpc('update_bank_balance', { _bank_account_id: tx.bank_account_id, _amount: amount, _operation: isInflow ? 'add' : 'subtract' });
-        } catch (_) {
-          // Ignore if RPC not present
-        }
+        } catch (_) {}
       }
 
-      toast({ 
-        title: "Success", 
-        description: `Reconciled & posted ${selectedTxs.size} transaction(s) without VAT` 
-      });
+      try { const { data: { user } } = await supabase.auth.getUser(); if (user) { const { data: prof } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).single(); if (prof?.company_id) { await supabase.rpc('refresh_afs_cache', { _company_id: prof.company_id }); } } } catch {}
+      toast({ title: "Success", description: `Reconciled & approved ${selectedTxs.size} transaction(s)` });
       setSelectedTxs(new Set());
       loadTransactions();
     } catch (error: any) {

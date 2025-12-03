@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, Suspense, lazy } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
  
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle, MoreHorizontal } from "lucide-react";
+import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle, MoreHorizontal, Loader2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -36,6 +36,26 @@ interface Transaction {
 export const TransactionManagement = () => {
   const { toast } = useToast();
   const location = useLocation();
+  const navigate = useNavigate();
+  const [posting, setPosting] = useState(false);
+  const [newFlowOpen, setNewFlowOpen] = useState(false);
+  const [quickType, setQuickType] = useState<'income' | 'expense' | 'receipt' | 'asset' | 'product_purchase' | 'liability' | 'equity' | 'loan_received' | 'loan_repayment' | 'loan_interest' | 'depreciation' | 'asset_disposal' | null>(null);
+  const [quickDate, setQuickDate] = useState<string>(new Date().toISOString().slice(0,10));
+  const [quickAmount, setQuickAmount] = useState<string>('');
+  const [quickDesc, setQuickDesc] = useState<string>('');
+  const [quickPayment, setQuickPayment] = useState<'cash' | 'accrual'>('cash');
+  const [quickBankId, setQuickBankId] = useState<string>('');
+  const [quickExpenseAccountId, setQuickExpenseAccountId] = useState<string>('');
+  const [quickIncomeAccountId, setQuickIncomeAccountId] = useState<string>('');
+  const [quickReceivableAccountId, setQuickReceivableAccountId] = useState<string>('');
+  const [quickPayableAccountId, setQuickPayableAccountId] = useState<string>('');
+  const [quickEquityAccountId, setQuickEquityAccountId] = useState<string>('');
+  const [quickAssetAccountId, setQuickAssetAccountId] = useState<string>('');
+  const [quickUsefulLifeYears, setQuickUsefulLifeYears] = useState<string>('5');
+  const [quickDepMethod, setQuickDepMethod] = useState<'straight_line' | 'diminishing'>('straight_line');
+  const [quickUsefulLifeStartDate, setQuickUsefulLifeStartDate] = useState<string>(new Date().toISOString().slice(0,10));
+  const [quickVatOn, setQuickVatOn] = useState<'yes' | 'no'>('no');
+  const [quickVatRate, setQuickVatRate] = useState<string>('15');
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
@@ -310,7 +330,7 @@ export const TransactionManagement = () => {
   useEffect(() => {
     (async () => {
       try {
-        if (!allocationOpen) return;
+        if (!allocationOpen && !newFlowOpen) return;
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
         const { data: profile } = await supabase
@@ -354,7 +374,7 @@ export const TransactionManagement = () => {
         setBanks(bankList || []);
       } catch {}
     })();
-  }, [allocationOpen]);
+  }, [allocationOpen, newFlowOpen]);
 
   useEffect(() => {
     if (allocVatOn === 'no') setAllocVatRate('0');
@@ -384,6 +404,7 @@ export const TransactionManagement = () => {
       amount: (() => {
         const total = Number(t.total_amount || 0);
         const base = Number((t as any).base_amount || 0);
+        const inclusive = Boolean((t as any).vat_inclusive);
         // Prefer posted VAT from entries
         const vatFromEntries = (t.entries || []).reduce((sum: number, e: any) => {
           const name = String(e.chart_of_accounts?.account_name || '').toLowerCase();
@@ -393,6 +414,11 @@ export const TransactionManagement = () => {
         const vaStored = (t as any).vat_amount;
         const ratePct = Number((t as any).vat_rate) || 0;
         const r = ratePct / 100;
+        // Force recompute for VAT-inclusive rows when rate is available
+        if (inclusive && r > 0) {
+          const net = total / (1 + r);
+          return Math.abs(net);
+        }
         const vat = vatFromEntries > 0
           ? vatFromEntries
           : (typeof vaStored === 'number' && !Number.isNaN(vaStored))
@@ -402,6 +428,8 @@ export const TransactionManagement = () => {
         return Math.abs(net);
       })(),
       vatAmount: (() => {
+        const total = Number(t.total_amount || 0);
+        const inclusive = Boolean((t as any).vat_inclusive);
         const vatFromEntries = (t.entries || []).reduce((sum: number, e: any) => {
           const name = String(e.chart_of_accounts?.account_name || '').toLowerCase();
           if (!name.includes('vat')) return sum;
@@ -409,10 +437,14 @@ export const TransactionManagement = () => {
         }, 0);
         if (vatFromEntries > 0) return vatFromEntries;
         const va = (t as any).vat_amount;
-        if (typeof va === 'number' && !Number.isNaN(va)) return Math.abs(va);
+        if (typeof va === 'number' && !Number.isNaN(va) && va !== 0) return Math.abs(va);
         const ratePct = Number((t as any).vat_rate) || 0;
         const r = ratePct / 100;
         const base = Number((t as any).base_amount) || 0;
+        if (inclusive && r > 0) {
+          const net = total / (1 + r);
+          return Math.abs(total - net);
+        }
         if (r > 0 && base > 0) return Math.abs(base * r);
         return 0;
       })(),
@@ -468,6 +500,7 @@ export const TransactionManagement = () => {
   };
 
   const setTransactionStatus = async (id: string, status: 'approved' | 'pending' | 'rejected' | 'unposted') => {
+    setPosting(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("User not authenticated.");
@@ -682,6 +715,7 @@ export const TransactionManagement = () => {
 
         // Idempotency: remove previous ledger entries for this transaction
         await supabase.from("ledger_entries").delete().eq("reference_id", id);
+        await supabase.from("ledger_entries").delete().eq("transaction_id", id);
 
         // Insert into ledger_entries
         const ledgerEntries = (computedEntries || []).map((e: any) => ({
@@ -728,18 +762,8 @@ export const TransactionManagement = () => {
           }, 0);
           if (isDebitBank && bankDebitAmount > 0) {
             try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: bankDebitAmount, _operation: 'add' }); } catch {}
-            const { data: bankAcc } = await supabase.from('bank_accounts').select('current_balance').eq('id', bankAccountId).maybeSingle();
-            if (bankAcc && typeof bankAcc.current_balance === 'number') {
-              const newBal = Number(bankAcc.current_balance) + bankDebitAmount;
-              await supabase.from('bank_accounts').update({ current_balance: newBal }).eq('id', bankAccountId);
-            }
           } else if (isCreditBank && bankCreditAmount > 0) {
             try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: bankCreditAmount, _operation: 'subtract' }); } catch {}
-            const { data: bankAcc } = await supabase.from('bank_accounts').select('current_balance').eq('id', bankAccountId).maybeSingle();
-            if (bankAcc && typeof bankAcc.current_balance === 'number') {
-              const newBal = Number(bankAcc.current_balance) - bankCreditAmount;
-              await supabase.from('bank_accounts').update({ current_balance: newBal }).eq('id', bankAccountId);
-            }
           }
         }
 
@@ -782,6 +806,8 @@ export const TransactionManagement = () => {
       load();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setPosting(false);
     }
   };
 
@@ -833,7 +859,7 @@ export const TransactionManagement = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <Button className="bg-gradient-primary hover:opacity-90" onClick={() => { setEditData(null); setOpen(true); }}>
+        <Button className="bg-gradient-primary hover:opacity-90" onClick={() => { setEditData(null); setNewFlowOpen(true); }}>
           <Plus className="h-4 w-4 mr-2" />
           New Transaction
         </Button>
@@ -848,6 +874,347 @@ export const TransactionManagement = () => {
             headless={headless}
           />
         </Suspense>
+
+        <Dialog open={newFlowOpen} onOpenChange={(v) => { setNewFlowOpen(v); if (!v) { setQuickType(null); setQuickAmount(''); setQuickDesc(''); } }}>
+          <DialogContent className="sm:max-w-[620px]">
+            <DialogHeader>
+              <DialogTitle>Start a Transaction</DialogTitle>
+            </DialogHeader>
+            {!quickType ? (
+              <div className="grid grid-cols-2 gap-3">
+                <Button variant="outline" onClick={() => setQuickType('income')}>Income Received</Button>
+                <Button variant="outline" onClick={() => setQuickType('expense')}>Expense Payment</Button>
+                <Button variant="outline" onClick={() => setQuickType('receipt')}>Receivable Collection</Button>
+                <Button variant="outline" onClick={() => setQuickType('product_purchase')}>Product Purchase</Button>
+                <Button variant="outline" onClick={() => setQuickType('asset')}>Asset Purchase</Button>
+                <Button variant="outline" onClick={() => setQuickType('liability')}>Liability Payment</Button>
+                <Button variant="outline" onClick={() => setQuickType('equity')}>Equity / Capital</Button>
+                <Button variant="outline" onClick={() => setQuickType('loan_received')}>Loan Received</Button>
+                <Button variant="outline" onClick={() => setQuickType('loan_repayment')}>Loan Repayment</Button>
+                <Button variant="outline" onClick={() => setQuickType('loan_interest')}>Loan Interest</Button>
+                <Button variant="outline" onClick={() => setQuickType('depreciation')}>Depreciation</Button>
+                <Button variant="outline" onClick={() => setQuickType('asset_disposal')}>Asset Disposal</Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {(quickType === 'product_purchase' || quickType === 'asset' || quickType === 'asset_disposal' || quickType === 'depreciation' || (quickType && quickType.startsWith('loan_'))) && (
+                  <div className="relative p-6 border rounded-lg bg-muted/30 overflow-hidden">
+                    <div className="absolute inset-0 pointer-events-none opacity-10 flex items-center justify-center">
+                      <img src="/Modern Rigel Business Logo Design.png" alt="Rigel Business" className="h-32 w-32 rounded-lg object-cover" />
+                    </div>
+                    <div className="relative space-y-3">
+                      {quickType === 'product_purchase' ? (
+                        <>
+                          <h3 className="text-lg font-semibold">Purchase Module</h3>
+                          <p className="text-sm text-muted-foreground">
+                            To purchase products, please use the Purchase module. All product purchases are recorded and managed there for accurate inventory and VAT posting.
+                          </p>
+                          <div className="flex justify-end">
+                            <Button onClick={() => { setNewFlowOpen(false); navigate('/purchase'); }}>Go to Purchase Module</Button>
+                          </div>
+                        </>
+                      ) : quickType === 'asset' ? (
+                        <>
+                          <h3 className="text-lg font-semibold">Fixed Asset Register</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Record asset purchases in the Fixed Asset Register. Add new and opening balances, dispose assets, and calculate depreciation for accurate financials.
+                          </p>
+                          <div className="flex justify-end">
+                            <Button onClick={() => { setNewFlowOpen(false); navigate('/fixed-assets'); }}>Go to Fixed Asset Register</Button>
+                          </div>
+                        </>
+                      ) : quickType === 'asset_disposal' ? (
+                        <>
+                          <h3 className="text-lg font-semibold">Asset Disposal</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Dispose fixed assets from the Fixed Asset Register. The system will post gain or loss and update accumulated depreciation.
+                          </p>
+                          <div className="flex justify-end">
+                            <Button onClick={() => { setNewFlowOpen(false); navigate('/fixed-assets'); }}>Go to Fixed Asset Register</Button>
+                          </div>
+                        </>
+                      ) : quickType === 'depreciation' ? (
+                        <>
+                          <h3 className="text-lg font-semibold">Depreciation</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Calculate and post periodic depreciation in the Fixed Asset Register to keep your financials accurate.
+                          </p>
+                          <div className="flex justify-end">
+                            <Button onClick={() => { setNewFlowOpen(false); navigate('/fixed-assets'); }}>Go to Fixed Asset Register</Button>
+                          </div>
+                        </>
+                      ) : quickType === 'loan_received' ? (
+                        <>
+                          <h3 className="text-lg font-semibold">Loan Received</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Manage loans in the Loans module: record loan receipts, set interest rates, and track outstanding balances.
+                          </p>
+                          <div className="flex justify-end">
+                            <Button onClick={() => { setNewFlowOpen(false); navigate('/loans'); }}>Go to Loans</Button>
+                          </div>
+                        </>
+                      ) : quickType === 'loan_repayment' ? (
+                        <>
+                          <h3 className="text-lg font-semibold">Loan Repayment</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Record principal repayments and keep your loan schedules up to date in the Loans module.
+                          </p>
+                          <div className="flex justify-end">
+                            <Button onClick={() => { setNewFlowOpen(false); navigate('/loans'); }}>Go to Loans</Button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <h3 className="text-lg font-semibold">Loan Interest</h3>
+                          <p className="text-sm text-muted-foreground">
+                            Post loan interest charges and reconcile payments in the Loans module.
+                          </p>
+                          <div className="flex justify-end">
+                            <Button onClick={() => { setNewFlowOpen(false); navigate('/loans'); }}>Go to Loans</Button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {!(quickType === 'product_purchase' || quickType === 'asset' || quickType === 'asset_disposal' || quickType === 'depreciation' || (quickType && quickType.startsWith('loan_'))) && (
+                <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Date</Label>
+                    <Input type="date" value={quickDate} onChange={(e) => setQuickDate(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>Amount</Label>
+                    <Input type="number" value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} placeholder="0.00" />
+                  </div>
+                </div>
+                <div>
+                  <Label>Description</Label>
+                  <Input value={quickDesc} onChange={(e) => setQuickDesc(e.target.value)} placeholder={quickType === 'expense' ? 'Expense details' : 'Description'} />
+                </div>
+                </>
+                )}
+                {(quickType === 'expense' || quickType === 'income') && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>VAT</Label>
+                      <Select value={quickVatOn} onValueChange={(v: any) => setQuickVatOn(v)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="yes">Yes</SelectItem>
+                          <SelectItem value="no">No</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>VAT Rate (%)</Label>
+                      <Input type="number" min="0" max="100" value={quickVatRate} onChange={(e) => setQuickVatRate(e.target.value)} />
+                    </div>
+                  </div>
+                )}
+                {(quickType === 'expense' || quickType === 'income' || quickType === 'equity') && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>Payment Method</Label>
+                      <Select value={quickPayment} onValueChange={(v: any) => setQuickPayment(v)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="accrual">Accrual</SelectItem>
+                          {quickType === 'equity' && (
+                            <SelectItem value="asset">Asset Contribution</SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {quickPayment === 'cash' && (
+                      <div>
+                        <Label>Bank</Label>
+                        <Select value={quickBankId} onValueChange={(v: any) => setQuickBankId(v)}>
+                          <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
+                          <SelectContent>
+                            {banks.length === 0 ? (
+                              <SelectItem value="__none__" disabled>No bank accounts</SelectItem>
+                            ) : (
+                              banks.map(b => (
+                                <SelectItem key={b.id} value={String(b.id)}>{b.bank_name} ({b.account_number})</SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {quickType === 'expense' && (
+                  <div>
+                    <Label>Expense Account</Label>
+                    <Select value={quickExpenseAccountId} onValueChange={(v: any) => setQuickExpenseAccountId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select expense account" /></SelectTrigger>
+                      <SelectContent>
+                        {coaExpense.map((a: any) => (
+                          <SelectItem key={a.id} value={String(a.id)}>{a.account_code} • {a.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {quickType === 'expense' && quickPayment === 'accrual' && (
+                  <div>
+                    <Label>Payable Account</Label>
+                    <Select value={quickPayableAccountId} onValueChange={(v: any) => setQuickPayableAccountId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select payable account" /></SelectTrigger>
+                      <SelectContent>
+                        {coaPayable.map((a: any) => (
+                          <SelectItem key={a.id} value={String(a.id)}>{a.account_code} • {a.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {quickType === 'income' && (
+                  <div>
+                    <Label>Income Account</Label>
+                    <Select value={quickIncomeAccountId} onValueChange={(v: any) => setQuickIncomeAccountId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select income account" /></SelectTrigger>
+                      <SelectContent>
+                        {coaIncome.map((a: any) => (
+                          <SelectItem key={a.id} value={String(a.id)}>{a.account_code} • {a.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {quickType === 'equity' && (
+                  <div>
+                    <Label>Equity Account</Label>
+                    <Select value={quickEquityAccountId} onValueChange={(v: any) => setQuickEquityAccountId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select equity account" /></SelectTrigger>
+                      <SelectContent>
+                        {coaOther.filter((a: any) => String(a.type || a.account_type || '').toLowerCase() === 'equity').map((a: any) => (
+                          <SelectItem key={a.id} value={String(a.id)}>{a.account_code} • {a.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {quickType === 'equity' && quickPayment === 'asset' && (
+                  <div>
+                    <Label>Asset Account (Director Contribution)</Label>
+                    <Select value={quickAssetAccountId} onValueChange={(v: any) => setQuickAssetAccountId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select asset account" /></SelectTrigger>
+                      <SelectContent>
+                        {coaOther.filter((a: any) => String(a.type || a.account_type || '').toLowerCase() === 'asset' && !String(a.account_name || '').toLowerCase().includes('accumulated')).map((a: any) => (
+                          <SelectItem key={a.id} value={String(a.id)}>{a.account_code} • {a.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {quickType === 'equity' && quickPayment === 'asset' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>Useful Life (years)</Label>
+                      <Input type="number" min="1" value={quickUsefulLifeYears} onChange={(e) => setQuickUsefulLifeYears(e.target.value)} />
+                    </div>
+                    <div>
+                      <Label>Depreciation Method</Label>
+                      <Select value={quickDepMethod} onValueChange={(v: any) => setQuickDepMethod(v)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="straight_line">Straight Line</SelectItem>
+                          <SelectItem value="diminishing">Diminishing Balance</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Useful Life Start Date</Label>
+                      <Input type="date" value={quickUsefulLifeStartDate} onChange={(e) => setQuickUsefulLifeStartDate(e.target.value)} />
+                    </div>
+                  </div>
+                )}
+                {(quickType === 'receipt' || (quickType === 'income' && quickPayment === 'accrual')) && (
+                  <div>
+                    <Label>Receivable Account</Label>
+                    <Select value={quickReceivableAccountId} onValueChange={(v: any) => setQuickReceivableAccountId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select receivable account" /></SelectTrigger>
+                      <SelectContent>
+                        {coaReceivable.map((a: any) => (
+                          <SelectItem key={a.id} value={String(a.id)}>{a.account_code} • {a.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {!(quickType === 'product_purchase' || quickType === 'asset' || quickType === 'asset_disposal' || quickType === 'depreciation' || (quickType && quickType.startsWith('loan_'))) && (
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => { setQuickType(null); setQuickAmount(''); setQuickDesc(''); }}>Back</Button>
+                  <Button onClick={() => {
+                    const desc = String(quickDesc || '').trim();
+                    if (!desc) { toast({ title: 'Description required', description: 'Please enter a description before proceeding', variant: 'destructive' }); return; }
+                    const amtNum = Number(quickAmount || '0');
+                    if (!amtNum || amtNum <= 0) { toast({ title: 'Amount required', description: 'Enter a valid amount', variant: 'destructive' }); return; }
+                    const pf: any = {
+                      date: quickDate,
+                      description: desc,
+                      element: quickType,
+                      paymentMethod: (quickPayment === 'cash' ? 'bank' : quickPayment),
+                      amount: String(amtNum.toFixed(2)),
+                      ...(quickType === 'expense' || quickType === 'income' ? {
+                        vatRate: quickVatOn === 'yes' ? String(Number(quickVatRate || '0')) : '0',
+                        amountIncludesVAT: quickVatOn === 'yes'
+                      } : {})
+                    };
+                    if (quickType === 'expense') {
+                      pf.debitAccount = quickExpenseAccountId || "";
+                      if (quickPayment === 'cash') {
+                        pf.creditAccount = "";
+                        pf.bankAccountId = String(quickBankId || "");
+                      } else {
+                        pf.creditAccount = quickPayableAccountId || "";
+                        pf.bankAccountId = "";
+                      }
+                    } else if (quickType === 'income') {
+                      pf.creditAccount = quickIncomeAccountId || "";
+                      if (quickPayment === 'cash') {
+                        pf.debitAccount = "";
+                        pf.bankAccountId = String(quickBankId || "");
+                      } else {
+                        pf.debitAccount = quickReceivableAccountId || "";
+                        pf.bankAccountId = "";
+                      }
+                    } else if (quickType === 'equity') {
+                      pf.creditAccount = quickEquityAccountId || "";
+                      if (quickPayment === 'cash') {
+                        pf.debitAccount = "";
+                        pf.bankAccountId = String(quickBankId || "");
+                      } else if (quickPayment === 'accrual') {
+                        pf.debitAccount = quickReceivableAccountId || "";
+                        pf.bankAccountId = "";
+                      } else {
+                        // Asset contribution
+                        pf.debitAccount = quickAssetAccountId || "";
+                        pf.bankAccountId = "";
+                        pf.usefulLifeYears = quickUsefulLifeYears;
+                        pf.depreciationMethod = quickDepMethod;
+                        pf.usefulLifeStartDate = quickUsefulLifeStartDate;
+                      }
+                    } else if (quickType === 'receipt') {
+                      pf.debitAccount = quickPayment === 'cash' ? "" : "";
+                      pf.creditAccount = quickReceivableAccountId || "";
+                      if (quickPayment === 'cash') pf.bankAccountId = String(quickBankId || "");
+                    }
+                    setPrefillData(pf);
+                    setNewFlowOpen(false);
+                    setOpen(true);
+                  }}>Next</Button>
+                </DialogFooter>
+                )}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
         <Dialog open={allocationOpen} onOpenChange={setAllocationOpen}>
           <DialogContent className="sm:max-w-[600px]">
             <DialogHeader>
@@ -999,8 +1366,8 @@ export const TransactionManagement = () => {
 
                   const rate = allocVatOn === 'yes' ? Number(allocVatRate || '0') : 0;
                   const isPurchase = allocType === 'expense';
-                  const vatAmount = rate > 0 ? (isPurchase ? (total * rate) / 100 : (total * rate) / (100 + rate)) : 0;
-                  const netAmount = rate > 0 ? (isPurchase ? total : total - vatAmount) : total;
+                  const vatAmount = rate > 0 ? ((total * rate) / (100 + rate)) : 0;
+                  const netAmount = rate > 0 ? (total - vatAmount) : total;
 
                   if (rate > 0 && vatAmount > 0) {
                     try {
@@ -1045,7 +1412,7 @@ export const TransactionManagement = () => {
                       vat_rate: rate > 0 ? rate : null,
                       vat_amount: vatAmount > 0 ? vatAmount : null,
                       base_amount: netAmount,
-                      vat_inclusive: isPurchase ? false : (rate > 0)
+                      vat_inclusive: (rate > 0)
                     })
                     .eq('id', txId);
                   if (upErr) throw upErr;
@@ -1056,7 +1423,9 @@ export const TransactionManagement = () => {
                 } catch (e: any) {
                   toast({ title: 'Error', description: e.message || 'Failed to allocate', variant: 'destructive' });
                 }
-              }}>Continue</Button>
+              }} disabled={posting}>
+                {posting ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Posting...</>) : (<>Continue</>)}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1165,9 +1534,18 @@ export const TransactionManagement = () => {
                                   setAllocSettlementAccountId('');
                                   setAllocAccountId('');
                                   setAllocationOpen(true);
-                                }}>
-                                  <CheckCircle className="mr-2 h-4 w-4" />
-                                  <span>Approve</span>
+                                }} disabled={posting}>
+                                  {posting ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      <span>Posting…</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <CheckCircle className="mr-2 h-4 w-4" />
+                                      <span>Approve</span>
+                                    </>
+                                  )}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => setTransactionStatus(transaction.id, 'rejected')}>
                                   <XCircle className="mr-2 h-4 w-4" />
