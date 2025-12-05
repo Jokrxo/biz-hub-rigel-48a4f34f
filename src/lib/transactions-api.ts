@@ -60,7 +60,7 @@ export const transactionsApi = {
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: total, _operation: 'subtract' }); } catch {}
-    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'buy', trade_date: postDate, symbol: opts.symbol, quantity: opts.quantity, price: opts.price, total_amount: total, fees: opts.fees || 0 }); } catch {}
+    try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'buy', trade_date: postDate, symbol: opts.symbol, quantity: opts.quantity, price: opts.price, total_amount: total, fees: opts.fees || 0 }); } catch {}
   },
   postInvestmentSell: async (opts: { accountId: string; symbol: string; quantity: number; price: number; fees?: number; date: string; bankAccountId: string }): Promise<void> => {
     const companyId = await getUserCompanyId();
@@ -87,7 +87,7 @@ export const transactionsApi = {
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: total, _operation: 'add' }); } catch {}
-    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'sell', trade_date: postDate, symbol: opts.symbol, quantity: opts.quantity, price: opts.price, total_amount: total, fees: opts.fees || 0 }); } catch {}
+    try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'sell', trade_date: postDate, symbol: opts.symbol, quantity: opts.quantity, price: opts.price, total_amount: total, fees: opts.fees || 0 }); } catch {}
   },
   postInvestmentDividend: async (opts: { accountId: string; amount: number; date: string; bankAccountId: string; symbol?: string }): Promise<void> => {
     const companyId = await getUserCompanyId();
@@ -111,7 +111,7 @@ export const transactionsApi = {
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'add' }); } catch {}
-    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'dividend', trade_date: postDate, symbol: opts.symbol || null, total_amount: amt }); } catch {}
+    try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'dividend', trade_date: postDate, symbol: opts.symbol || null, total_amount: amt }); } catch {}
   },
   postInvestmentInterest: async (opts: { accountId: string; amount: number; date: string; bankAccountId: string; symbol?: string }): Promise<void> => {
     const companyId = await getUserCompanyId();
@@ -135,7 +135,7 @@ export const transactionsApi = {
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'add' }); } catch {}
-    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'interest', trade_date: postDate, symbol: opts.symbol || null, total_amount: amt }); } catch {}
+    try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'interest', trade_date: postDate, symbol: opts.symbol || null, total_amount: amt }); } catch {}
   },
   postInvestmentFee: async (opts: { accountId: string; amount: number; date: string; bankAccountId: string; description?: string }): Promise<void> => {
     const companyId = await getUserCompanyId();
@@ -159,7 +159,7 @@ export const transactionsApi = {
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'subtract' }); } catch {}
-    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'fee', trade_date: postDate, total_amount: amt }); } catch {}
+    try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'fee', trade_date: postDate, total_amount: amt }); } catch {}
   },
   postFixedDepositOpen: async (opts: { name: string; amount: number; rate: number; termMonths: number; date: string; bankAccountId: string }): Promise<void> => {
     const companyId = await getUserCompanyId();
@@ -203,11 +203,11 @@ export const transactionsApi = {
     if (leErr) throw leErr;
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'subtract' }); } catch {}
-    const { data: invAcct } = await supabase.from('investment_accounts').insert({ company_id: companyId, name: opts.name, currency: 'ZAR', broker_name: 'Bank' }).select('id').single();
+    const { data: invAcct } = await supabase.from('investment_accounts' as any).insert({ company_id: companyId, name: opts.name, currency: 'ZAR', broker_name: 'Bank' }).select('id').single();
     const invAccountId = (invAcct as any)?.id || '';
     if (invAccountId) {
-      await supabase.from('investment_positions').insert({ account_id: invAccountId, symbol: `FD-${postDate}`, instrument_type: 'fixed_deposit', quantity: 1, avg_cost: amt, current_price: amt, market_value: amt, unrealized_gain: 0 });
-      await supabase.from('investment_transactions').insert({ account_id: invAccountId, type: 'buy', trade_date: postDate, symbol: `FD-${postDate}`, quantity: 1, price: amt, total_amount: amt, fees: 0, notes: `Rate ${(opts.rate*100).toFixed(2)}%, Term ${opts.termMonths}m` });
+      await supabase.from('investment_positions' as any).insert({ account_id: invAccountId, symbol: `FD-${postDate}`, instrument_type: 'fixed_deposit', quantity: 1, avg_cost: amt, current_price: amt, market_value: amt, unrealized_gain: 0 });
+      await supabase.from('investment_transactions' as any).insert({ account_id: invAccountId, type: 'buy', trade_date: postDate, symbol: `FD-${postDate}`, quantity: 1, price: amt, total_amount: amt, fees: 0, notes: `Rate ${(opts.rate*100).toFixed(2)}%, Term ${opts.termMonths}m` });
     }
     try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
   },
@@ -1304,5 +1304,86 @@ export const transactionsApi = {
       .update({ status: 'posted' })
       .eq('id', tx.id);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: bankAccountId, _amount: amt, _operation: 'subtract' }); } catch {}
+  },
+  postOpeningStock: async (opts: { productId: string; quantity: number; costPrice: number; date: string }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0, 10);
+    const qty = Number(opts.quantity || 0);
+    const cp = Number(opts.costPrice || 0);
+    const total = qty * cp;
+    if (!(qty > 0) || !(cp > 0)) throw new Error('Quantity and cost price must be > 0');
+
+    const { data: product } = await supabase
+      .from('items')
+      .select('id, name, item_type, company_id')
+      .eq('id', opts.productId)
+      .maybeSingle();
+    if (!product) throw new Error('Product not found');
+    if (String((product as any).item_type || '').toLowerCase() !== 'product') throw new Error('Selected item is not a product');
+    if ((product as any).company_id !== companyId) throw new Error('Product belongs to a different company');
+
+    const { data: accounts } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_name, account_type, account_code, is_active')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => {
+      const byCode = list.find(a => a.type === type.toLowerCase() && codes.includes(a.code));
+      if (byCode) return byCode.id;
+      const byName = list.find(a => a.type === type.toLowerCase() && names.some(n => a.name.includes(n)));
+      if (byName) return byName.id;
+      const byType = list.find(a => a.type === type.toLowerCase());
+      return byType?.id || '';
+    };
+    let inventoryId = pick('asset', ['1300'], ['inventory','stock']);
+    if (!inventoryId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1300', account_name: 'Inventory', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      inventoryId = (created as any)?.id || '';
+    }
+    let openingEquityId = pick('equity', ['3100','3000'], ['opening','share capital','capital']);
+    if (!openingEquityId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '3100', account_name: 'Share Capital', account_type: 'equity', is_active: true })
+        .select('id')
+        .single();
+      openingEquityId = (created as any)?.id || '';
+    }
+    if (!inventoryId || !openingEquityId) throw new Error('Required ledger accounts missing');
+
+    const { data: tx, error: txErr } = await supabase
+      .from('transactions')
+      .insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Opening stock for ${String((product as any).name || '')}`, reference_number: `OPEN-STK-${(product as any).id}`, total_amount: total, transaction_type: 'opening_stock', status: 'pending' })
+      .select('id')
+      .single();
+    if (txErr) throw txErr;
+
+    const rows = [
+      { transaction_id: (tx as any).id as string, account_id: inventoryId, debit: total, credit: 0, description: 'Opening stock', status: 'approved' },
+      { transaction_id: (tx as any).id as string, account_id: openingEquityId, debit: 0, credit: total, description: 'Opening stock', status: 'approved' },
+    ];
+    const { error: teErr } = await supabase.from('transaction_entries').insert(rows);
+    if (teErr) throw teErr;
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id as string, description: r.description }));
+    const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
+    if (leErr) throw leErr;
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id as string);
+
+    const { data: currentItem } = await supabase
+      .from('items')
+      .select('quantity_on_hand')
+      .eq('id', opts.productId)
+      .maybeSingle();
+    const currentQty = Number((currentItem as any)?.quantity_on_hand || 0);
+    const newQty = currentQty + qty;
+    await supabase.from('items').update({ quantity_on_hand: newQty, cost_price: cp }).eq('id', opts.productId);
+    try { const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).maybeSingle(); if ((profile as any)?.company_id) await supabase.rpc('refresh_afs_cache', { _company_id: (profile as any).company_id }); } catch {}
   },
 };

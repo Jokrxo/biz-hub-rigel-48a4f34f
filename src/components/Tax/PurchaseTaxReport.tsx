@@ -43,7 +43,7 @@ export const PurchaseTaxReport = () => {
             return { net: Math.max(0, net), vat: Math.max(0, v) };
           }
           let net = base > 0 ? base : 0;
-          let v = Math.max(0, vat);
+          const v = Math.max(0, vat);
           if (net === 0) {
             if (v > 0) {
               net = Math.max(0, total - v);

@@ -194,7 +194,7 @@ const AuditTrailCard = () => {
           .eq("company_id", companyId)
           .order("created_at", { ascending: false });
         const userIds = Array.from(new Set((logs || []).map((l: any) => String(l.user_id || ""))).values()).filter(Boolean);
-        let usersMap: Record<string, string> = {};
+        const usersMap: Record<string, string> = {};
         if (userIds.length > 0) {
           const { data: profs } = await supabase
             .from("profiles")

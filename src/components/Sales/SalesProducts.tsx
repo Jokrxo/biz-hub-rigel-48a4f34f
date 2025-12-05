@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { transactionsApi } from "@/lib/transactions-api";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Package, Trash2, Edit } from "lucide-react";
@@ -213,6 +215,9 @@ export const SalesProducts = () => {
 
   const [serviceOpen, setServiceOpen] = useState(false);
   const [serviceForm, setServiceForm] = useState({ name: "", description: "", unit_price: "" });
+
+  const [openingOpen, setOpeningOpen] = useState(false);
+  const [openingForm, setOpeningForm] = useState({ productId: "", quantity: "", costPrice: "", date: new Date().toISOString().slice(0,10) });
   const handleCreateService = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canEdit) { toast({ title: "Permission denied", variant: "destructive" }); return; }
@@ -296,6 +301,7 @@ export const SalesProducts = () => {
             <div className="flex gap-2">
               <Button size="sm" className="bg-gradient-primary" onClick={() => setCreateOpen(true)}>+ New Product</Button>
               <Button size="sm" variant="outline" onClick={() => setServiceOpen(true)}>+ New Service</Button>
+              <Button size="sm" variant="secondary" onClick={() => setOpeningOpen(true)}>+ Opening Stock</Button>
             </div>
           )}
         </CardHeader>
@@ -400,6 +406,66 @@ export const SalesProducts = () => {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
               <Button type="submit" className="bg-gradient-primary">Create</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={openingOpen} onOpenChange={setOpeningOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Opening Stock</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!canEdit) { toast({ title: "Permission denied", variant: "destructive" }); return; }
+              try {
+                const pid = openingForm.productId;
+                const qty = parseFloat(openingForm.quantity || "0");
+                const cp = parseFloat(openingForm.costPrice || "0");
+                const dateStr = openingForm.date || new Date().toISOString().slice(0,10);
+                if (!pid) { toast({ title: "Select product", description: "Choose a product", variant: "destructive" }); return; }
+                if (!(qty > 0) || !(cp > 0)) { toast({ title: "Invalid values", description: "Enter quantity and cost price > 0", variant: "destructive" }); return; }
+                await transactionsApi.postOpeningStock({ productId: pid, quantity: qty, costPrice: cp, date: dateStr });
+                toast({ title: "Opening stock posted", description: "Inventory and equity updated" });
+                setOpeningOpen(false);
+                setOpeningForm({ productId: "", quantity: "", costPrice: "", date: new Date().toISOString().slice(0,10) });
+                loadProducts();
+              } catch (err: any) {
+                toast({ title: "Error", description: err.message || "Failed to post opening stock", variant: "destructive" });
+              }
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <Label>Product *</Label>
+              <Select value={openingForm.productId} onValueChange={(v: any) => setOpeningForm({ ...openingForm, productId: v })}>
+                <SelectTrigger className="w-full"><SelectValue placeholder="Select product" /></SelectTrigger>
+                <SelectContent>
+                  {products.map(p => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Quantity *</Label>
+                <Input type="number" step="1" min="1" value={openingForm.quantity} onChange={(e) => setOpeningForm({ ...openingForm, quantity: e.target.value })} required />
+              </div>
+              <div>
+                <Label>Cost Price (R) *</Label>
+                <Input type="number" step="0.01" value={openingForm.costPrice} onChange={(e) => setOpeningForm({ ...openingForm, costPrice: e.target.value })} required />
+              </div>
+            </div>
+            <div>
+              <Label>Posting Date *</Label>
+              <Input type="date" value={openingForm.date} onChange={(e) => setOpeningForm({ ...openingForm, date: e.target.value })} required />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setOpeningOpen(false)}>Cancel</Button>
+              <Button type="submit" className="bg-gradient-primary">Post</Button>
             </DialogFooter>
           </form>
         </DialogContent>

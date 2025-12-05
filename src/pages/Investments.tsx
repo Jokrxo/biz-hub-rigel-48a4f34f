@@ -92,7 +92,7 @@ export default function Investments() {
       const principal = Number(p.avg_cost || 0);
       // find initial buy tx for this account & symbol
       const tx = (transactions || []).find(t => t.account_id === p.account_id && String(t.type).toLowerCase() === 'buy' && String(t.symbol || '').includes('FD-'));
-      let rate = 0; let termMonths = 0; let startIso = tx ? String(tx.trade_date) : startDate;
+      let rate = 0; let termMonths = 0; const startIso = tx ? String(tx.trade_date) : startDate;
       const note = (tx as any)?.notes || '';
       const rateMatch = String(note).match(/Rate\s+([0-9]+(?:\.[0-9]+)?)%/i);
       const termMatch = String(note).match(/Term\s+([0-9]+)m/i);
