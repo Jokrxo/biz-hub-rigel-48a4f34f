@@ -5,6 +5,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/context/useAuth";
 import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import SEO from "@/components/SEO";
@@ -25,6 +27,10 @@ const schema = z
     email: z.string().trim().email("Enter a valid email"),
     password: passwordSchema,
     confirm: z.string(),
+    companyName: z.string().trim().min(2, "Enter company name"),
+    companyAddress: z.string().trim().min(5, "Enter company address"),
+    companyPhone: z.string().trim().min(10, "Phone number must be 10 digits").max(20, "Phone number too long").refine((v) => v.replace(/\D/g, '').length === 10, "Phone number must be 10 digits"),
+    termsAccepted: z.boolean().refine((v) => v === true, "You must accept the Terms & Conditions"),
   })
   .refine((data) => data.password === data.confirm, { message: "Passwords do not match", path: ["confirm"] });
 
@@ -36,12 +42,13 @@ export default function Signup() {
   const { toast } = useToast();
   const [params] = useSearchParams();
   const [password, setPassword] = useState("");
+  const [termsOpen, setTermsOpen] = useState(false);
 
   useEffect(() => {
     if (user) navigate("/", { replace: true });
   }, [user, navigate]);
 
-  const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: "", email: "", password: "", confirm: "" } });
+  const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: "", email: "", password: "", confirm: "", companyName: "", companyAddress: "", companyPhone: "", termsAccepted: false } });
 
   // Helper function to format error messages
   const formatErrorMessage = (error: any): string => {
@@ -68,6 +75,31 @@ export default function Signup() {
       }
       await signup(values.name, values.email, values.password);
       try { localStorage.setItem('just_signed_up', 'true'); } catch {}
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('company_id')
+            .eq('user_id', user.id)
+            .maybeSingle();
+          const companyId = profile?.company_id || null;
+          if (companyId) {
+            await supabase.from('companies').update({ name: values.companyName, address: values.companyAddress, phone: values.companyPhone }).eq('id', companyId);
+            try { await supabase.from('profiles').update({ terms_accepted_at: new Date().toISOString() as any }).eq('user_id', user.id); } catch {}
+          } else {
+            const { data: createdCompany } = await supabase
+              .from('companies')
+              .insert({ name: values.companyName, address: values.companyAddress, phone: values.companyPhone, default_currency: 'ZAR' })
+              .select('id')
+              .single();
+            if (createdCompany?.id) {
+              await supabase.from('profiles').update({ company_id: createdCompany.id, terms_accepted_at: new Date().toISOString() as any }).eq('user_id', user.id);
+              await supabase.from('user_roles').upsert({ user_id: user.id, company_id: createdCompany.id, role: 'administrator' });
+            }
+          }
+        }
+      } catch {}
       // After signup, try to attach company via invite
       if (invite) {
         try {
@@ -207,24 +239,101 @@ export default function Signup() {
                 name="confirm"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Confirm password</FormLabel>
-                    <FormControl>
-                      <Input type="password" autoComplete="new-password" placeholder="••••••••" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                  <FormLabel>Confirm password</FormLabel>
+                  <FormControl>
+                    <Input type="password" autoComplete="new-password" placeholder="••••••••" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
-              <Button type="submit" className="w-full bg-gradient-primary">Create account</Button>
-            </form>
-          </Form>
+            <FormField
+              control={form.control}
+              name="companyName"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Company name</FormLabel>
+                  <FormControl>
+                    <Input placeholder="Rigel Business (Pty) Ltd" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="companyAddress"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Company address</FormLabel>
+                  <FormControl>
+                    <Input placeholder="123 Main Road, Sandton, 2196" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="companyPhone"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Company phone</FormLabel>
+                  <FormControl>
+                    <Input inputMode="tel" placeholder="0812345678" {...field} />
+                  </FormControl>
+                  <FormDescription>10 digits, numbers only</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="termsAccepted"
+              render={({ field }) => (
+                <FormItem>
+                  <div className="flex items-center gap-2">
+                    <Checkbox checked={field.value} onCheckedChange={field.onChange} id="terms" />
+                    <FormLabel htmlFor="terms">I accept the Terms & Conditions</FormLabel>
+                    <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => setTermsOpen(true)}>View Terms</Button>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <Button type="submit" className="w-full bg-gradient-primary">Create account</Button>
+          </form>
+        </Form>
 
           <footer className="mt-4 text-center text-sm">
             Already have an account? <Link to="/login" className="text-primary hover:underline">Sign in</Link>
           </footer>
         </article>
       </main>
+
+      <Dialog open={termsOpen} onOpenChange={setTermsOpen}>
+        <DialogContent className="sm:max-w-[720px]">
+          <DialogHeader>
+            <DialogTitle>Terms & Conditions</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm max-h-[50vh] overflow-y-auto">
+            <p>By creating an account, you agree to the Rigel Business Terms & Conditions, including acceptable use, data handling, and payment terms for paid plans.</p>
+            <p>Key points:</p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Use the service responsibly and lawfully.</li>
+              <li>Protect your credentials; you are responsible for all activity under your account.</li>
+              <li>We process and store your data in accordance with our Privacy Policy.</li>
+              <li>Paid features require a valid license; fees are non-refundable unless required by law.</li>
+            </ul>
+            <p>For full terms, contact support or view the legal documentation provided with your plan.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

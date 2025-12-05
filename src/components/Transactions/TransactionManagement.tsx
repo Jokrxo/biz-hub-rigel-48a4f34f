@@ -54,6 +54,7 @@ export const TransactionManagement = () => {
   const [quickUsefulLifeYears, setQuickUsefulLifeYears] = useState<string>('5');
   const [quickDepMethod, setQuickDepMethod] = useState<'straight_line' | 'diminishing'>('straight_line');
   const [quickUsefulLifeStartDate, setQuickUsefulLifeStartDate] = useState<string>(new Date().toISOString().slice(0,10));
+  const fixedAssetCodes = ['1500','1510','1600','1700','1800'];
   const [quickVatOn, setQuickVatOn] = useState<'yes' | 'no'>('no');
   const [quickVatRate, setQuickVatRate] = useState<string>('15');
   const [searchTerm, setSearchTerm] = useState("");
@@ -80,6 +81,7 @@ export const TransactionManagement = () => {
   const [allocAccountId, setAllocAccountId] = useState<string>('');
   const [allocSettlement, setAllocSettlement] = useState<'receivable'|'payable'|'other'>('receivable');
   const [allocSettlementAccountId, setAllocSettlementAccountId] = useState<string>('');
+  const [allocDesc, setAllocDesc] = useState<string>('');
   const [allocationTx, setAllocationTx] = useState<any>(null);
 
   const [coaIncome, setCoaIncome] = useState<any[]>([]);
@@ -1073,6 +1075,19 @@ export const TransactionManagement = () => {
                     </Select>
                   </div>
                 )}
+                {quickType === 'liability' && (
+                  <div>
+                    <Label>Liability Account</Label>
+                    <Select value={quickPayableAccountId} onValueChange={(v: any) => setQuickPayableAccountId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select liability account" /></SelectTrigger>
+                      <SelectContent>
+                        {coaPayable.map((a: any) => (
+                          <SelectItem key={a.id} value={String(a.id)}>{a.account_code} • {a.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 {quickType === 'income' && (
                   <div>
                     <Label>Income Account</Label>
@@ -1112,7 +1127,7 @@ export const TransactionManagement = () => {
                     </Select>
                   </div>
                 )}
-                {quickType === 'equity' && quickPayment === 'asset' && (
+                {quickType === 'equity' && quickPayment === 'asset' && (() => { const sel = coaOther.find((a: any) => String(a.id) === String(quickAssetAccountId)); return fixedAssetCodes.includes(String(sel?.account_code || '')); })() && (
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <Label>Useful Life (years)</Label>
@@ -1131,6 +1146,34 @@ export const TransactionManagement = () => {
                     <div>
                       <Label>Useful Life Start Date</Label>
                       <Input type="date" value={quickUsefulLifeStartDate} onChange={(e) => setQuickUsefulLifeStartDate(e.target.value)} />
+                    </div>
+                  </div>
+                )}
+                {quickType === 'liability' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>Payment Method</Label>
+                      <Select value={quickPayment} onValueChange={(v: any) => setQuickPayment(v)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cash">Cash</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Bank</Label>
+                      <Select value={quickBankId} onValueChange={(v: any) => setQuickBankId(v)}>
+                        <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
+                        <SelectContent>
+                          {banks.length === 0 ? (
+                            <SelectItem value="__none__" disabled>No bank accounts</SelectItem>
+                          ) : (
+                            banks.map(b => (
+                              <SelectItem key={b.id} value={String(b.id)}>{b.bank_name} ({b.account_number})</SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                 )}
@@ -1196,14 +1239,24 @@ export const TransactionManagement = () => {
                         // Asset contribution
                         pf.debitAccount = quickAssetAccountId || "";
                         pf.bankAccountId = "";
-                        pf.usefulLifeYears = quickUsefulLifeYears;
-                        pf.depreciationMethod = quickDepMethod;
-                        pf.usefulLifeStartDate = quickUsefulLifeStartDate;
+                        {
+                          const sel = coaOther.find((a: any) => String(a.id) === String(quickAssetAccountId));
+                          if (fixedAssetCodes.includes(String(sel?.account_code || ''))) {
+                            pf.usefulLifeYears = quickUsefulLifeYears;
+                            pf.depreciationMethod = quickDepMethod;
+                            pf.usefulLifeStartDate = quickUsefulLifeStartDate;
+                          }
+                        }
                       }
                     } else if (quickType === 'receipt') {
                       pf.debitAccount = quickPayment === 'cash' ? "" : "";
                       pf.creditAccount = quickReceivableAccountId || "";
                       if (quickPayment === 'cash') pf.bankAccountId = String(quickBankId || "");
+                    } else if (quickType === 'liability') {
+                      pf.debitAccount = quickPayableAccountId || "";
+                      pf.creditAccount = "";
+                      pf.bankAccountId = String(quickBankId || "");
+                      pf.paymentMethod = 'bank';
                     }
                     setPrefillData(pf);
                     setNewFlowOpen(false);
@@ -1217,11 +1270,11 @@ export const TransactionManagement = () => {
         </Dialog>
         <Dialog open={allocationOpen} onOpenChange={setAllocationOpen}>
           <DialogContent className="sm:max-w-[600px]">
-            <DialogHeader>
-              <DialogTitle>EXpense and income allocation</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+        <DialogHeader>
+          <DialogTitle>EXpense and income allocation</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Date</Label>
                   <Input type="date" value={allocDate} onChange={(e) => setAllocDate(e.target.value)} />
@@ -1238,11 +1291,15 @@ export const TransactionManagement = () => {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Amount</Label>
-                  <Input readOnly value={String(Math.abs(Number(allocationTx?.total_amount || 0)))} />
-                </div>
+              <div>
+                <Label>Amount</Label>
+                <Input readOnly value={String(Math.abs(Number(allocationTx?.total_amount || 0)))} />
               </div>
+              <div>
+                <Label>Description</Label>
+                <Input value={allocDesc} onChange={(e) => setAllocDesc(e.target.value)} placeholder="Enter description for approval" />
+              </div>
+            </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Payment Method</Label>
@@ -1349,12 +1406,12 @@ export const TransactionManagement = () => {
                   if (allocPayment === 'cash' && !allocBankId) return;
                   if (!allocAccountId) return;
                   if (allocPayment === 'accrual' && !allocSettlementAccountId) return;
-                  const txId = String(allocationTx?.id || '');
-                  if (!txId) return;
-                  const isIncome = allocType === 'income';
-                  const total = Math.abs(Number(allocationTx?.total_amount || 0));
-                  let debitAccount = '';
-                  let creditAccount = '';
+              const txId = String(allocationTx?.id || '');
+              if (!txId) return;
+              const isIncome = allocType === 'income';
+              const total = Math.abs(Number(allocationTx?.total_amount || 0));
+              let debitAccount = '';
+              let creditAccount = '';
                   if (allocPayment === 'cash') {
                     if (isIncome) { debitAccount = ''; creditAccount = allocAccountId; }
                     else { debitAccount = allocAccountId; creditAccount = ''; }
@@ -1404,17 +1461,18 @@ export const TransactionManagement = () => {
 
                   const { error: upErr } = await supabase
                     .from('transactions')
-                    .update({
-                      transaction_date: allocDate,
-                      bank_account_id: allocPayment === 'cash' ? allocBankId : null,
-                      debit_account_id: debitAccount || null,
-                      credit_account_id: creditAccount || null,
-                      vat_rate: rate > 0 ? rate : null,
-                      vat_amount: vatAmount > 0 ? vatAmount : null,
-                      base_amount: netAmount,
-                      vat_inclusive: (rate > 0)
-                    })
-                    .eq('id', txId);
+                  .update({
+                    transaction_date: allocDate,
+                    description: String(allocDesc || '').trim() || (allocationTx?.description || null),
+                    bank_account_id: allocPayment === 'cash' ? allocBankId : null,
+                    debit_account_id: debitAccount || null,
+                    credit_account_id: creditAccount || null,
+                    vat_rate: rate > 0 ? rate : null,
+                    vat_amount: vatAmount > 0 ? vatAmount : null,
+                    base_amount: netAmount,
+                    vat_inclusive: (allocVatOn === 'yes')
+                  })
+                  .eq('id', txId);
                   if (upErr) throw upErr;
 
                   await setTransactionStatus(txId, 'approved');
@@ -1516,11 +1574,11 @@ export const TransactionManagement = () => {
                           <DropdownMenuContent align="end">
                             {(transaction.statusKey === "pending" || transaction.statusKey === "unposted") && (
                               <>
-                                <DropdownMenuItem onClick={() => {
-                                  const full = items.find(i => i.id === transaction.id) || null;
-                                  setAllocationTx(full);
-                                  const amt = Number(full?.total_amount || 0);
-                                  const isIncome = amt >= 0;
+                <DropdownMenuItem onClick={() => {
+                  const full = items.find(i => i.id === transaction.id) || null;
+                  setAllocationTx(full);
+                  const amt = Number(full?.total_amount || 0);
+                  const isIncome = amt >= 0;
                                   setAllocType(isIncome ? 'income' : 'expense');
                                   setAllocDate(String(full?.transaction_date || new Date().toISOString().slice(0,10)));
                                   const hasBank = Boolean(full?.bank_account_id);
@@ -1531,10 +1589,11 @@ export const TransactionManagement = () => {
                                   setAllocVatOn(vatRate > 0 || vatAmount > 0 ? 'yes' : 'no');
                                   setAllocVatRate(String(vatRate || 0));
                                   setAllocSettlement(isIncome ? 'receivable' : 'payable');
-                                  setAllocSettlementAccountId('');
-                                  setAllocAccountId('');
-                                  setAllocationOpen(true);
-                                }} disabled={posting}>
+                  setAllocSettlementAccountId('');
+                  setAllocAccountId('');
+                  setAllocDesc(String(full?.description || ''));
+                  setAllocationOpen(true);
+                }} disabled={posting}>
                                   {posting ? (
                                     <>
                                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />

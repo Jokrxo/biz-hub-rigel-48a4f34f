@@ -52,7 +52,8 @@ export const BankManagement = () => {
     account_name: "",
     account_number: "",
     bank_name: "",
-    opening_balance: ""
+    opening_balance: "",
+    opening_balance_date: new Date().toISOString().slice(0,10)
   });
   const [branchCode, setBranchCode] = useState<string>("");
   const [inflows, setInflows] = useState(0);
@@ -152,6 +153,13 @@ export const BankManagement = () => {
         toast({ title: "Missing fields", description: "Please fill all required fields", variant: "destructive" });
         return;
       }
+      {
+        const { isValidBankAccountNumber } = await import("@/lib/validators");
+        if (!isValidBankAccountNumber(form.account_number)) {
+          toast({ title: "Invalid account number", description: "Bank account number must be 10–20 digits", variant: "destructive" });
+          return;
+        }
+      }
 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
@@ -165,6 +173,7 @@ export const BankManagement = () => {
       if (!profile) throw new Error("Profile not found");
 
       const openingBalance = parseFloat(form.opening_balance || "0");
+      const openingDate = String(form.opening_balance_date || new Date().toISOString().slice(0,10));
 
       // Insert bank with zero balances to avoid DB triggers posting with missing account ids
       const { data: insertedBank, error: bankErr } = await supabase
@@ -243,13 +252,12 @@ export const BankManagement = () => {
 
         // Create transaction and entries
         const { data: { user } } = await supabase.auth.getUser();
-        const today = new Date().toISOString().slice(0, 10);
         const { data: tx, error: txErr } = await supabase
           .from("transactions")
           .insert({
             company_id: profile.company_id,
             user_id: user?.id || '',
-            transaction_date: today,
+            transaction_date: openingDate,
             description: `Opening balance for ${form.account_name}`,
             reference_number: null,
             total_amount: openingBalance,
@@ -274,7 +282,7 @@ export const BankManagement = () => {
           account_id: e.account_id,
           debit: e.debit,
           credit: e.credit,
-          entry_date: today,
+          entry_date: openingDate,
           is_reversed: false,
           reference_id: tx.id,
           transaction_id: tx.id,
@@ -298,7 +306,7 @@ export const BankManagement = () => {
 
       toast({ title: "Success", description: "Bank account added successfully" });
       setOpen(false);
-      setForm({ account_name: "", account_number: "", bank_name: "", opening_balance: "" });
+      setForm({ account_name: "", account_number: "", bank_name: "", opening_balance: "", opening_balance_date: new Date().toISOString().slice(0,10) });
       loadBanks();
       navigate('/transactions');
     } catch (error: any) {
@@ -387,6 +395,14 @@ export const BankManagement = () => {
                   value={form.opening_balance}
                   onChange={(e) => setForm({ ...form, opening_balance: e.target.value })}
                   placeholder="0.00"
+                />
+              </div>
+              <div>
+                <Label>Opening Balance Date</Label>
+                <Input
+                  type="date"
+                  value={form.opening_balance_date}
+                  onChange={(e) => setForm({ ...form, opening_balance_date: e.target.value })}
                 />
               </div>
             </div>

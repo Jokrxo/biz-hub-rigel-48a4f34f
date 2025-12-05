@@ -36,6 +36,8 @@ export const TaxReturns = () => {
   const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; bank_name: string; account_name: string }>>([]);
   const [bankAccountId, setBankAccountId] = useState<string>("");
   const [paymentDate, setPaymentDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [settlementNet, setSettlementNet] = useState<number>(0);
+  const [settlementLabel, setSettlementLabel] = useState<string>("");
 
   const [form, setForm] = useState({
     period_type: "vat",
@@ -85,9 +87,9 @@ export const TaxReturns = () => {
         period_type: form.period_type,
         start_date: form.start_date,
         end_date: form.end_date,
-        status: "active"
+        status: "open"
       } as any;
-      payload.status = "draft";
+      payload.status = "open";
       const { error } = await supabase.from("tax_periods").insert(payload);
       if (error) {
         const payloadAlt = {
@@ -96,15 +98,26 @@ export const TaxReturns = () => {
           period_type: payload.period_type,
           period_start: form.start_date,
           period_end: form.end_date,
-          status: "draft"
+          status: "open"
         } as any;
         const { error: err2 } = await supabase.from("tax_periods").insert(payloadAlt);
         if (err2) {
-          payloadAlt.status = "active";
+          payloadAlt.status = "open";
           const { error: err3 } = await supabase.from("tax_periods").insert(payloadAlt);
           if (err3) throw err3;
         }
       }
+      try {
+        const { data: recent } = await supabase
+          .from("tax_periods")
+          .select("id")
+          .eq("company_id", companyId)
+          .eq("period_type", form.period_type)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        const newId = (recent && recent[0]?.id) ? String(recent[0].id) : "";
+        if (newId) await computePeriod(newId);
+      } catch {}
       toast({ title: "Success", description: "Tax period created" });
       setCreateOpen(false);
       await loadPeriods(companyId);
@@ -139,7 +152,7 @@ export const TaxReturns = () => {
           if (isVatOut) output += Math.max(0, credit - debit);
           if (isVatIn) input += Math.max(0, debit - credit);
         });
-        const net = Math.max(0, output - input);
+        const net = input - output;
         await supabase.from("tax_periods").update({ vat_input_total: input, vat_output_total: output, vat_payable: net }).eq("id", id);
       }
       toast({ title: "Computed", description: "VAT totals updated" });
@@ -167,6 +180,11 @@ export const TaxReturns = () => {
       .select("id, bank_name, account_name")
       .eq("company_id", companyId);
     setBankAccounts((data || []) as any);
+    const period = periods.find(p => p.id === id);
+    const net = Number(period?.vat_payable || 0);
+    const label = net > 0 ? 'Payable' : net < 0 ? 'Refundable' : 'Settled';
+    setSettlementNet(Math.abs(net));
+    setSettlementLabel(label);
     setBankDialogOpen(true);
   };
 
@@ -176,6 +194,31 @@ export const TaxReturns = () => {
       const period = periods.find(p => p.id === settleId);
       if (!period) return;
       const amount = Number(period.vat_payable || 0);
+      const total = Math.abs(amount);
+      if (!(total > 0)) { toast({ title: 'No Amount', description: 'Net VAT is zero for this period', variant: 'destructive' }); return; }
+
+      // Resolve bank ledger account (chart_of_accounts asset)
+      const { data: accounts } = await supabase
+        .from('chart_of_accounts')
+        .select('id, account_name, account_type, account_code, is_active')
+        .eq('company_id', companyId)
+        .eq('is_active', true);
+      const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+      const pickBank = () => {
+        const byCode = list.find(a => a.type === 'asset' && a.code === '1100');
+        if (byCode) return byCode.id;
+        const byName = list.find(a => a.type === 'asset' && (a.name.includes('bank') || a.name.includes('cash')));
+        return byName?.id || '';
+      };
+      let bankLedgerId = pickBank();
+      if (!bankLedgerId) {
+        const { data: created } = await supabase
+          .from('chart_of_accounts')
+          .insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true })
+          .select('id')
+          .single();
+        bankLedgerId = (created as any)?.id || '';
+      }
       const { data: vatOut } = await supabase
         .from("chart_of_accounts")
         .select("id")
@@ -193,7 +236,6 @@ export const TaxReturns = () => {
 
       const isPayment = amount > 0;
       const txnDesc = isPayment ? `VAT Settlement Payment ${period.period_name}` : `VAT Refund ${period.period_name}`;
-      const total = Math.abs(amount);
 
       const { data: tx, error: txErr } = await supabase
         .from("transactions")
@@ -214,9 +256,9 @@ export const TaxReturns = () => {
 
       const entries = isPayment ? [
         { transaction_id: tx.id, account_id: vatPayableId, debit: total, credit: 0, description: txnDesc, status: "approved" },
-        { transaction_id: tx.id, account_id: bankAccountId, debit: 0, credit: total, description: txnDesc, status: "approved" }
+        { transaction_id: tx.id, account_id: bankLedgerId, debit: 0, credit: total, description: txnDesc, status: "approved" }
       ] : [
-        { transaction_id: tx.id, account_id: bankAccountId, debit: total, credit: 0, description: txnDesc, status: "approved" },
+        { transaction_id: tx.id, account_id: bankLedgerId, debit: total, credit: 0, description: txnDesc, status: "approved" },
         { transaction_id: tx.id, account_id: vatPayableId, debit: 0, credit: total, description: txnDesc, status: "approved" }
       ];
       const { error: entErr } = await supabase.from("transaction_entries").insert(entries as any);
@@ -224,7 +266,7 @@ export const TaxReturns = () => {
       const { error: updErr } = await supabase.from("transactions").update({ status: "approved" }).eq("id", tx.id);
       if (updErr) throw updErr;
 
-      toast({ title: "Settlement recorded", description: "Double-entry posted" });
+      toast({ title: "Settlement recorded", description: `${settlementLabel}: R ${total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` });
       setBankDialogOpen(false);
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -356,6 +398,7 @@ export const TaxReturns = () => {
               <label className="text-sm">Date</label>
               <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
             </div>
+            <div className="text-sm text-muted-foreground">Net VAT: R {settlementNet.toLocaleString('en-ZA', { minimumFractionDigits: 2 })} — {settlementLabel}</div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBankDialogOpen(false)}>Cancel</Button>

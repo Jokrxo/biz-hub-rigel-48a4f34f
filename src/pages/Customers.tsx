@@ -109,6 +109,13 @@ export default function CustomersPage() {
     }
 
     try {
+      if (formData.phone) {
+        const { isTenDigitPhone } = await import("@/lib/validators");
+        if (!isTenDigitPhone(formData.phone)) {
+          toast({ title: "Invalid phone", description: "Phone number must be 10 digits", variant: "destructive" });
+          return;
+        }
+      }
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")

@@ -65,16 +65,18 @@ export const FinancialReports = () => {
             .order('account_code');
           const { data: txEntries } = await supabase
             .from('transaction_entries')
-            .select(`transaction_id, account_id, debit, credit, transactions!inner ( transaction_date )`)
+            .select(`transaction_id, account_id, debit, credit, description, transactions!inner ( transaction_date )`)
             .eq('transactions.company_id', companyId)
             .gte('transactions.transaction_date', start)
-            .lte('transactions.transaction_date', end);
+            .lte('transactions.transaction_date', end)
+            .not('description', 'ilike', '%Opening balance (carry forward)%');
           const { data: ledgerEntries } = await supabase
             .from('ledger_entries')
-            .select('transaction_id, account_id, debit, credit, entry_date')
+            .select('transaction_id, account_id, debit, credit, entry_date, description')
             .eq('company_id', companyId)
             .gte('entry_date', start)
-            .lte('entry_date', end);
+            .lte('entry_date', end)
+            .not('description', 'ilike', '%Opening balance (carry forward)%');
           const trial: Array<{ id: string; code: string; name: string; type: string; balance: number }> = [];
           const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
           const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
@@ -469,8 +471,35 @@ export const FinancialReports = () => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="space-y-6">
+        <div className="animate-pulse">
+          <div className="h-8 w-64 bg-muted rounded mb-2"></div>
+          <div className="h-4 w-96 bg-muted rounded"></div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-4">
+          {[...Array(4)].map((_, i) => (
+            <Card key={i} className="card-professional">
+              <CardContent className="p-4 animate-pulse">
+                <div className="h-4 w-24 bg-muted rounded mb-2"></div>
+                <div className="h-6 w-32 bg-muted rounded"></div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        <Card className="card-professional">
+          <CardHeader>
+            <div className="h-6 w-48 bg-muted rounded animate-pulse"></div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 animate-pulse">
+              {[...Array(10)].map((_, i) => (
+                <div key={i} className="h-5 w-full bg-muted rounded"></div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }

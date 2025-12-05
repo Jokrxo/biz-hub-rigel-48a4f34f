@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from "recharts";
 import { calculateDepreciation } from "@/components/FixedAssets/DepreciationCalculator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
@@ -59,6 +59,7 @@ export const DashboardOverview = () => {
   const [budgetOnTrack, setBudgetOnTrack] = useState<boolean>(true);
   const [inventoryLevels, setInventoryLevels] = useState<Array<{ name: string; qty: number }>>([]);
   const [bsComposition, setBsComposition] = useState<Array<{ label: string; assets: number; liabilities: number; equity: number }>>([]);
+  const [revenueByCategory, setRevenueByCategory] = useState<Array<{ month: string; products: number; services: number; consulting: number }>>([]);
   const [cashGaugePct, setCashGaugePct] = useState<number>(0);
   const [cashOnTrack, setCashOnTrack] = useState<boolean>(true);
   const [safeMinimum, setSafeMinimum] = useState<number>(0);
@@ -95,6 +96,7 @@ export const DashboardOverview = () => {
     const parsed = saved ? JSON.parse(saved) : {};
     return { ...defaultWidgets, ...parsed };
   });
+  const [todoItems, setTodoItems] = useState<Array<{ id: string; label: string; done: boolean }>>([]);
 
   const calculateTotalInventoryValue = useCallback(async (companyId: string) => {
     try {
@@ -180,6 +182,14 @@ export const DashboardOverview = () => {
     });
     return trialBalance;
   }, [calculateTotalInventoryValue]);
+  const toggleTodo = (id: string) => {
+    const next = todoItems.map(it => it.id === id ? { ...it, done: !it.done } : it);
+    setTodoItems(next);
+    if (companyId) {
+      const todoKey = `dashboard_todo_${companyId}`;
+      try { localStorage.setItem(todoKey, JSON.stringify(next)); } catch {}
+    }
+  };
 
   const loadDashboardData = useCallback(async () => {
     try {
@@ -194,6 +204,28 @@ export const DashboardOverview = () => {
         .single();
       if (profileError || !profile) { setLoading(false); return; }
       setCompanyId(String(profile.company_id));
+      try {
+        const todoKey = `dashboard_todo_${String(profile.company_id)}`;
+        const savedTodos = localStorage.getItem(todoKey);
+        if (savedTodos) {
+          setTodoItems(JSON.parse(savedTodos));
+        } else {
+          const defaults = [
+            { id: 'todo-connect-bank', label: 'Connect bank account', done: false },
+            { id: 'todo-import-statement', label: 'Import bank statement (CSV)', done: false },
+            { id: 'todo-reconcile-month', label: 'Reconcile bank for current month', done: false },
+            { id: 'todo-approve-transactions', label: 'Approve pending transactions', done: false },
+            { id: 'todo-first-invoice', label: 'Create first invoice', done: false },
+            { id: 'todo-first-bill', label: 'Record first bill', done: false },
+            { id: 'todo-lock-period', label: 'Lock last reconciled period', done: false },
+            { id: 'todo-recon-report', label: 'Run reconciliation report (PDF/CSV)', done: false },
+            { id: 'todo-outstanding', label: 'Review outstanding deposits/payments', done: false },
+            { id: 'todo-bank-rules', label: 'Set up bank rules', done: false },
+          ];
+          setTodoItems(defaults);
+          localStorage.setItem(todoKey, JSON.stringify(defaults));
+        }
+      } catch {}
       const fullName = [String(profile.first_name || '').trim(), String(profile.last_name || '').trim()].filter(Boolean).join(' ');
       setUserName(fullName || (user.user_metadata?.name as string) || user.email || "");
       const startDate = new Date(selectedYear, selectedMonth - 1, 1);
@@ -432,6 +464,99 @@ export const DashboardOverview = () => {
       if (expenseDonutBreak.length > 0) setExpenseBreakdown(expenseDonutBreak);
       if (incomeDonutBreak.length > 0) setIncomeBreakdown(incomeDonutBreak);
       
+      // Top Sales Products (by amount) over selected range
+      try {
+        const { data: invItems } = await supabase
+          .from('invoice_items')
+          .select(`product_id, item_id, item_type, quantity, amount, unit_price, invoices!inner (company_id, invoice_date, status)`) as any;
+        const itemsMap: Record<string, { name: string; type: string }> = {};
+        try {
+          const { data: itemsRows } = await supabase
+            .from('items')
+            .select('id, name, item_name, item_type')
+            .eq('company_id', profile.company_id);
+          (itemsRows || []).forEach((r: any) => { itemsMap[String(r.id)] = { name: String(r.name || r.item_name || r.id), type: String(r.item_type || '').toLowerCase() }; });
+        } catch {}
+        const agg: Record<string, number> = {};
+        const rangeStartIso = months[0].start.toISOString();
+        const rangeEndIso = months[months.length - 1].end.toISOString();
+        (invItems || []).forEach((row: any) => {
+          const inv = row.invoices || {};
+          const invCompany = String(inv.company_id || '');
+          if (invCompany !== String(profile.company_id)) return;
+          const dt = new Date(String(inv.invoice_date || row.invoice_date || new Date()));
+          if (dt.toISOString() < rangeStartIso || dt.toISOString() > rangeEndIso) return;
+          const id = String(row.product_id || row.item_id || '');
+          const type = (itemsMap[id]?.type || String(row.item_type || '')).toLowerCase();
+          if (type !== 'product') return;
+          const qty = Number(row.quantity || 0);
+          const unit = Number(row.unit_price || 0);
+          const amt = Number(row.amount || (qty * unit) || 0);
+          const key = id || 'unknown';
+          agg[key] = (agg[key] || 0) + Math.max(0, amt);
+        });
+        const donut = Object.entries(agg)
+          .map(([id, val]) => ({ name: itemsMap[id]?.name || id, value: Number(val.toFixed(2)) }))
+          .sort((a, b) => b.value - a.value)
+          .slice(0, 10);
+        setTopProductsDonut(donut);
+      } catch {}
+
+      try {
+        const catBuckets: Record<string, { products: number; services: number; consulting: number; month: string }> = {};
+        const rangeStartIso = months[0].start.toISOString();
+        const rangeEndIso = months[months.length - 1].end.toISOString();
+        months.forEach(m => { catBuckets[m.label] = { products: 0, services: 0, consulting: 0, month: m.label }; });
+        (invItems || []).forEach((row: any) => {
+          const inv = row.invoices || {};
+          const invCompany = String(inv.company_id || '');
+          if (invCompany !== String(profile.company_id)) return;
+          const dt = new Date(String(inv.invoice_date || row.invoice_date || new Date()));
+          const dtIso = dt.toISOString();
+          if (dtIso < rangeStartIso || dtIso > rangeEndIso) return;
+          const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+          if (!catBuckets[label]) return;
+          const id = String(row.product_id || row.item_id || '');
+          const mapInfo = itemsMap[id] || { name: '', type: '' };
+          const type = (mapInfo.type || String(row.item_type || '')).toLowerCase();
+          const name = mapInfo.name || '';
+          const qty = Number(row.quantity || 0);
+          const unit = Number(row.unit_price || 0);
+          const amt = Number(row.amount || (qty * unit) || 0);
+          if (type === 'product') catBuckets[label].products += Math.max(0, amt);
+          else if (type === 'service') {
+            const isConsult = String(name).toLowerCase().includes('consult');
+            if (isConsult) catBuckets[label].consulting += Math.max(0, amt); else catBuckets[label].services += Math.max(0, amt);
+          } else {
+            // If type is unknown, place under services by default
+            catBuckets[label].services += Math.max(0, amt);
+          }
+        });
+        const catSeries = Object.values(catBuckets).map(b => ({ month: b.month, products: Number(b.products.toFixed(2)), services: Number(b.services.toFixed(2)), consulting: Number(b.consulting.toFixed(2)) }));
+        setRevenueByCategory(catSeries);
+      } catch {}
+
+      // Quotes acceptance vs unaccepted over selected range
+      try {
+        const { data: quotesRows } = await supabase
+          .from('quotes')
+          .select('created_at, quote_date, status, company_id')
+          .eq('company_id', profile.company_id);
+        const rangeStartIso = months[0].start.toISOString();
+        const rangeEndIso = months[months.length - 1].end.toISOString();
+        let accepted = 0; let unaccepted = 0;
+        (quotesRows || []).forEach((q: any) => {
+          const dtIso = new Date(String(q.quote_date || q.created_at || new Date())).toISOString();
+          if (dtIso < rangeStartIso || dtIso > rangeEndIso) return;
+          const st = String(q.status || '').toLowerCase();
+          if (st === 'accepted' || st === 'approved') accepted += 1; else unaccepted += 1;
+        });
+        setQuotesAcceptanceDonut([
+          { name: 'Accepted', value: accepted },
+          { name: 'Unaccepted', value: unaccepted }
+        ]);
+      } catch {}
+
 
       const { data: banks } = await supabase
         .from('bank_accounts')
@@ -824,7 +949,22 @@ export const DashboardOverview = () => {
           .slice(0, 10);
         setInventoryLevels(stocks);
       } catch {}
-      setBsComposition([{ label: 'Composition', assets: Number(newMetrics.totalAssets || 0), liabilities: Number(newMetrics.totalLiabilities || 0), equity: Number(newMetrics.totalEquity || 0) }]);
+      const bsBuckets: Record<string, { assets: number; liabilities: number; equity: number; label: string }> = {};
+      months.forEach(m => { bsBuckets[m.label] = { assets: 0, liabilities: 0, equity: 0, label: m.label }; });
+      (teRange || []).forEach((e: any) => {
+        const dt = new Date(String(e.transactions?.transaction_date || new Date()));
+        const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+        if (!bsBuckets[label]) return;
+        const id = String(e.account_id || '');
+        const type = (typeByIdAll.get(id) || '').toLowerCase();
+        const debit = Number(e.debit || 0);
+        const credit = Number(e.credit || 0);
+        if (type === 'asset') bsBuckets[label].assets += (debit - credit);
+        else if (type === 'liability') bsBuckets[label].liabilities += (credit - debit);
+        else if (type === 'equity') bsBuckets[label].equity += (credit - debit);
+      });
+      const bsSeries = Object.values(bsBuckets).map(r => ({ label: r.label, assets: Number(r.assets.toFixed(2)), liabilities: Number(r.liabilities.toFixed(2)), equity: Number(r.equity.toFixed(2)) }));
+      setBsComposition(bsSeries);
       const min = Math.max(10000, Number(newMetrics.operatingExpenses || 0));
       setSafeMinimum(min);
       const cashPct = min > 0 ? Math.min(100, Math.max(0, (Number(newMetrics.bankBalance || 0) / min) * 100)) : 0;
@@ -1031,11 +1171,18 @@ export const DashboardOverview = () => {
     '#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6',
     '#06B6D4', '#84CC16', '#EC4899', '#F43F5E', '#10B981'
   ];
+  const PRODUCT_COLORS = [
+    '#0EA5E9', '#F97316', '#22C55E', '#F59E0B', '#EF4444',
+    '#8B5CF6', '#06B6D4', '#84CC16', '#EC4899', '#10B981'
+  ];
+  const QUOTE_COLORS = ['#22C55E', '#EF4444'];
   const POS_COLORS = ['#22C55E', '#10B981', '#06B6D4', '#3B82F6'];
   const NEG_COLORS = ['#EF4444', '#F97316', '#DC2626', '#F43F5E'];
   const [expenseWheelInner, setExpenseWheelInner] = useState<any[]>([]);
   const [incomeWheelInner, setIncomeWheelInner] = useState<any[]>([]);
   const [incomeWheelOuter, setIncomeWheelOuter] = useState<any[]>([]);
+  const [topProductsDonut, setTopProductsDonut] = useState<Array<{ name: string; value: number }>>([]);
+  const [quotesAcceptanceDonut, setQuotesAcceptanceDonut] = useState<Array<{ name: string; value: number }>>([]);
 
   if (loading) {
     return <div className="flex items-center justify-center h-96">
@@ -1059,6 +1206,7 @@ export const DashboardOverview = () => {
                 <Button variant="outline" onClick={() => navigate('/purchase')}>Go to Purchase</Button>
                 <Button variant="outline" onClick={() => navigate('/customers')}>Go to Customers</Button>
                 <Button variant="outline" onClick={() => navigate('/payroll')}>Go to Payroll</Button>
+                <Button variant="outline" onClick={() => navigate('/investments')}>Go to Investments</Button>
                 <Button variant="outline" onClick={() => navigate('/reports')}>View Reports</Button>
               </div>
             </div>
@@ -1501,16 +1649,16 @@ export const DashboardOverview = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={bsComposition}>
+                <ComposedChart data={bsComposition}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="label" stroke="hsl(var(--muted-foreground))" />
                   <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} />
                   <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, n: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, n]} />
                   <Legend />
-                  <Bar dataKey="assets" name="Assets" stackId="bs" fill="#22C55E" />
-                  <Bar dataKey="liabilities" name="Liabilities" stackId="bs" fill="#EF4444" />
-                  <Bar dataKey="equity" name="Equity" stackId="bs" fill="#3B82F6" />
-                </BarChart>
+                  <Bar dataKey="assets" name="Assets" fill="#10B981" radius={[8,8,0,0]} />
+                  <Bar dataKey="liabilities" name="Liabilities" fill="#EF4444" radius={[8,8,0,0]} />
+                  <Line type="monotone" dataKey="equity" stroke="#3B82F6" strokeWidth={2} name="Equity" />
+                </ComposedChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
@@ -1556,21 +1704,23 @@ export const DashboardOverview = () => {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={assetTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                <BarChart data={assetTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                  <defs>
+                    <linearGradient id="nbvBar" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#22C55E" stopOpacity={0.9} />
+                      <stop offset="100%" stopColor="#16A34A" stopOpacity={0.7} />
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
                   <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} />
-                  <Tooltip 
+                  <Tooltip
                     formatter={(value: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, 'Net Book Value']}
-                    contentStyle={{ 
-                      backgroundColor: 'hsl(var(--card))', 
-                      border: '1px solid hsl(var(--border))',
-                      borderRadius: '6px'
-                    }} 
+                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }}
                   />
                   <Legend />
-                  <Line type="monotone" dataKey="nbv" name="Net Book Value" stroke="#22c55e" strokeWidth={2} dot={false} />
-                </LineChart>
+                  <Bar dataKey="nbv" name="Net Book Value" fill="url(#nbvBar)" radius={[6, 6, 0, 0]} />
+                </BarChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
@@ -1621,6 +1771,82 @@ export const DashboardOverview = () => {
 
       
 
+      {/* Sales & Quotes Donuts */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card className="card-professional">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-primary" />
+              Revenue by Category
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {revenueByCategory.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No revenue data in selected range</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={revenueByCategory}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
+                  <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} formatter={(value: number) => [`R ${Number(value).toLocaleString('en-ZA')}`, '']} />
+                  <Legend />
+                  <Bar dataKey="products" stackId="rev" fill="#3B82F6" name="Products" radius={[0,0,0,0]} />
+                  <Bar dataKey="services" stackId="rev" fill="#10B981" name="Services" radius={[0,0,0,0]} />
+                  <Bar dataKey="consulting" stackId="rev" fill="#F59E0B" name="Consulting" radius={[8,8,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+        <Card className="card-professional">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-primary" />
+              Top Sales Products
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {topProductsDonut.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No product sales in selected range</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <PieChart>
+                  <Pie data={topProductsDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                    {topProductsDonut.map((entry, index) => (
+                      <Cell key={`cell-prod-${index}`} fill={PRODUCT_COLORS[index % PRODUCT_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+        <Card className="card-professional">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-primary" />
+              Quotes Accepted vs Unaccepted
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={260}>
+              <PieChart>
+                <Pie data={quotesAcceptanceDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                  {quotesAcceptanceDonut.map((entry, index) => (
+                    <Cell key={`cell-q-${index}`} fill={QUOTE_COLORS[index % QUOTE_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [Number(v), p?.payload?.name]} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Recent & Summary at End */}
       <div className="grid gap-6 lg:grid-cols-2">
           {widgets.trialBalance && (
@@ -1669,29 +1895,54 @@ export const DashboardOverview = () => {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Receipt className="h-5 w-5 text-primary" />
-                  Recent Transactions
+                  To-Do List
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {recentTransactions.map((transaction) => (
-                    <div key={transaction.id} className="flex items-center justify-between py-3 border-b border-border last:border-0">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3">
-                          <div className={`w-2 h-8 rounded-full ${
-                            transaction.type === 'income' ? 'bg-primary' : 'bg-accent'
-                          }`} />
-                          <div>
-                            <p className="font-medium text-foreground">{transaction.description}</p>
-                            <p className="text-sm text-muted-foreground">{transaction.id} • {transaction.date}</p>
-                          </div>
-                        </div>
+                <div className="space-y-2">
+                  {todoItems.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                      <div className="flex items-center gap-3">
+                        <input type="checkbox" checked={item.done} onChange={() => toggleTodo(item.id)} />
+                        <span className={`text-sm ${item.done ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{item.label}</span>
                       </div>
-                      <div className="font-semibold text-foreground">{transaction.amount}</div>
+                      {!item.done && (
+                        <div className="flex items-center gap-2">
+                          {item.id === 'todo-connect-bank' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Open Bank</Button>
+                          )}
+                          {item.id === 'todo-import-statement' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Import CSV</Button>
+                          )}
+                          {item.id === 'todo-reconcile-month' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Reconcile</Button>
+                          )}
+                          {item.id === 'todo-approve-transactions' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/transactions')}>Approve</Button>
+                          )}
+                          {item.id === 'todo-first-invoice' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/sales')}>Invoice</Button>
+                          )}
+                          {item.id === 'todo-first-bill' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/purchase')}>Bill</Button>
+                          )}
+                          {item.id === 'todo-lock-period' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Lock</Button>
+                          )}
+                          {item.id === 'todo-recon-report' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/reports')}>Report</Button>
+                          )}
+                          {item.id === 'todo-outstanding' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Outstanding</Button>
+                          )}
+                          {item.id === 'todo-bank-rules' && (
+                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Rules</Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
-                <Button variant="outline" className="w-full mt-4" onClick={() => navigate('/transactions')}>View All Transactions</Button>
               </CardContent>
             </Card>
           )}

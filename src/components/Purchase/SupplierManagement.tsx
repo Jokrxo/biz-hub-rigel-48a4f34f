@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Building2, Plus, Mail, Phone } from "lucide-react";
+import { Building2, Plus, Mail, Phone, FileText } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
@@ -34,6 +34,8 @@ export const SupplierManagement = () => {
     phone: "",
     address: "",
     tax_number: "",
+    opening_balance: "",
+    opening_balance_date: new Date().toISOString().slice(0, 10),
   });
 
   const loadSuppliers = useCallback(async () => {
@@ -70,22 +72,76 @@ export const SupplierManagement = () => {
     }
 
     try {
+      if (formData.phone) {
+        const { isTenDigitPhone } = await import("@/lib/validators");
+        if (!isTenDigitPhone(formData.phone)) {
+          toast({ title: "Invalid phone", description: "Phone number must be 10 digits", variant: "destructive" });
+          return;
+        }
+      }
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user?.id)
         .single();
 
-      const { error } = await supabase.from("suppliers").insert({
+      const { error, data: inserted } = await supabase.from("suppliers").insert({
         company_id: profile!.company_id,
         ...formData,
-      });
+      }).select('id').single();
 
       if (error) throw error;
 
       toast({ title: "Success", description: "Supplier added successfully" });
       setDialogOpen(false);
-      setFormData({ name: "", email: "", phone: "", address: "", tax_number: "" });
+      // Post opening balance to Accounts Payable if provided
+      try {
+        const obAmt = Number(formData.opening_balance || 0);
+        if (obAmt > 0) {
+          const { data: accounts } = await supabase
+            .from('chart_of_accounts')
+            .select('id, account_name, account_type, account_code')
+            .eq('company_id', profile!.company_id)
+            .eq('is_active', true);
+          const list = (accounts || []).map(a => ({ id: String(a.id), name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+          const pick = (type: string, codes: string[], names: string[]) => {
+            const byCode = list.find(a => a.type === type && codes.includes(a.code));
+            if (byCode) return byCode.id;
+            const byName = list.find(a => a.type === type && names.some(n => a.name.includes(n)));
+            if (byName) return byName.id;
+            const byType = list.find(a => a.type === type);
+            return byType?.id || "";
+          };
+          const apId = pick('liability', ['2000'], ['accounts payable','payable']);
+          const equityObId = pick('equity', ['3999'], ['opening balance','opening']);
+          if (apId) {
+            const { data: tx } = await supabase
+              .from('transactions')
+              .insert({
+                company_id: profile!.company_id,
+                user_id: user?.id,
+                transaction_date: formData.opening_balance_date,
+                description: `Opening balance for supplier ${formData.name}`,
+                reference_number: `SUP-OB-${inserted?.id || ''}`,
+                total_amount: obAmt,
+                transaction_type: 'opening',
+                status: 'posted'
+              })
+              .select('id')
+              .single();
+            if (tx?.id) {
+              const rows = [
+                { transaction_id: tx.id, account_id: equityObId || pick('equity', [], ['equity']), debit: obAmt, credit: 0, description: 'Opening Balance Equity', status: 'approved' },
+                { transaction_id: tx.id, account_id: apId, debit: 0, credit: obAmt, description: 'Accounts Payable', status: 'approved' }
+              ];
+              await supabase.from('transaction_entries').insert(rows as any);
+              const ledgerRows = rows.map(r => ({ company_id: profile!.company_id, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: formData.opening_balance_date, is_reversed: false, transaction_id: tx.id, description: r.description }));
+              await supabase.from('ledger_entries').insert(ledgerRows as any);
+            }
+          }
+        }
+      } catch {}
+      setFormData({ name: "", email: "", phone: "", address: "", tax_number: "", opening_balance: "", opening_balance_date: new Date().toISOString().slice(0, 10) });
       loadSuppliers();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -99,6 +155,8 @@ export const SupplierManagement = () => {
   const start = page * pageSize;
   const pagedSuppliers = suppliers.slice(start, start + pageSize);
   useEffect(() => { setPage(0); }, [suppliers.length]);
+  const [statementOpen, setStatementOpen] = useState<boolean>(false);
+  const [statementSupplier, setStatementSupplier] = useState<Supplier | null>(null);
 
   return (
     <Card className="mt-6">
@@ -155,14 +213,33 @@ export const SupplierManagement = () => {
                       placeholder="Physical address"
                     />
                   </div>
+                <div>
+                  <Label>Tax Number</Label>
+                  <Input
+                    value={formData.tax_number}
+                    onChange={(e) => setFormData({ ...formData, tax_number: e.target.value })}
+                    placeholder="Tax registration number"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label>Tax Number</Label>
+                    <Label>Opening Balance</Label>
                     <Input
-                      value={formData.tax_number}
-                      onChange={(e) => setFormData({ ...formData, tax_number: e.target.value })}
-                      placeholder="Tax registration number"
+                      type="number"
+                      value={formData.opening_balance}
+                      onChange={(e) => setFormData({ ...formData, opening_balance: e.target.value })}
+                      placeholder="0.00"
                     />
                   </div>
+                  <div>
+                    <Label>Opening Balance Date</Label>
+                    <Input
+                      type="date"
+                      value={formData.opening_balance_date}
+                      onChange={(e) => setFormData({ ...formData, opening_balance_date: e.target.value })}
+                    />
+                  </div>
+                </div>
                   <Button type="submit" className="w-full bg-gradient-primary">
                     Add Supplier
                   </Button>
@@ -185,6 +262,7 @@ export const SupplierManagement = () => {
                 <TableHead>Supplier Name</TableHead>
                 <TableHead>Contact</TableHead>
                 <TableHead>Tax Number</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -208,6 +286,11 @@ export const SupplierManagement = () => {
                     </div>
                   </TableCell>
                   <TableCell className="text-muted-foreground">{supplier.tax_number || "-"}</TableCell>
+                  <TableCell className="text-right">
+                    <Button size="sm" variant="outline" onClick={() => { setStatementSupplier(supplier); setStatementOpen(true); }}>
+                      <FileText className="h-3 w-3 mr-1" /> Statement
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -224,6 +307,13 @@ export const SupplierManagement = () => {
           </>
         )}
       </CardContent>
+      <SupplierStatement
+        supplierId={statementSupplier?.id || ""}
+        supplierName={statementSupplier?.name || ""}
+        open={statementOpen}
+        onOpenChange={(v) => { setStatementOpen(v); if (!v) setStatementSupplier(null); }}
+      />
     </Card>
   );
 };
+import { SupplierStatement } from "@/components/Purchase/SupplierStatement";

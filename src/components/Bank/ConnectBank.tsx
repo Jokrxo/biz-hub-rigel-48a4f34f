@@ -41,6 +41,13 @@ export const ConnectBank = () => {
       });
       return;
     }
+    {
+      const { isValidBankAccountNumber } = await import("@/lib/validators");
+      if (!isValidBankAccountNumber(accountNumber)) {
+        toast({ title: "Invalid account number", description: "Bank account number must be 10–20 digits", variant: "destructive" });
+        return;
+      }
+    }
 
     setIsConnecting(true);
     

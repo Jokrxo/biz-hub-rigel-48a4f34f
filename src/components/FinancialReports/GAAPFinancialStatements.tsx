@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,6 @@ import { RefreshCw, Download, Eye, Calendar, FileDown } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { exportFinancialReportToExcel, exportFinancialReportToPDF, exportComparativeCashFlowToExcel, exportComparativeCashFlowToPDF } from "@/lib/export-utils";
 import { systemOverview, accountingPrimer } from "@/components/Stella/knowledge";
 import StellaAdvisor from "@/components/Stella/StellaAdvisor";
@@ -99,6 +98,8 @@ export const GAAPFinancialStatements = () => {
   } | null>(null);
   const [trialBalancePrev, setTrialBalancePrev] = useState<TrialBalanceRow[]>([]);
   const [trialBalancePrevPrev, setTrialBalancePrevPrev] = useState<TrialBalanceRow[]>([]);
+  const [trialBalanceCompAsOfA, setTrialBalanceCompAsOfA] = useState<TrialBalanceRow[]>([]);
+  const [trialBalanceCompAsOfB, setTrialBalanceCompAsOfB] = useState<TrialBalanceRow[]>([]);
   const [fallbackCOGSPrev, setFallbackCOGSPrev] = useState<number>(0);
   const [comparativeLoading, setComparativeLoading] = useState(false);
   const [comparativeYearA, setComparativeYearA] = useState<number>(() => new Date().getFullYear());
@@ -118,6 +119,14 @@ export const GAAPFinancialStatements = () => {
   const [loanFinancedAcqPrev, setLoanFinancedAcqPrev] = useState<number>(0);
   const [showFilters, setShowFilters] = useState(false);
   const [showAdviceModal, setShowAdviceModal] = useState(false);
+  const [trialBalanceAsOf, setTrialBalanceAsOf] = useState<TrialBalanceRow[]>([]);
+  const [retainedOpeningYTD, setRetainedOpeningYTD] = useState<number>(0);
+  const [netProfitPeriod, setNetProfitPeriod] = useState<number>(0);
+  const [vatReceivableAsOf, setVatReceivableAsOf] = useState<number>(0);
+  const [vatPayableAsOf, setVatPayableAsOf] = useState<number>(0);
+  const [monthlyAFSError, setMonthlyAFSError] = useState<string | null>(null);
+  const [monthlyAFSData, setMonthlyAFSData] = useState<any[]>([]);
+  const [monthlyAFSLoading, setMonthlyAFSLoading] = useState(false);
 
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd]);
 
@@ -144,12 +153,13 @@ export const GAAPFinancialStatements = () => {
       loadComparativeData();
     }
   }, [activeTab, periodMode, selectedYear]);
+  useEffect(() => { if (activeTab === 'monthly-report') { loadMonthlyAFS(); } }, [activeTab, selectedYear]);
 
   useEffect(() => {
     const toLower = (s: string) => String(s || '').toLowerCase();
-    const assets = trialBalance.filter(r => toLower(r.account_type) === 'asset');
-    const liabilities = trialBalance.filter(r => toLower(r.account_type) === 'liability');
-    const equityRows = trialBalance.filter(r => toLower(r.account_type) === 'equity');
+    const assets = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'asset');
+    const liabilities = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'liability');
+    const equityRows = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'equity');
     const isCurrentAsset = (r: any) => (
       toLower(r.account_type) === 'asset' && (
         toLower(r.account_name).includes('cash') ||
@@ -159,9 +169,22 @@ export const GAAPFinancialStatements = () => {
         parseInt(String(r.account_code || '0'), 10) < 1500
       ) && !toLower(r.account_name).includes('vat') && !['1210','2110','2210'].includes(String(r.account_code || ''))
     );
-    const currentAssets = trialBalance.filter(isCurrentAsset);
+    const currentAssets = assets.filter(isCurrentAsset);
     const totalCurrentAssets = currentAssets.reduce((s, r) => s + Number(r.balance || 0), 0) + Math.max(0, -vatNet);
-    const totalNonCurrentAssets = ppeBookValue;
+    const nonCurrentAssetsAll = assets.filter(r => !currentAssets.includes(r));
+    const accDepRowsEq = nonCurrentAssetsAll.filter(r => String(r.account_name || '').toLowerCase().includes('accumulated'));
+    const nonCurrentAssetsEq = nonCurrentAssetsAll.filter(r => !String(r.account_name || '').toLowerCase().includes('accumulated'));
+    const normalizeNameEq = (name: string) => String(name || '').toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    const nbvForEq = (assetRow: any) => {
+      const base = normalizeNameEq(assetRow.account_name);
+      const related = accDepRowsEq.filter(ad => {
+        const adBase = normalizeNameEq(ad.account_name);
+        return adBase.includes(base) || base.includes(adBase);
+      });
+      const accTotal = related.reduce((sum, r) => sum + Number(r.balance || 0), 0);
+      return Number(assetRow.balance || 0) - accTotal;
+    };
+    const totalNonCurrentAssets = nonCurrentAssetsEq.reduce((s, a) => s + nbvForEq(a), 0);
     const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
 
     const liabilitiesExVat = liabilities.filter(r => !toLower(r.account_name).includes('vat') && !['2100','2200'].includes(String(r.account_code || '')));
@@ -182,10 +205,10 @@ export const GAAPFinancialStatements = () => {
     const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((s, r) => s + Number(r.balance || 0), 0);
     const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
 
-    const revenueRows = trialBalance.filter(r => toLower(r.account_type) === 'revenue' || toLower(r.account_type) === 'income');
-    const expenseRows = trialBalance.filter(r => toLower(r.account_type) === 'expense' && !toLower(r.account_name).includes('vat'));
-    const totalRevenue = revenueRows.reduce((s, r) => s + Number(r.balance || 0), 0);
-    const totalExpenses = expenseRows.reduce((s, r) => s + Number(r.balance || 0), 0);
+    const revenueRowsPeriod = trialBalance.filter(r => toLower(r.account_type) === 'revenue' || toLower(r.account_type) === 'income');
+    const expenseRowsPeriod = trialBalance.filter(r => toLower(r.account_type) === 'expense' && !toLower(r.account_name).includes('vat'));
+    const totalRevenue = revenueRowsPeriod.reduce((s, r) => s + Number(r.balance || 0), 0);
+    const totalExpenses = expenseRowsPeriod.reduce((s, r) => s + Number(r.balance || 0), 0);
     const netProfitForPeriod = totalRevenue - totalExpenses;
     const totalEquityBase = equityRows.reduce((s, r) => s + Number(r.balance || 0), 0);
     const totalEquity = totalEquityBase + netProfitForPeriod + openingEquityTotal;
@@ -200,7 +223,7 @@ export const GAAPFinancialStatements = () => {
       difference: diff,
       error_message: ok ? 'Accounting equation holds for selected period' : `ERROR: Assets (${totalAssets}) ≠ Liabilities (${totalLiabilities}) + Equity (${totalEquity}) | Difference: ${diff}`,
     });
-  }, [trialBalance, vatNet, ppeBookValue, openingEquityTotal, periodStart, periodEnd]);
+  }, [trialBalance, trialBalanceAsOf, vatNet, ppeBookValue, openingEquityTotal, periodEnd]);
 
   async function loadFinancialData() {
     setLoading(true);
@@ -229,17 +252,74 @@ export const GAAPFinancialStatements = () => {
         balance: Number(r.balance || 0),
       }));
       setTrialBalance(normalized);
+      const totalRevPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'revenue' || String(r.account_type || '').toLowerCase() === 'income').reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+      const totalExpPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat')).reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+      setNetProfitPeriod(totalRevPeriod - totalExpPeriod);
+
+      // Fetch cumulative trial balance as of period end for balance sheet
+      const tbAsOf = await fetchTrialBalanceAsOf(companyProfile.company_id, periodEnd);
+      const normalizedAsOf = (tbAsOf || []).map((r: any) => ({
+        account_id: String(r.account_id || ''),
+        account_code: String(r.account_code || ''),
+        account_name: String(r.account_name || ''),
+        account_type: String(r.account_type || ''),
+        normal_balance: String(r.normal_balance || 'debit'),
+        total_debits: Number(r.total_debits || 0),
+        total_credits: Number(r.total_credits || 0),
+        balance: Number(r.balance || 0),
+      }));
+      setTrialBalanceAsOf(normalizedAsOf);
+      const vatRecvSum = normalizedAsOf
+        .filter((r: any) => String(r.account_type || '').toLowerCase() === 'asset' && (String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable')))
+        .reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
+      const vatPaySum = normalizedAsOf
+        .filter((r: any) => String(r.account_type || '').toLowerCase() === 'liability' && String(r.account_name || '').toLowerCase().includes('vat'))
+        .reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
+      setVatReceivableAsOf(vatRecvSum);
+      setVatPayableAsOf(vatPaySum);
+      if (periodMode === 'monthly') {
+        const startObj = new Date(periodStart);
+        const ytdStartObj = new Date(startObj.getFullYear(), 0, 1);
+        const prevEndObj = new Date(startObj);
+        prevEndObj.setDate(prevEndObj.getDate() - 1);
+        prevEndObj.setHours(23, 59, 59, 999);
+        const ytdStart = ytdStartObj.toISOString().split('T')[0];
+        const prevEnd = prevEndObj.toISOString().split('T')[0];
+        const tbYTD = await fetchTrialBalanceForPeriod(companyProfile.company_id, ytdStart, prevEnd);
+        const normalizedYTD = (tbYTD || []).map((r: any) => ({
+          account_id: String(r.account_id || ''),
+          account_code: String(r.account_code || ''),
+          account_name: String(r.account_name || ''),
+          account_type: String(r.account_type || ''),
+          normal_balance: String(r.normal_balance || 'credit'),
+          total_debits: Number(r.total_debits || 0),
+          total_credits: Number(r.total_credits || 0),
+          balance: Number(r.balance || 0),
+        }));
+        const totalRevYTD = normalizedYTD.filter((r: any) => String(r.account_type || '').toLowerCase() === 'revenue' || String(r.account_type || '').toLowerCase() === 'income').reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+        const totalExpYTD = normalizedYTD.filter((r: any) => String(r.account_type || '').toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat')).reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+        setRetainedOpeningYTD(totalRevYTD - totalExpYTD);
+      } else {
+        setRetainedOpeningYTD(0);
+      }
 
       const cogsFallback = await calculateCOGSFromInvoices(companyProfile.company_id, periodStart, periodEnd);
       setFallbackCOGS(cogsFallback);
 
-      const { data: fa } = await supabase
-        .from('fixed_assets')
-        .select('cost, accumulated_depreciation, status')
-        .eq('company_id', companyProfile.company_id);
-      const ppeSum = (fa || [])
-        .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
-        .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
+      const assetsAsOf = normalizedAsOf.filter((r: any) => String(r.account_type || '').toLowerCase() === 'asset');
+      const accDepRowsAsOf = assetsAsOf.filter((r: any) => String(r.account_name || '').toLowerCase().includes('accumulated'));
+      const nonCurrentAssetsAsOf = assetsAsOf.filter((r: any) => !String(r.account_name || '').toLowerCase().includes('accumulated') && parseInt(String(r.account_code || '0'), 10) >= 1500);
+      const normalizeNameAsOf = (name: string) => String(name || '').toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+      const nbvForAsOf = (assetRow: any) => {
+        const base = normalizeNameAsOf(assetRow.account_name);
+        const related = accDepRowsAsOf.filter((ad: any) => {
+          const adBase = normalizeNameAsOf(ad.account_name);
+          return adBase.includes(base) || base.includes(adBase);
+        });
+        const accTotal = related.reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
+        return Number(assetRow.balance || 0) - accTotal;
+      };
+      const ppeSum = nonCurrentAssetsAsOf.reduce((sum: number, a: any) => sum + nbvForAsOf(a), 0);
       setPpeBookValue(ppeSum);
 
       // Aggregate opening balances into 3900: Opening Balance Equity
@@ -346,8 +426,8 @@ export const GAAPFinancialStatements = () => {
       const yAEnd = new Date(comparativeYearA, 11, 31).toISOString().split('T')[0];
       const yBStart = new Date(comparativeYearB, 0, 1).toISOString().split('T')[0];
       const yBEnd = new Date(comparativeYearB, 11, 31).toISOString().split('T')[0];
-      const tbYearBData = await fetchTrialBalanceForPeriod(companyProfile.company_id, yBStart, yBEnd);
-      const normalizedPrev = (tbYearBData || []).map((r: any) => ({
+      const tbYearBPeriod = await fetchTrialBalanceForPeriod(companyProfile.company_id, yBStart, yBEnd);
+      const normalizedPrev = (tbYearBPeriod || []).map((r: any) => ({
         account_id: String(r.account_id || ''),
         account_code: String(r.account_code || ''),
         account_name: String(r.account_name || ''),
@@ -358,8 +438,8 @@ export const GAAPFinancialStatements = () => {
         balance: Number(r.balance || 0),
       }));
       setTrialBalancePrev(normalizedPrev);
-      const tbYearAData = await fetchTrialBalanceForPeriod(companyProfile.company_id, yAStart, yAEnd);
-      const normalizedYearA = (tbYearAData || []).map((r: any) => ({
+      const tbYearAPeriod = await fetchTrialBalanceForPeriod(companyProfile.company_id, yAStart, yAEnd);
+      const normalizedYearA = (tbYearAPeriod || []).map((r: any) => ({
         account_id: String(r.account_id || ''),
         account_code: String(r.account_code || ''),
         account_name: String(r.account_name || ''),
@@ -370,6 +450,30 @@ export const GAAPFinancialStatements = () => {
         balance: Number(r.balance || 0),
       }));
       setTrialBalance(normalizedYearA);
+      const tbYearAAsOf = await fetchTrialBalanceAsOf(companyProfile.company_id, yAEnd);
+      const tbYearBAsOf = await fetchTrialBalanceAsOf(companyProfile.company_id, yBEnd);
+      const normalizedAsOfA = (tbYearAAsOf || []).map((r: any) => ({
+        account_id: String(r.account_id || ''),
+        account_code: String(r.account_code || ''),
+        account_name: String(r.account_name || ''),
+        account_type: String(r.account_type || ''),
+        normal_balance: String(r.normal_balance || 'debit'),
+        total_debits: Number(r.total_debits || 0),
+        total_credits: Number(r.total_credits || 0),
+        balance: Number(r.balance || 0),
+      }));
+      const normalizedAsOfB = (tbYearBAsOf || []).map((r: any) => ({
+        account_id: String(r.account_id || ''),
+        account_code: String(r.account_code || ''),
+        account_name: String(r.account_name || ''),
+        account_type: String(r.account_type || ''),
+        normal_balance: String(r.normal_balance || 'debit'),
+        total_debits: Number(r.total_debits || 0),
+        total_credits: Number(r.total_credits || 0),
+        balance: Number(r.balance || 0),
+      }));
+      setTrialBalanceCompAsOfA(normalizedAsOfA);
+      setTrialBalanceCompAsOfB(normalizedAsOfB);
       setTrialBalancePrevPrev([]);
       const cogsPrev = await calculateCOGSFromInvoices(companyProfile.company_id, yBStart, yBEnd);
       setFallbackCOGSPrev(cogsPrev);
@@ -523,6 +627,133 @@ export const GAAPFinancialStatements = () => {
     }
   };
 
+  const buildMonthlyRanges = (year: number) => {
+    const labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return labels.map((label, idx) => {
+      const start = new Date(year, idx, 1);
+      const end = new Date(year, idx + 1, 0);
+      return {
+        label,
+        start: start.toISOString().split('T')[0],
+        end: end.toISOString().split('T')[0],
+      };
+    });
+  };
+
+  const loadMonthlyAFS = async () => {
+    setMonthlyAFSError(null);
+    setMonthlyAFSLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Not authenticated');
+      const { data: companyProfile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .single();
+      if (!companyProfile?.company_id) throw new Error('Company not found');
+
+      const ranges = buildMonthlyRanges(selectedYear);
+      const rows = await Promise.all(ranges.map(async (r) => {
+        const [tbPeriod, tbAsOf, cogs, cf] = await Promise.all([
+          fetchTrialBalanceForPeriod(companyProfile.company_id, r.start, r.end),
+          fetchTrialBalanceAsOf(companyProfile.company_id, r.end),
+          calculateCOGSFromInvoices(companyProfile.company_id, r.start, r.end),
+          getCashFlowForPeriod(companyProfile.company_id, r.start, r.end),
+        ]);
+        const toLower = (s: string) => String(s || '').toLowerCase();
+        const currentAssetsItems = (tbAsOf || [])
+          .filter((x: any) => toLower(x.account_type) === 'asset')
+          .filter((x: any) => (
+            toLower(x.account_name).includes('cash') ||
+            toLower(x.account_name).includes('bank') ||
+            toLower(x.account_name).includes('receivable') ||
+            toLower(x.account_name).includes('inventory') ||
+            parseInt(String(x.account_code || '0'), 10) < 1500
+          ))
+          .filter((x: any) => !toLower(x.account_name).includes('vat'))
+          .filter((x: any) => !['1210','2110','2210'].includes(String(x.account_code || '')))
+          .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
+        const vatReceivableItem = {
+          label: 'VAT Receivable',
+          amount: (tbAsOf || [])
+            .filter((x: any) => toLower(x.account_type) === 'asset' && (toLower(x.account_name).includes('vat input') || toLower(x.account_name).includes('vat receivable')))
+            .reduce((s: number, x: any) => s + Number(x.balance || 0), 0),
+        };
+        const liabilitiesExVat = (tbAsOf || [])
+          .filter((x: any) => toLower(x.account_type) === 'liability' && !toLower(x.account_name).includes('vat') && !['2100','2200'].includes(String(x.account_code || '')));
+        const currentLiabilitiesItems = liabilitiesExVat
+          .filter((x: any) => {
+            const name = toLower(x.account_name);
+            const code = String(x.account_code || '');
+            const isLoan = name.includes('loan');
+            const isLongLoan = isLoan && (code === '2400' || name.includes('long'));
+            const isShortLoan = isLoan && (code === '2300' || name.includes('short'));
+            const isPayableOrSars = name.includes('payable') || name.includes('sars');
+            const isCodeCurrent = parseInt(code || '0', 10) < 2300;
+            if (code === '2400') return false;
+            return isShortLoan || ((isPayableOrSars || isCodeCurrent) && !isLongLoan);
+          })
+          .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
+        const vatPayableItem = {
+          label: 'VAT Payable',
+          amount: (tbAsOf || [])
+            .filter((x: any) => toLower(x.account_type) === 'liability' && toLower(x.account_name).includes('vat'))
+            .reduce((s: number, x: any) => s + Number(x.balance || 0), 0),
+        };
+        const currentSet = new Set(currentLiabilitiesItems.map(i => i.label));
+        const nonCurrentLiabilitiesItems = (tbAsOf || [])
+          .filter((x: any) => toLower(x.account_type) === 'liability')
+          .filter((x: any) => !currentSet.has(`${x.account_code} - ${x.account_name}`))
+          .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
+        const equityItems = (tbAsOf || [])
+          .filter((x: any) => toLower(x.account_type) === 'equity')
+          .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
+        const revenueRows = (tbPeriod || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'revenue' || String(x.account_type || '').toLowerCase() === 'income');
+        const expenseRows = (tbPeriod || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'expense');
+        const costOfSalesRows = expenseRows.filter((x: any) => String(x.account_name || '').toLowerCase().includes('cost of') || String(x.account_code || '').startsWith('50'));
+        const opexRows = expenseRows.filter((x: any) => !costOfSalesRows.includes(x)).filter((x: any) => !String(x.account_name || '').toLowerCase().includes('vat'));
+        const sum = (arr: any[]) => (arr || []).reduce((s, e) => s + Number(e.balance || 0), 0);
+        const revenue = sum(revenueRows);
+        const costOfSalesRaw = sum(costOfSalesRows);
+        const costOfSales = costOfSalesRaw > 0 ? costOfSalesRaw : cogs;
+        const grossProfit = revenue - costOfSales;
+        const opex = sum(opexRows);
+        const netProfit = grossProfit - opex;
+        const bs = bsGroups(tbAsOf || []);
+        return {
+          label: r.label,
+          bs,
+          bsDetail: {
+            currentAssetsItems: [...currentAssetsItems, vatReceivableItem],
+            currentLiabilitiesItems: [...currentLiabilitiesItems, vatPayableItem],
+            nonCurrentLiabilitiesItems,
+            equityItems,
+          },
+          pl: { revenue, costOfSales, grossProfit, opex, netProfit },
+          plDetail: {
+            revenueItems: (revenueRows || []).map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) })),
+            cogsItems: (costOfSalesRows || []).map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) })),
+            opexItems: (opexRows || []).map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) })),
+          },
+          cf: {
+            netOperating: Number(cf?.net_cash_from_operations || 0),
+            netInvesting: Number(cf?.net_cash_from_investing || 0),
+            netFinancing: Number(cf?.net_cash_from_financing || 0),
+            netChange: Number(cf?.net_change_in_cash || 0),
+            opening: Number(cf?.opening_cash_balance || 0),
+            closing: Number(cf?.closing_cash_balance || 0),
+          },
+        } as any;
+      }));
+      setMonthlyAFSData(rows);
+    } catch (e: any) {
+      setMonthlyAFSError(e.message || 'Failed to load monthly AFS');
+    } finally {
+      setMonthlyAFSLoading(false);
+    }
+  };
+
   const handleStatementExport = (report: 'bs' | 'pl' | 'cf', type: 'pdf' | 'excel') => {
     try {
       if (report === 'bs') {
@@ -560,8 +791,8 @@ export const GAAPFinancialStatements = () => {
     const isLoanLiability = (r: any) => r.account_type.toLowerCase() === 'liability' && r.account_name.toLowerCase().includes('loan');
     const loanShort = trialBalance.filter(r => isLoanLiability(r) && (String(r.account_code) === '2300' || r.account_name.toLowerCase().includes('short')));
     const currentLiabilities = [...currentLiabilitiesBase, ...loanShort.filter(ls => !currentLiabilitiesBase.some(b => b.account_id === ls.account_id))];
-        const vatInputAsAssets = trialBalance.filter(r =>
-          (r.account_name.toLowerCase().includes('vat input') || r.account_name.toLowerCase().includes('vat receivable'))
+        const vatInputAsAssets = trialBalanceAsOf.filter(r =>
+          (String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable'))
         );
         const currentSet = new Set(currentLiabilities.map(r => r.account_id));
         const nonCurrentLiabilities = trialBalance.filter(r => r.account_type.toLowerCase() === 'liability' && !currentSet.has(r.account_id));
@@ -571,19 +802,25 @@ export const GAAPFinancialStatements = () => {
         const totalRevenue = revenueRows.reduce((sum, r) => sum + r.balance, 0);
         const totalExpenses = expenseRows.reduce((sum, r) => sum + r.balance, 0);
         const netProfitForPeriod = totalRevenue - totalExpenses;
-        const retainedIndex = equity.findIndex(r => r.account_name.toLowerCase().includes('retained earning'));
-        const equityDisplay: any[] = [...equity];
-        if (retainedIndex >= 0) {
-          const retained = equity[retainedIndex];
-          const adjusted = { ...retained, balance: retained.balance + netProfitForPeriod } as any;
-          equityDisplay.splice(retainedIndex, 1, adjusted);
+        let equityDisplay: any[] = [...equity];
+        if (periodMode === 'monthly') {
+          equityDisplay = equityDisplay.filter(r => !String(r.account_name || '').toLowerCase().includes('retained earning'));
+          equityDisplay.push({ account_id: 'retained-opening-synthetic', account_code: '—', account_name: 'Retained Earnings (opening)', account_type: 'equity', normal_balance: 'credit', total_debits: 0, total_credits: 0, balance: retainedOpeningYTD } as any);
+          equityDisplay.push({ account_id: 'retained-during-synthetic', account_code: '—', account_name: 'Retained Earnings (during)', account_type: 'equity', normal_balance: 'credit', total_debits: 0, total_credits: 0, balance: netProfitPeriod } as any);
         } else {
-          equityDisplay.push({ account_id: 'retained-synthetic', account_code: '—', account_name: 'Retained Earnings (adjusted)', account_type: 'equity', balance: netProfitForPeriod } as any);
+          const retainedIndex = equityDisplay.findIndex(r => String(r.account_name || '').toLowerCase().includes('retained earning'));
+          if (retainedIndex >= 0) {
+            const retained = equityDisplay[retainedIndex];
+            const adjusted = { ...retained, balance: retained.balance + netProfitForPeriod } as any;
+            equityDisplay.splice(retainedIndex, 1, adjusted);
+          } else {
+            equityDisplay.push({ account_id: 'retained-synthetic', account_code: '—', account_name: 'Retained Earnings (adjusted)', account_type: 'equity', balance: netProfitForPeriod } as any);
+          }
         }
-        const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0);
-        const totalNonCurrentAssets = ppeBookValue;
-        const totalAssets = totalCurrentAssets + ppeBookValue;
-        const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0);
+        const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0) + vatReceivableAsOf;
+        const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + nbvFor(r), 0);
+        const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
+        const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0) + vatPayableAsOf;
         const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
         const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
         const totalEquity = equityDisplay.reduce((sum, r) => sum + r.balance, 0);
@@ -595,12 +832,13 @@ export const GAAPFinancialStatements = () => {
           { account: 'Non-current Assets', amount: 0, type: 'subheader' },
           ...nonCurrentAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: nbvFor(r), type: 'asset' })),
           ...vatInputAsAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'asset' })),
-          { account: 'Property, Plant & Equipment (Book Value)', amount: ppeBookValue, type: 'asset' },
+          { account: 'Total Fixed Assets (NBV)', amount: totalNonCurrentAssets, type: 'asset' },
           { account: 'Total Non-current Assets', amount: totalNonCurrentAssets, type: 'subtotal' },
           { account: 'TOTAL ASSETS', amount: totalAssets, type: 'total' },
           { account: 'LIABILITIES', amount: 0, type: 'header' },
           { account: 'Current Liabilities', amount: 0, type: 'subheader' },
           ...currentLiabilities.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'liability' })),
+          { account: 'VAT Payable', amount: vatPayableAsOf, type: 'liability' },
           { account: 'Total Current Liabilities', amount: totalCurrentLiabilities, type: 'subtotal' },
           { account: 'Non-current Liabilities', amount: 0, type: 'subheader' },
           ...nonCurrentLiabilities.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'liability' })),
@@ -815,7 +1053,7 @@ export const GAAPFinancialStatements = () => {
 
   // GAAP Statement of Financial Position (Balance Sheet)
   const renderStatementOfFinancialPosition = () => {
-    const currentAssets = trialBalance.filter(r =>
+    const currentAssets = trialBalanceAsOf.filter(r =>
       r.account_type.toLowerCase() === 'asset' &&
       (r.account_name.toLowerCase().includes('cash') ||
        r.account_name.toLowerCase().includes('bank') ||
@@ -826,7 +1064,7 @@ export const GAAPFinancialStatements = () => {
       !['1210','2110','2210'].includes(String(r.account_code || ''))
     );
     
-    const nonCurrentAssetsAll = trialBalance.filter(r =>
+    const nonCurrentAssetsAll = trialBalanceAsOf.filter(r =>
       r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r)
     );
     const accDepRows = nonCurrentAssetsAll.filter(r => r.account_name.toLowerCase().includes('accumulated'));
@@ -850,7 +1088,7 @@ export const GAAPFinancialStatements = () => {
       return assetRow.balance - accTotal;
     };
     
-    const liabilitiesExVat = trialBalance.filter(r =>
+    const liabilitiesExVat = trialBalanceAsOf.filter(r =>
       r.account_type.toLowerCase() === 'liability' &&
       !String(r.account_name || '').toLowerCase().includes('vat') &&
       !['2100','2200'].includes(String(r.account_code || ''))
@@ -869,7 +1107,7 @@ export const GAAPFinancialStatements = () => {
     const currentSet = new Set(currentLiabilities.map(r => r.account_id));
     const nonCurrentLiabilities = liabilitiesExVat.filter(r => !currentSet.has(r.account_id));
     
-    const equity = trialBalance.filter(r => r.account_type.toLowerCase() === 'equity');
+    const equity = trialBalanceAsOf.filter(r => r.account_type.toLowerCase() === 'equity');
 
     // Compute net profit for the period to roll into retained earnings
     const revenueRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
@@ -878,48 +1116,45 @@ export const GAAPFinancialStatements = () => {
     const totalExpenses = expenseRows.reduce((sum, r) => sum + r.balance, 0);
     const netProfitForPeriod = totalRevenue - totalExpenses;
 
-    // Prepare equity display rows with retained earnings adjusted by net profit
-    const retainedIndex = equity.findIndex(r => r.account_name.toLowerCase().includes('retained earning'));
-    const equityDisplay: any[] = [...equity];
-    if (retainedIndex >= 0) {
-      const retained = equity[retainedIndex];
-      const adjusted = { ...retained, balance: retained.balance + netProfitForPeriod };
-      equityDisplay.splice(retainedIndex, 1, adjusted);
+    let equityDisplay: any[] = [...equity];
+    if (periodMode === 'monthly') {
+      equityDisplay = equityDisplay.filter(r => !String(r.account_name || '').toLowerCase().includes('retained earning'));
+      equityDisplay.push({ account_id: 'retained-opening-synthetic', account_code: '—', account_name: 'Retained Earnings (opening)', account_type: 'equity', normal_balance: 'credit', total_debits: 0, total_credits: 0, balance: retainedOpeningYTD });
+      equityDisplay.push({ account_id: 'retained-during-synthetic', account_code: '—', account_name: 'Retained Earnings (during)', account_type: 'equity', normal_balance: 'credit', total_debits: 0, total_credits: 0, balance: netProfitPeriod });
     } else {
-      const syntheticRetained: any = {
-        account_id: 'retained-synthetic',
-        account_code: '—',
-        account_name: 'Retained Earnings (adjusted)',
-        account_type: 'equity',
-        normal_balance: 'credit',
-        total_debits: 0,
-        total_credits: 0,
-        balance: netProfitForPeriod,
-      };
-      equityDisplay.push(syntheticRetained);
+      const retainedIndex = equityDisplay.findIndex(r => String(r.account_name || '').toLowerCase().includes('retained earning'));
+      if (retainedIndex >= 0) {
+        const retained = equityDisplay[retainedIndex];
+        const adjusted = { ...retained, balance: retained.balance + netProfitForPeriod };
+        equityDisplay.splice(retainedIndex, 1, adjusted);
+      } else {
+        equityDisplay.push({ account_id: 'retained-synthetic', account_code: '—', account_name: 'Retained Earnings (adjusted)', account_type: 'equity', normal_balance: 'credit', total_debits: 0, total_credits: 0, balance: netProfitForPeriod });
+      }
     }
 
-    const openingIdx = equityDisplay.findIndex(r => String(r.account_code || '') === '3900' || String(r.account_name || '').toLowerCase().includes('opening balance equity'));
-    if (openingIdx >= 0) {
-      const row = equityDisplay[openingIdx];
-      equityDisplay.splice(openingIdx, 1, { ...row, account_code: '3900', account_name: 'Opening Balance Equity', balance: openingEquityTotal });
-    } else {
-      equityDisplay.push({
-        account_id: 'opening-equity-synthetic',
-        account_code: '3900',
-        account_name: 'Opening Balance Equity',
-        account_type: 'equity',
-        normal_balance: 'credit',
-        total_debits: 0,
-        total_credits: 0,
-        balance: openingEquityTotal,
-      });
+    if (periodMode !== 'monthly') {
+      const openingIdx = equityDisplay.findIndex(r => String(r.account_code || '') === '3900' || String(r.account_name || '').toLowerCase().includes('opening balance equity'));
+      if (openingIdx >= 0) {
+        const row = equityDisplay[openingIdx];
+        equityDisplay.splice(openingIdx, 1, { ...row, account_code: '3900', account_name: 'Opening Balance Equity', balance: openingEquityTotal });
+      } else {
+        equityDisplay.push({
+          account_id: 'opening-equity-synthetic',
+          account_code: '3900',
+          account_name: 'Opening Balance Equity',
+          account_type: 'equity',
+          normal_balance: 'credit',
+          total_debits: 0,
+          total_credits: 0,
+          balance: openingEquityTotal,
+        });
+      }
     }
 
-    const vatPayable = Math.max(0, vatNet);
-    const vatReceivable = Math.max(0, -vatNet);
+    const vatPayable = Math.max(0, vatPayableAsOf);
+    const vatReceivable = Math.max(0, vatReceivableAsOf);
     const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0) + vatReceivable;
-    const totalNonCurrentAssets = ppeBookValue;
+    const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + nbvFor(r), 0);
     const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
     
     const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0);
@@ -973,8 +1208,8 @@ export const GAAPFinancialStatements = () => {
           <div className="pl-4">
             <h4 className="font-semibold text-lg mb-2">Non-current Assets</h4>
             <div className="flex justify-between py-1 px-2">
-              <span>Property, Plant & Equipment (Book Value)</span>
-              <span className="font-mono">R {ppeBookValue.toLocaleString()}</span>
+              <span>Total Fixed Assets (NBV)</span>
+              <span className="font-mono">R {totalNonCurrentAssets.toLocaleString()}</span>
             </div>
             <div className="flex justify-between py-2 font-semibold border-t mt-2">
               <span>Total Non-current Assets</span>
@@ -1055,6 +1290,7 @@ export const GAAPFinancialStatements = () => {
           <span className="font-mono">R {(totalLiabilities + totalEquity).toLocaleString()}</span>
         </div>
 
+
         {/* Validation */}
         {accountingEquation && (
           <div className={`p-4 rounded-lg ${accountingEquation.is_valid ? 'bg-green-100 dark:bg-green-900/20' : 'bg-red-100 dark:bg-red-900/20'}`}>
@@ -1072,7 +1308,7 @@ export const GAAPFinancialStatements = () => {
     );
   };
 
-  const bsGroups = (tb: TrialBalanceRow[]) => {
+  const bsGroups = (tb: Pick<TrialBalanceRow, 'account_id' | 'account_code' | 'account_name' | 'account_type' | 'balance'>[]) => {
     const currentAssets = tb.filter(r =>
       r.account_type.toLowerCase() === 'asset' &&
       (r.account_name.toLowerCase().includes('cash') ||
@@ -1087,7 +1323,7 @@ export const GAAPFinancialStatements = () => {
     const accDepRows = nonCurrentAssetsAll.filter(r => String(r.account_name || '').toLowerCase().includes('accumulated'));
     const nonCurrentAssets = nonCurrentAssetsAll.filter(r => !String(r.account_name || '').toLowerCase().includes('accumulated'));
     const normalizeName = (name: string) => name.toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
-    const nbvFor = (assetRow: TrialBalanceRow) => {
+    const nbvFor = (assetRow: Pick<TrialBalanceRow, 'account_id' | 'account_code' | 'account_name' | 'account_type' | 'balance'>) => {
       const base = normalizeName(assetRow.account_name);
       const related = accDepRows.filter(ad => {
         const adBase = normalizeName(ad.account_name);
@@ -1140,14 +1376,44 @@ export const GAAPFinancialStatements = () => {
   };
 
   const formatRand = (n: number) => Number(n || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatAccounting = (n: number) => {
+    const v = Number(n || 0);
+    const s = formatRand(Math.abs(v));
+    return { display: v < 0 ? `(R ${s})` : `R ${s}`, negative: v < 0 };
+  };
+  const pctClass = (v: number) => (v > 0 ? 'text-green-600 dark:text-green-400' : v < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground');
+  const handleComparativeExport = (type: 'pdf' | 'excel') => {
+    try {
+      const yA = comparativeYearA;
+      const yB = comparativeYearB;
+      const rows = (() => {
+        const r: { label: string; yearA: number; yearB: number; percent?: number; bold?: boolean }[] = [];
+        const cfCurr = cashFlowCurrComparative || { net_cash_from_operations: 0, net_cash_from_investing: 0, net_cash_from_financing: 0, net_change_in_cash: 0, opening_cash_balance: 0 } as any;
+        const cfPrev = cashFlowPrev || { net_cash_from_operations: 0, net_cash_from_investing: 0, net_cash_from_financing: 0, net_change_in_cash: 0, opening_cash_balance: 0 } as any;
+        const pct = (a: number, b: number) => percentChange(a, b);
+        r.push({ label: 'Net cash from operating activities', yearA: Number(cfCurr.net_cash_from_operations || 0), yearB: Number(cfPrev.net_cash_from_operations || 0), percent: pct(Number(cfCurr.net_cash_from_operations || 0), Number(cfPrev.net_cash_from_operations || 0)), bold: true });
+        r.push({ label: 'Net cash used in / from investing activities', yearA: Number(cfCurr.net_cash_from_investing || 0), yearB: Number(cfPrev.net_cash_from_investing || 0), percent: pct(Number(cfCurr.net_cash_from_investing || 0), Number(cfPrev.net_cash_from_investing || 0)), bold: true });
+        r.push({ label: 'Net cash from / used in financing activities', yearA: Number(cfCurr.net_cash_from_financing || 0), yearB: Number(cfPrev.net_cash_from_financing || 0), percent: pct(Number(cfCurr.net_cash_from_financing || 0), Number(cfPrev.net_cash_from_financing || 0)), bold: true });
+        r.push({ label: 'Net increase / (decrease) in cash', yearA: Number(cfCurr.net_change_in_cash || 0), yearB: Number(cfPrev.net_change_in_cash || 0), percent: pct(Number(cfCurr.net_change_in_cash || 0), Number(cfPrev.net_change_in_cash || 0)), bold: true });
+        r.push({ label: 'Cash and cash equivalents at beginning of period', yearA: Number(cfCurr.opening_cash_balance || 0), yearB: Number(cfPrev.opening_cash_balance || 0) });
+        r.push({ label: 'Cash and cash equivalents at end of period', yearA: Number(cfCurr.opening_cash_balance || 0) + Number(cfCurr.net_change_in_cash || 0), yearB: Number(cfPrev.opening_cash_balance || 0) + Number(cfPrev.net_change_in_cash || 0), bold: true });
+        return r;
+      })();
+      if (type === 'pdf') {
+        exportComparativeCashFlowToPDF(rows, yA, yB, `Comparative_Cash_Flow_${yA}_vs_${yB}`);
+      } else {
+        exportComparativeCashFlowToExcel(rows, yA, yB, `Comparative_Cash_Flow_${yA}_vs_${yB}`);
+      }
+    } catch {}
+  };
 
   const renderComparativeBalanceSheet = () => {
     const y = comparativeYearA;
     const py = comparativeYearB;
     const normalizeName = (name: string) => name.toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
     const buildMap = (tb: TrialBalanceRow[]) => new Map(tb.map(r => [String(r.account_code || r.account_id), r]));
-    const mapCurr = buildMap(trialBalance);
-    const mapPrev = buildMap(trialBalancePrev);
+    const mapCurr = buildMap(trialBalanceCompAsOfA);
+    const mapPrev = buildMap(trialBalanceCompAsOfB);
     const listCurrentAssets = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'asset' && (r.account_name.toLowerCase().includes('cash') || r.account_name.toLowerCase().includes('bank') || r.account_name.toLowerCase().includes('receivable') || r.account_name.toLowerCase().includes('inventory') || parseInt(r.account_code) < 1500) && !String(r.account_name || '').toLowerCase().includes('vat'));
     const vatReceivableFor = (tb: TrialBalanceRow[]) => tb.filter(r => String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable')).reduce((s, r) => s + r.balance, 0);
     const nonCurrentAssetsAll = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'asset' && !listCurrentAssets(tb).includes(r));
@@ -1175,63 +1441,63 @@ export const GAAPFinancialStatements = () => {
         return (isPayableOrTax && !isLongLoan) || isShortLoan;
       });
     };
-    const prevSetCurrentLiab = new Set(currentLiabilitiesList(trialBalancePrev).map(r => r.account_id));
+    const prevSetCurrentLiab = new Set(currentLiabilitiesList(trialBalanceCompAsOfB).map(r => r.account_id));
     const nonCurrentLiabilitiesList = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'liability' && !prevSetCurrentLiab.has(r.account_id));
     const equityList = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'equity');
-    const mergeCodes = Array.from(new Set([...trialBalance.map(r => String(r.account_code || r.account_id)), ...trialBalancePrev.map(r => String(r.account_code || r.account_id))]));
+    const mergeCodes = Array.from(new Set([...trialBalanceCompAsOfA.map(r => String(r.account_code || r.account_id)), ...trialBalanceCompAsOfB.map(r => String(r.account_code || r.account_id))]));
     const rows: Array<{ label: string; curr: number; prev: number; bold?: boolean }> = [];
     rows.push({ label: 'ASSETS', curr: 0, prev: 0, bold: true });
-    rows.push({ label: 'VAT Receivable', curr: vatReceivableFor(trialBalance), prev: vatReceivableFor(trialBalancePrev) });
+    rows.push({ label: 'VAT Receivable', curr: vatReceivableFor(trialBalanceCompAsOfA), prev: vatReceivableFor(trialBalanceCompAsOfB) });
     rows.push({ label: 'Current Assets', curr: 0, prev: 0, bold: true });
-    listCurrentAssets(trialBalance).forEach(a => {
+    listCurrentAssets(trialBalanceCompAsOfA).forEach(a => {
       const key = String(a.account_code || a.account_id);
       const prevRow = mapPrev.get(key);
       rows.push({ label: `${a.account_code} - ${a.account_name}`, curr: a.balance, prev: prevRow ? prevRow.balance : 0 });
     });
-    const currCA = rows.filter(r => !r.bold && (listCurrentAssets(trialBalance).some(a => `${a.account_code} - ${a.account_name}` === r.label))).reduce((s, r) => s + r.curr, 0) + vatReceivableFor(trialBalance);
-    const prevCA = rows.filter(r => !r.bold && (listCurrentAssets(trialBalancePrev).some(a => `${a.account_code} - ${a.account_name}` === r.label))).reduce((s, r) => s + r.prev, 0) + vatReceivableFor(trialBalancePrev);
+    const currCA = rows.filter(r => !r.bold && (listCurrentAssets(trialBalanceCompAsOfA).some(a => `${a.account_code} - ${a.account_name}` === r.label))).reduce((s, r) => s + r.curr, 0) + vatReceivableFor(trialBalanceCompAsOfA);
+    const prevCA = rows.filter(r => !r.bold && (listCurrentAssets(trialBalanceCompAsOfB).some(a => `${a.account_code} - ${a.account_name}` === r.label))).reduce((s, r) => s + r.prev, 0) + vatReceivableFor(trialBalanceCompAsOfB);
     rows.push({ label: 'Total Current Assets', curr: currCA, prev: prevCA, bold: true });
     rows.push({ label: 'Non-current Assets (NBV)', curr: 0, prev: 0, bold: true });
-    nonCurrentAssets(trialBalance).forEach(a => {
+    nonCurrentAssets(trialBalanceCompAsOfA).forEach(a => {
       const key = String(a.account_code || a.account_id);
       const prevRow = mapPrev.get(key);
-      const currNbv = nbvFor(trialBalance, a);
-      const prevNbv = prevRow ? nbvFor(trialBalancePrev, prevRow) : 0;
+      const currNbv = nbvFor(trialBalanceCompAsOfA, a);
+      const prevNbv = prevRow ? nbvFor(trialBalanceCompAsOfB, prevRow) : 0;
       rows.push({ label: `${a.account_code} - ${a.account_name}`, curr: currNbv, prev: prevNbv });
     });
-    const currNCA = nonCurrentAssets(trialBalance).reduce((s, a) => s + nbvFor(trialBalance, a), 0);
-    const prevNCA = nonCurrentAssets(trialBalancePrev).reduce((s, a) => s + nbvFor(trialBalancePrev, a), 0);
+    const currNCA = nonCurrentAssets(trialBalanceCompAsOfA).reduce((s, a) => s + nbvFor(trialBalanceCompAsOfA, a), 0);
+    const prevNCA = nonCurrentAssets(trialBalanceCompAsOfB).reduce((s, a) => s + nbvFor(trialBalanceCompAsOfB, a), 0);
     rows.push({ label: 'Total Non-current Assets', curr: currNCA, prev: prevNCA, bold: true });
     rows.push({ label: 'TOTAL ASSETS', curr: currCA + currNCA, prev: prevCA + prevNCA, bold: true });
     rows.push({ label: 'LIABILITIES', curr: 0, prev: 0, bold: true });
-    rows.push({ label: 'VAT Payable', curr: vatPayableFor(trialBalance), prev: vatPayableFor(trialBalancePrev) });
+    rows.push({ label: 'VAT Payable', curr: vatPayableFor(trialBalanceCompAsOfA), prev: vatPayableFor(trialBalanceCompAsOfB) });
     rows.push({ label: 'Current Liabilities', curr: 0, prev: 0, bold: true });
-    currentLiabilitiesList(trialBalance).forEach(l => {
+    currentLiabilitiesList(trialBalanceCompAsOfA).forEach(l => {
       const key = String(l.account_code || l.account_id);
       const prevRow = mapPrev.get(key);
       rows.push({ label: `${l.account_code} - ${l.account_name}`, curr: l.balance, prev: prevRow ? prevRow.balance : 0 });
     });
-    const currCL = currentLiabilitiesList(trialBalance).reduce((s, r) => s + r.balance, 0) + vatPayableFor(trialBalance);
-    const prevCL = currentLiabilitiesList(trialBalancePrev).reduce((s, r) => s + r.balance, 0) + vatPayableFor(trialBalancePrev);
+    const currCL = currentLiabilitiesList(trialBalanceCompAsOfA).reduce((s, r) => s + r.balance, 0) + vatPayableFor(trialBalanceCompAsOfA);
+    const prevCL = currentLiabilitiesList(trialBalanceCompAsOfB).reduce((s, r) => s + r.balance, 0) + vatPayableFor(trialBalanceCompAsOfB);
     rows.push({ label: 'Total Current Liabilities', curr: currCL, prev: prevCL, bold: true });
     rows.push({ label: 'Non-current Liabilities', curr: 0, prev: 0, bold: true });
-    nonCurrentLiabilitiesList(trialBalance).forEach(l => {
+    nonCurrentLiabilitiesList(trialBalanceCompAsOfA).forEach(l => {
       const key = String(l.account_code || l.account_id);
       const prevRow = mapPrev.get(key);
       rows.push({ label: `${l.account_code} - ${l.account_name}`, curr: l.balance, prev: prevRow ? prevRow.balance : 0 });
     });
-    const currNCL = nonCurrentLiabilitiesList(trialBalance).reduce((s, r) => s + r.balance, 0);
-    const prevNCL = nonCurrentLiabilitiesList(trialBalancePrev).reduce((s, r) => s + r.balance, 0);
+    const currNCL = nonCurrentLiabilitiesList(trialBalanceCompAsOfA).reduce((s, r) => s + r.balance, 0);
+    const prevNCL = nonCurrentLiabilitiesList(trialBalanceCompAsOfB).reduce((s, r) => s + r.balance, 0);
     rows.push({ label: 'Total Non-current Liabilities', curr: currNCL, prev: prevNCL, bold: true });
     rows.push({ label: 'TOTAL LIABILITIES', curr: currCL + currNCL, prev: prevCL + prevNCL, bold: true });
     rows.push({ label: 'EQUITY', curr: 0, prev: 0, bold: true });
-    equityList(trialBalance).forEach(e => {
+    equityList(trialBalanceCompAsOfA).forEach(e => {
       const key = String(e.account_code || e.account_id);
       const prevRow = mapPrev.get(key);
       rows.push({ label: `${e.account_code} - ${e.account_name}`, curr: e.balance, prev: prevRow ? prevRow.balance : 0 });
     });
-    const currEQ = equityList(trialBalance).reduce((s, r) => s + r.balance, 0);
-    const prevEQ = equityList(trialBalancePrev).reduce((s, r) => s + r.balance, 0);
+    const currEQ = equityList(trialBalanceCompAsOfA).reduce((s, r) => s + r.balance, 0);
+    const prevEQ = equityList(trialBalanceCompAsOfB).reduce((s, r) => s + r.balance, 0);
     rows.push({ label: 'Total Equity', curr: currEQ, prev: prevEQ, bold: true });
     rows.push({ label: 'TOTAL L & E', curr: currCL + currNCL + currEQ, prev: prevCL + prevNCL + prevEQ, bold: true });
     return (
@@ -1243,12 +1509,12 @@ export const GAAPFinancialStatements = () => {
           <div className="font-semibold text-right">{py}</div>
           <div className="font-semibold text-right">% Change</div>
           {rows.map((r, i) => (
-            <>
+            <React.Fragment key={`bs-comp-${i}-${r.label}`}>
               <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
               <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
               <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
               <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
-            </>
+            </React.Fragment>
           ))}
         </div>
       </div>
@@ -1309,12 +1575,12 @@ export const GAAPFinancialStatements = () => {
           <div className="font-semibold text-right">{py}</div>
           <div className="font-semibold text-right">% Change</div>
           {rows.map((r, i) => (
-            <>
+            <React.Fragment key={`cf-comp-${i}-${r.label}`}>
               <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
               <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
               <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
               <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
-            </>
+            </React.Fragment>
           ))}
         </div>
       </div>
@@ -1449,13 +1715,58 @@ export const GAAPFinancialStatements = () => {
           <div className="font-semibold text-right">{py}</div>
           <div className="font-semibold text-right">% Change</div>
           {rows.map((r, i) => (
-            <>
+            <React.Fragment key={`pl-comp-${i}-${r.label}`}>
               <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
               <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
               <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
               <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
-            </>
+            </React.Fragment>
           ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderRetainedEarnings = () => {
+    const dividendsDuring = trialBalance
+      .filter(r => String(r.account_type || '').toLowerCase() === 'equity' && (String(r.account_code || '') === '3500' || String(r.account_name || '').toLowerCase().includes('dividend')))
+      .reduce((sum, r) => sum + Math.abs(Number(r.balance || 0)), 0);
+    const drawingsDuring = trialBalance
+      .filter(r => String(r.account_type || '').toLowerCase() === 'equity' && (String(r.account_code || '') === '3400' || String(r.account_name || '').toLowerCase().includes('drawings')))
+      .reduce((sum, r) => sum + Math.abs(Number(r.balance || 0)), 0);
+    const retainedRow = trialBalanceAsOf.find(r => String(r.account_type || '').toLowerCase() === 'equity' && String(r.account_name || '').toLowerCase().includes('retained earning'));
+    const opening = periodMode === 'monthly' ? retainedOpeningYTD : Number(retainedRow?.balance || 0);
+    const during = netProfitPeriod;
+    const closing = opening + during - dividendsDuring - drawingsDuring;
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="text-center w-full">
+            <h2 className="text-2xl font-bold">Retained Earnings</h2>
+            <p className="text-muted-foreground">Movement for selected period</p>
+          </div>
+        </div>
+        <div className="space-y-1">
+          <div className="flex justify-between py-1 px-2">
+            <span>Opening Retained Earnings</span>
+            <span className="font-mono">R {opening.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between py-1 px-2">
+            <span>Add: Net Profit/(Loss) for the period</span>
+            <span className="font-mono">R {during.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between py-1 px-2">
+            <span>Less: Dividends Declared</span>
+            <span className="font-mono">R {dividendsDuring.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between py-1 px-2">
+            <span>Less: Drawings</span>
+            <span className="font-mono">R {drawingsDuring.toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between py-2 font-semibold border-t mt-2">
+            <span>Closing Retained Earnings</span>
+            <span className="font-mono">R {closing.toLocaleString()}</span>
+          </div>
         </div>
       </div>
     );
@@ -1797,19 +2108,7 @@ export const GAAPFinancialStatements = () => {
           <div className="space-y-2">
             <h3 className="text-xl font-bold">Advisory Insights</h3>
             <div className="space-y-1 pl-2">
-              <StellaAdvisor
-                trialBalance={trialBalance}
-                vatNet={vatNet}
-                periodMode={periodMode}
-                periodStart={periodStart}
-                periodEnd={periodEnd}
-                cashFlow={{
-                  netOperating: netOperatingDisplay,
-                  netInvesting: netInvestingDisplay,
-                  netFinancing: netFinancingDisplay,
-                  netChange: netChangeDisplay,
-                }}
-              />
+              <StellaAdvisor />
               <div className="flex justify-end pt-2">
                 <Button variant="outline" size="sm" onClick={() => setShowAdviceModal(true)}>Ask Accounting Expert</Button>
               </div>
@@ -1822,8 +2121,28 @@ export const GAAPFinancialStatements = () => {
 
   if (loading) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <LoadingSpinner />
+      <div className="space-y-6">
+        <div className="animate-pulse">
+          <div className="h-8 w-80 bg-muted rounded mb-2"></div>
+          <div className="h-4 w-[28rem] bg-muted rounded"></div>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>Statement Skeleton</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3 animate-pulse">
+              <div className="h-5 w-48 bg-muted rounded"></div>
+              {[...Array(10)].map((_, i) => (
+                <div key={i} className="h-4 w-full bg-muted rounded"></div>
+              ))}
+              <div className="h-5 w-56 bg-muted rounded"></div>
+              {[...Array(8)].map((_, i) => (
+                <div key={i} className="h-4 w-full bg-muted rounded"></div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -1896,7 +2215,7 @@ export const GAAPFinancialStatements = () => {
               />
             </div>
           </div>
-        </CardContent>
+      </CardContent>
       </Card>
       )}
 
@@ -1906,6 +2225,8 @@ export const GAAPFinancialStatements = () => {
         <TabsTrigger value="income">Income Statement</TabsTrigger>
         <TabsTrigger value="cash-flow">Cash Flow Statement</TabsTrigger>
         <TabsTrigger value="comparative">Comparative</TabsTrigger>
+        <TabsTrigger value="retained-earnings">Retained Earnings</TabsTrigger>
+        <TabsTrigger value="monthly-report">Monthly Report</TabsTrigger>
       </TabsList>
 
         <TabsContent value="balance-sheet">
@@ -1928,15 +2249,12 @@ export const GAAPFinancialStatements = () => {
           <Card>
             <CardContent className="pt-6">
               {renderCashFlowStatement()}
-            </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="comparative">
-          <Card>
+          </CardContent>
+        </Card>
+      </TabsContent>
+      <TabsContent value="comparative">
+        <Card>
             <CardContent className="pt-6">
-              {comparativeLoading ? (
-                <div className="flex justify-center items-center h-32"><LoadingSpinner /></div>
-              ) : (
                 <div className="space-y-8">
                   <div className="flex items-center justify-between">
                     <div className="flex gap-4 items-end">
@@ -1960,15 +2278,417 @@ export const GAAPFinancialStatements = () => {
                       </Button>
                     </div>
                   </div>
+                  {periodMode === 'monthly' && (
+                    <div className="mt-6">
+                      <h3 className="text-xl font-bold border-b-2 pb-2">Retained Earnings Movement</h3>
+                      <div className="pl-4 space-y-1">
+                        {(() => {
+                          const dividendsDuring = trialBalance
+                            .filter(r => String(r.account_type || '').toLowerCase() === 'equity' && (String(r.account_code || '') === '3500' || String(r.account_name || '').toLowerCase().includes('dividend')))
+                            .reduce((sum, r) => sum + Math.abs(Number(r.balance || 0)), 0);
+                          const drawingsDuring = trialBalance
+                            .filter(r => String(r.account_type || '').toLowerCase() === 'equity' && (String(r.account_code || '') === '3400' || String(r.account_name || '').toLowerCase().includes('drawings')))
+                            .reduce((sum, r) => sum + Math.abs(Number(r.balance || 0)), 0);
+                          const opening = retainedOpeningYTD;
+                          const during = netProfitPeriod;
+                          const closing = opening + during - dividendsDuring - drawingsDuring;
+                          return (
+                            <div className="space-y-1">
+                              <div className="flex justify-between py-1 px-2">
+                                <span>Opening Retained Earnings</span>
+                                <span className="font-mono">R {opening.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between py-1 px-2">
+                                <span>Add: Net Profit/(Loss) for the period</span>
+                                <span className="font-mono">R {during.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between py-1 px-2">
+                                <span>Less: Dividends Declared</span>
+                                <span className="font-mono">R {dividendsDuring.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between py-1 px-2">
+                                <span>Less: Drawings</span>
+                                <span className="font-mono">R {drawingsDuring.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between py-2 font-semibold border-t mt-2">
+                                <span>Closing Retained Earnings</span>
+                                <span className="font-mono">R {closing.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+                  )}
                   {renderComparativeBalanceSheet()}
                   {renderComparativeIncomeStatement()}
                   {renderComparativeCashFlow()}
+                </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="monthly-report">
+          <Card>
+            <CardContent className="pt-6">
+              {monthlyAFSLoading ? (
+                <div className="space-y-8 animate-pulse">
+                  <div>
+                    <div className="h-6 w-72 bg-muted rounded mb-2"></div>
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[1000px]">
+                        <div className="flex">
+                          <div className="w-48 h-5 bg-muted rounded mr-2"></div>
+                          {Array.from({ length: 12 }).map((_, i) => (
+                            <div key={i} className="flex-1 h-5 bg-muted rounded mr-2"></div>
+                          ))}
+                        </div>
+                        {Array.from({ length: 12 }).map((_, r) => (
+                          <div key={r} className="flex mt-2">
+                            <div className="w-48 h-4 bg-muted rounded mr-2"></div>
+                            {Array.from({ length: 12 }).map((_, i) => (
+                              <div key={i} className="flex-1 h-4 bg-muted rounded mr-2"></div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="h-6 w-60 bg-muted rounded mb-2"></div>
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[1000px]">
+                        <div className="flex">
+                          <div className="w-48 h-5 bg-muted rounded mr-2"></div>
+                          {Array.from({ length: 12 }).map((_, i) => (
+                            <div key={i} className="flex-1 h-5 bg-muted rounded mr-2"></div>
+                          ))}
+                        </div>
+                        {Array.from({ length: 10 }).map((_, r) => (
+                          <div key={r} className="flex mt-2">
+                            <div className="w-48 h-4 bg-muted rounded mr-2"></div>
+                            {Array.from({ length: 12 }).map((_, i) => (
+                              <div key={i} className="flex-1 h-4 bg-muted rounded mr-2"></div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="h-6 w-56 bg-muted rounded mb-2"></div>
+                    <div className="overflow-x-auto">
+                      <div className="min-w-[1000px]">
+                        <div className="flex">
+                          <div className="w-48 h-5 bg-muted rounded mr-2"></div>
+                          {Array.from({ length: 12 }).map((_, i) => (
+                            <div key={i} className="flex-1 h-5 bg-muted rounded mr-2"></div>
+                          ))}
+                        </div>
+                        {Array.from({ length: 6 }).map((_, r) => (
+                          <div key={r} className="flex mt-2">
+                            <div className="w-48 h-4 bg-muted rounded mr-2"></div>
+                            {Array.from({ length: 12 }).map((_, i) => (
+                              <div key={i} className="flex-1 h-4 bg-muted rounded mr-2"></div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : monthlyAFSError ? (
+                <div className="text-red-600 dark:text-red-400 text-sm">{monthlyAFSError}</div>
+              ) : monthlyAFSData.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No monthly data loaded</div>
+              ) : (
+                <div className="space-y-8">
+                  <div>
+                    <h3 className="text-lg font-bold mb-2">Statement of Financial Position</h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-[1000px] w-full text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="text-left py-2 border-b sticky left-0 bg-background z-10">Item</th>
+                            {monthlyAFSData.map((m: any, i: number) => (
+                              <th key={`bs-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Current Assets</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ca-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.currentAssetsItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`bs-ca-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.bsDetail?.currentAssetsItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`bs-ca-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {[
+                            { key: 'Total Current Assets', get: (m: any) => m.bs.totalCurrentAssets },
+                          ].map((row) => (
+                            <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Current Liabilities</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-cl-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.currentLiabilitiesItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`bs-cl-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.bsDetail?.currentLiabilitiesItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`bs-cl-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {[
+                            { key: 'Total Current Liabilities', get: (m: any) => m.bs.totalCurrentLiabilities },
+                          ].map((row) => (
+                            <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Non-current Liabilities</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ncl-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.nonCurrentLiabilitiesItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`bs-ncl-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.bsDetail?.nonCurrentLiabilitiesItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`bs-ncl-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Equity</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-eq-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.equityItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`bs-eq-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.bsDetail?.equityItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`bs-eq-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {[
+                            { key: 'Total Non-current Assets', get: (m: any) => m.bs.totalNonCurrentAssets },
+                            { key: 'TOTAL ASSETS', get: (m: any) => m.bs.totalAssets },
+                            { key: 'Total Non-current Liabilities', get: (m: any) => m.bs.totalNonCurrentLiabilities },
+                            { key: 'Total Liabilities', get: (m: any) => m.bs.totalLiabilities },
+                            { key: 'Total Equity', get: (m: any) => m.bs.totalEquity },
+                            { key: 'TOTAL L & E', get: (m: any) => m.bs.totalLiabilities + m.bs.totalEquity },
+                          ].map((row) => (
+                            <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold mb-2">Income Statement</h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-[1000px] w-full text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="text-left py-2 border-b sticky left-0 bg-background z-10">Item</th>
+                            {monthlyAFSData.map((m: any, i: number) => (
+                              <th key={`pl-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Revenue</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`pl-rev-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.plDetail?.revenueItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`pl-rev-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.plDetail?.revenueItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`pl-rev-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {[
+                            { key: 'Total Revenue', get: (m: any) => m.pl.revenue },
+                          ].map((row) => (
+                            <tr key={`pl-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`pl-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Cost of Sales</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`pl-cogs-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.plDetail?.cogsItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`pl-cogs-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.plDetail?.cogsItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`pl-cogs-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {[
+                            { key: 'GROSS PROFIT', get: (m: any) => m.pl.grossProfit },
+                          ].map((row) => (
+                            <tr key={`pl-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`pl-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Operating Expenses</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`pl-opex-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.plDetail?.opexItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`pl-opex-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.plDetail?.opexItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`pl-opex-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {[
+                            { key: 'NET PROFIT/(LOSS)', get: (m: any) => m.pl.netProfit },
+                          ].map((row) => (
+                            <tr key={`pl-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`pl-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold mb-2">Cash Flow Statement</h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-[1000px] w-full text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="text-left py-2 border-b sticky left-0 bg-background z-10">Item</th>
+                            {monthlyAFSData.map((m: any, i: number) => (
+                              <th key={`cf-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[
+                            { key: 'Net cash from operating activities', get: (m: any) => m.cf.netOperating },
+                            { key: 'Net cash from investing activities', get: (m: any) => m.cf.netInvesting },
+                            { key: 'Net cash from financing activities', get: (m: any) => m.cf.netFinancing },
+                            { key: 'Net change in cash', get: (m: any) => m.cf.netChange },
+                            { key: 'Opening cash balance', get: (m: any) => m.cf.opening },
+                            { key: 'Closing cash balance', get: (m: any) => m.cf.closing },
+                          ].map((row) => (
+                            <tr key={`cf-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`cf-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
+        <TabsContent value="retained-earnings">
+          <Card>
+            <CardContent className="pt-6">
+              {renderRetainedEarnings()}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
 
       {/* Drill-down modal */}
       {drilldownAccount && (
@@ -2016,6 +2736,8 @@ export const GAAPFinancialStatements = () => {
           </CardContent>
         </Card>
       )}
+
+      
     </div>
   );
 };
@@ -2126,6 +2848,95 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
     if (acc.account_code === '1300') {
       balance = totalInventoryValue;
       console.log(`Inventory account ${acc.account_code} - Using total product value: R ${totalInventoryValue}`);
+    }
+
+    const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
+    const isPrimaryInventory = acc.account_code === '1300';
+    const shouldShow = Math.abs(balance) > 0.01 && (!isInventoryName || isPrimaryInventory);
+    if (shouldShow) {
+      trialBalance.push({
+        account_id: acc.id,
+        account_code: acc.account_code,
+        account_name: acc.account_name,
+        account_type: acc.account_type,
+        balance
+      });
+    }
+  });
+
+  return trialBalance;
+};
+
+// Cumulative trial balance as of a given end date (used for Balance Sheet)
+const fetchTrialBalanceAsOf = async (companyId: string, end: string) => {
+  const endDateObj = new Date(end);
+  endDateObj.setHours(23, 59, 59, 999);
+  const endISO = endDateObj.toISOString();
+
+  const { data: accounts, error: accountsError } = await supabase
+    .from('chart_of_accounts')
+    .select('id, account_code, account_name, account_type')
+    .eq('company_id', companyId)
+    .eq('is_active', true)
+    .order('account_code');
+  if (accountsError) throw accountsError;
+
+  const { data: txEntries, error: txError } = await supabase
+    .from('transaction_entries')
+    .select(`
+      transaction_id,
+      account_id,
+      debit,
+      credit,
+      transactions!inner (
+        transaction_date,
+        status,
+        company_id
+      )
+    `)
+    .eq('transactions.company_id', companyId)
+    .eq('transactions.status', 'posted')
+    .lte('transactions.transaction_date', endISO);
+  if (txError) throw txError;
+
+  const { data: ledgerEntries, error: ledgerError } = await supabase
+    .from('ledger_entries')
+    .select('transaction_id, account_id, debit, credit, entry_date, description')
+    .eq('company_id', companyId)
+    .lte('entry_date', endISO)
+    .not('description', 'ilike', '%Opening balance (carry forward)%');
+  if (ledgerError) throw ledgerError;
+
+  const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
+  const totalInventoryValue = await calculateTotalInventoryValue(companyId);
+
+  const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+  const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
+  (accounts || []).forEach((acc: any) => {
+    let sumDebit = 0;
+    let sumCredit = 0;
+
+    (filteredTxEntries || []).forEach((entry: any) => {
+      if (entry.account_id === acc.id) {
+        sumDebit += Number(entry.debit || 0);
+        sumCredit += Number(entry.credit || 0);
+      }
+    });
+
+    (ledgerEntries || []).forEach((entry: any) => {
+      if (entry.account_id === acc.id) {
+        sumDebit += Number(entry.debit || 0);
+        sumCredit += Number(entry.credit || 0);
+      }
+    });
+
+    const type = (acc.account_type || '').toLowerCase();
+    const naturalDebit = type === 'asset' || type === 'expense';
+    let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+
+    if (acc.account_code === '1300') {
+      balance = totalInventoryValue;
     }
 
     const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
@@ -2401,29 +3212,4 @@ const getCashFlowForPeriod = async (companyId: string, start: string, end: strin
     return null;
   }
 };
-  const pctClass = (v: number) => (v > 0 ? 'text-green-600 dark:text-green-400' : v < 0 ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground');
-  const handleComparativeExport = (type: 'pdf' | 'excel') => {
-    try {
-      const yA = comparativeYearA;
-      const yB = comparativeYearB;
-      // Build comparative rows using current computed totals for Cash Flow
-      const rows = (() => {
-        const r: { label: string; yearA: number; yearB: number; percent?: number; bold?: boolean }[] = [];
-        const cfCurr = cashFlowCurrComparative || { net_cash_from_operations: 0, net_cash_from_investing: 0, net_cash_from_financing: 0, net_change_in_cash: 0, opening_cash_balance: 0 } as any;
-        const cfPrev = cashFlowPrev || { net_cash_from_operations: 0, net_cash_from_investing: 0, net_cash_from_financing: 0, net_change_in_cash: 0, opening_cash_balance: 0 } as any;
-        const pct = (a: number, b: number) => percentChange(a, b);
-        r.push({ label: 'Net cash from operating activities', yearA: Number(cfCurr.net_cash_from_operations || 0), yearB: Number(cfPrev.net_cash_from_operations || 0), percent: pct(Number(cfCurr.net_cash_from_operations || 0), Number(cfPrev.net_cash_from_operations || 0)), bold: true });
-        r.push({ label: 'Net cash used in / from investing activities', yearA: Number(cfCurr.net_cash_from_investing || 0), yearB: Number(cfPrev.net_cash_from_investing || 0), percent: pct(Number(cfCurr.net_cash_from_investing || 0), Number(cfPrev.net_cash_from_investing || 0)), bold: true });
-        r.push({ label: 'Net cash from / used in financing activities', yearA: Number(cfCurr.net_cash_from_financing || 0), yearB: Number(cfPrev.net_cash_from_financing || 0), percent: pct(Number(cfCurr.net_cash_from_financing || 0), Number(cfPrev.net_cash_from_financing || 0)), bold: true });
-        r.push({ label: 'Net increase / (decrease) in cash', yearA: Number(cfCurr.net_change_in_cash || 0), yearB: Number(cfPrev.net_change_in_cash || 0), percent: pct(Number(cfCurr.net_change_in_cash || 0), Number(cfPrev.net_change_in_cash || 0)), bold: true });
-        r.push({ label: 'Cash and cash equivalents at beginning of period', yearA: Number(cfCurr.opening_cash_balance || 0), yearB: Number(cfPrev.opening_cash_balance || 0) });
-        r.push({ label: 'Cash and cash equivalents at end of period', yearA: Number(cfCurr.opening_cash_balance || 0) + Number(cfCurr.net_change_in_cash || 0), yearB: Number(cfPrev.opening_cash_balance || 0) + Number(cfPrev.net_change_in_cash || 0), bold: true });
-        return r;
-      })();
-      if (type === 'pdf') {
-        exportComparativeCashFlowToPDF(rows, yA, yB, `Comparative_Cash_Flow_${yA}_vs_${yB}`);
-      } else {
-        exportComparativeCashFlowToExcel(rows, yA, yB, `Comparative_Cash_Flow_${yA}_vs_${yB}`);
-      }
-    } catch {}
-  };
+  

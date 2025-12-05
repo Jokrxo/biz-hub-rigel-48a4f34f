@@ -113,6 +113,7 @@ export const TrialBalanceAutoGenerate = () => {
       const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
       const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
 
+      const pinnedCodes = new Set(['1100','3900']);
       accounts?.forEach(account => {
         let totalDebit = 0;
         let totalCredit = 0;
@@ -142,7 +143,8 @@ export const TrialBalanceAutoGenerate = () => {
         // Only include accounts with non-zero balances
         const isInventoryName = (account.account_name || '').toLowerCase().includes('inventory');
         const isPrimaryInventory = account.account_code === '1300';
-        const shouldShow = (totalDebit > 0 || totalCredit > 0) && (!isInventoryName || isPrimaryInventory);
+        const isPinned = pinnedCodes.has(String(account.account_code || ''));
+        const shouldShow = isPinned || ((totalDebit > 0 || totalCredit > 0) && (!isInventoryName || isPrimaryInventory));
         if (shouldShow) {
           trialBalanceData.push({
             account_code: account.account_code,
@@ -151,6 +153,21 @@ export const TrialBalanceAutoGenerate = () => {
             credit: totalCredit
           });
         }
+      });
+      const has1100 = trialBalanceData.some(e => String(e.account_code) === '1100');
+      const has3900 = trialBalanceData.some(e => String(e.account_code) === '3900');
+      if (!has1100) {
+        trialBalanceData.push({ account_code: '1100', account_name: 'Bank', debit: 0, credit: 0 });
+      }
+      if (!has3900) {
+        trialBalanceData.push({ account_code: '3900', account_name: 'Opening Balance Equity', debit: 0, credit: 0 });
+      }
+      trialBalanceData.sort((a, b) => {
+        const aPinned = pinnedCodes.has(String(a.account_code));
+        const bPinned = pinnedCodes.has(String(b.account_code));
+        if (aPinned && !bPinned) return -1;
+        if (bPinned && !aPinned) return 1;
+        return String(a.account_code).localeCompare(String(b.account_code));
       });
 
       setEntries(trialBalanceData);

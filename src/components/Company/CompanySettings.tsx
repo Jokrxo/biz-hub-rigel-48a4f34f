@@ -163,22 +163,31 @@ export const CompanySettings = () => {
   return (
     <div className="space-y-6">
       {/* Company Information Display Card */}
-      <Card className="bg-gradient-to-br from-primary/5 to-primary/10 border-primary/20">
+      <Card className="bg-gradient-to-br from-primary/10 to-primary/20 border-primary/30">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <Building2 className="h-5 w-5 text-primary" />
               Company Overview
             </CardTitle>
-            {logoUrl ? (
-              <div className="w-14 h-14 rounded-md border overflow-hidden">
-                <img src={logoUrl} alt="Company Logo" className="w-full h-full object-cover" />
+            <div className="flex items-center gap-3">
+              {logoUrl ? (
+                <div className="w-16 h-16 rounded-full ring-2 ring-primary/40 shadow-sm overflow-hidden">
+                  <img src={logoUrl} alt="Company Logo" loading="lazy" className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <div className="w-16 h-16 rounded-full ring-2 ring-primary/30 bg-muted flex items-center justify-center text-muted-foreground">
+                  <ImageIcon className="h-7 w-7" />
+                </div>
+              )}
+              <div>
+                <label className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-md bg-primary/10 text-primary hover:bg-primary/15 cursor-pointer">
+                  <Upload className="h-4 w-4" />
+                  Change Logo
+                  <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+                </label>
               </div>
-            ) : (
-              <div className="w-14 h-14 rounded-md border flex items-center justify-center text-muted-foreground">
-                <ImageIcon className="h-6 w-6" />
-              </div>
-            )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -229,7 +238,7 @@ export const CompanySettings = () => {
                 <Building2 className="h-5 w-5 text-primary" />
                 <div>
                   <div className="text-xs text-muted-foreground">Business Type</div>
-                  <div className="text-sm font-semibold capitalize">{companyData.business_type.replace('_', ' ')}</div>
+                  <div className="text-sm font-semibold capitalize px-2 py-1 rounded bg-primary/10 text-primary inline-block">{companyData.business_type.replace('_', ' ')}</div>
                 </div>
               </div>
             )}
@@ -238,7 +247,7 @@ export const CompanySettings = () => {
                 <Globe className="h-5 w-5 text-primary" />
                 <div>
                   <div className="text-xs text-muted-foreground">Currency</div>
-                  <div className="text-sm font-semibold">{companyData.default_currency}</div>
+                  <div className="text-sm font-semibold px-2 py-1 rounded bg-primary/10 text-primary inline-block">{companyData.default_currency}</div>
                 </div>
               </div>
             )}

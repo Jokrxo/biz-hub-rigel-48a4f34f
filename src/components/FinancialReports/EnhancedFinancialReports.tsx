@@ -73,18 +73,19 @@ export const EnhancedFinancialReports = () => {
           toast({ title: 'Missing transaction dates detected', description: `${nullTxCount} transaction(s) have no date and were excluded from period reports. Please update their dates for accurate reporting.`, variant: 'default' });
         }
       } catch {}
-      const trialBalance = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
+      const trialBalancePeriod = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
+      const cumulativeTB = await fetchTrialBalanceCumulativeToEnd(profile.company_id, periodEnd);
       const cogsFallback = await calculateCOGSFromInvoices(profile.company_id, periodStart, periodEnd);
       setFallbackCOGS(cogsFallback);
-      const pl = generateProfitLoss(trialBalance);
-      const bs = generateBalanceSheet(trialBalance);
+      const pl = generateProfitLoss(trialBalancePeriod);
+      const bs = generateBalanceSheet(cumulativeTB);
       const cf = await generateCashFlow(profile.company_id);
-      setReportData({ profitLoss: pl, balanceSheet: bs, cashFlow: cf, trialBalance });
+      setReportData({ profitLoss: pl, balanceSheet: bs, cashFlow: cf, trialBalance: trialBalancePeriod });
     } catch (error: any) {
       console.error('Error loading financial data:', error);
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally { setLoading(false); }
-  }, [periodStart, periodEnd, toast, fetchTrialBalanceForPeriod, generateBalanceSheet, generateCashFlow, generateProfitLoss]);
+  }, [periodStart, periodEnd, toast]);
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd, loadFinancialData]);
 
 
@@ -111,13 +112,14 @@ const calculateTotalInventoryValue = async (companyId: string) => {
   }
 };
 
-  // Fetch period-specific trial balance using transaction_entries joined to transactions.date within range
+  // Fetch period-specific trial balance using transaction_entries joined to transactions.date within range (posted only)
   const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
     const startDateObj = new Date(start);
+    const startISO = startDateObj.toISOString();
     const endDateObj = new Date(end);
     endDateObj.setHours(23, 59, 59, 999);
+    const endISO = endDateObj.toISOString();
 
-    // Get all active accounts
     const { data: accounts, error: accountsError } = await supabase
       .from('chart_of_accounts')
       .select('id, account_code, account_name, account_type')
@@ -127,7 +129,6 @@ const calculateTotalInventoryValue = async (companyId: string) => {
 
     if (accountsError) throw accountsError;
 
-    // Get transaction entries
     const { data: txEntries, error: txError } = await supabase
       .from('transaction_entries')
       .select(`
@@ -135,29 +136,32 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         account_id,
         debit,
         credit,
+        description,
         transactions!inner (
-          transaction_date
+          transaction_date,
+          status,
+          company_id
         )
       `)
       .eq('transactions.company_id', companyId)
-      .gte('transactions.transaction_date', start)
-      .lte('transactions.transaction_date', end);
+      .eq('transactions.status', 'posted')
+      .gte('transactions.transaction_date', startISO)
+      .lte('transactions.transaction_date', endISO)
+      .not('description', 'ilike', '%Opening balance (carry forward)%');
 
     if (txError) throw txError;
 
-    // Get ledger entries
     const { data: ledgerEntries, error: ledgerError } = await supabase
       .from('ledger_entries')
-      .select('transaction_id, account_id, debit, credit, entry_date')
+      .select('transaction_id, account_id, debit, credit, entry_date, description')
       .eq('company_id', companyId)
-      .gte('entry_date', start)
-      .lte('entry_date', end);
+      .gte('entry_date', startISO)
+      .lte('entry_date', endISO)
+      .not('description', 'ilike', '%Opening balance (carry forward)%');
 
     if (ledgerError) throw ledgerError;
 
     const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
-
-    // Calculate total inventory value from products
     const totalInventoryValue = await calculateTotalInventoryValue(companyId);
 
     const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
@@ -166,16 +170,14 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     (accounts || []).forEach((acc: any) => {
       let sumDebit = 0;
       let sumCredit = 0;
-      
-      // Sum transaction entries
+
       filteredTxEntries?.forEach((entry: any) => {
         if (entry.account_id === acc.id) {
           sumDebit += Number(entry.debit || 0);
           sumCredit += Number(entry.credit || 0);
         }
       });
-      
-      // Sum ledger entries
+
       ledgerEntries?.forEach((entry: any) => {
         if (entry.account_id === acc.id) {
           sumDebit += Number(entry.debit || 0);
@@ -183,15 +185,106 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         }
       });
 
-      // Map sign convention by account type
       const type = (acc.account_type || '').toLowerCase();
       const naturalDebit = type === 'asset' || type === 'expense';
       let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
-      // Special handling for inventory account - use actual product values (only account 1300)
       if (acc.account_code === '1300') {
         balance = totalInventoryValue;
-        console.log(`Inventory account ${acc.account_code} - Using total product value: R ${totalInventoryValue}`);
+      }
+
+      const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
+      const isPrimaryInventory = acc.account_code === '1300';
+      const shouldShow = Math.abs(balance) > 0.01 && (!isInventoryName || isPrimaryInventory);
+      if (shouldShow) {
+        trialBalance.push({
+          account_id: acc.id,
+          account_code: acc.account_code,
+          account_name: acc.account_name,
+          account_type: acc.account_type,
+          balance
+        });
+      }
+    });
+
+    return trialBalance;
+  };
+
+  // Fetch cumulative trial balance up to end date (posted only) for Balance Sheet carry-forward
+  const fetchTrialBalanceCumulativeToEnd = async (companyId: string, end: string) => {
+    const endDateObj = new Date(end);
+    endDateObj.setHours(23, 59, 59, 999);
+    const endISO = endDateObj.toISOString();
+
+    const { data: accounts, error: accountsError } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_code, account_name, account_type')
+      .eq('company_id', companyId)
+      .eq('is_active', true)
+      .order('account_code');
+
+    if (accountsError) throw accountsError;
+
+    const { data: txEntries, error: txError } = await supabase
+      .from('transaction_entries')
+      .select(`
+        transaction_id,
+        account_id,
+        debit,
+        credit,
+        description,
+        transactions!inner (
+          transaction_date,
+          status,
+          company_id
+        )
+      `)
+      .eq('transactions.company_id', companyId)
+      .eq('transactions.status', 'posted')
+      .lte('transactions.transaction_date', endISO)
+      .not('description', 'ilike', '%Opening balance (carry forward)%');
+
+    if (txError) throw txError;
+
+    const { data: ledgerEntries, error: ledgerError } = await supabase
+      .from('ledger_entries')
+      .select('transaction_id, account_id, debit, credit, entry_date, description')
+      .eq('company_id', companyId)
+      .lte('entry_date', endISO)
+      .not('description', 'ilike', '%Opening balance (carry forward)%');
+
+    if (ledgerError) throw ledgerError;
+
+    const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
+    const totalInventoryValue = await calculateTotalInventoryValue(companyId);
+
+    const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+    const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
+    (accounts || []).forEach((acc: any) => {
+      let sumDebit = 0;
+      let sumCredit = 0;
+
+      filteredTxEntries?.forEach((entry: any) => {
+        if (entry.account_id === acc.id) {
+          sumDebit += Number(entry.debit || 0);
+          sumCredit += Number(entry.credit || 0);
+        }
+      });
+
+      ledgerEntries?.forEach((entry: any) => {
+        if (entry.account_id === acc.id) {
+          sumDebit += Number(entry.debit || 0);
+          sumCredit += Number(entry.credit || 0);
+        }
+      });
+
+      const type = (acc.account_type || '').toLowerCase();
+      const naturalDebit = type === 'asset' || type === 'expense';
+      let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+
+      if (acc.account_code === '1300') {
+        balance = totalInventoryValue;
       }
 
       const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
@@ -388,8 +481,12 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       !['1210','2110','2210'].includes(String(a.account_code || ''))
     );
     
-    const vatPayable = Math.max(0, vatNet);
-    const vatReceivable = Math.max(0, -vatNet);
+    const vatReceivable = trialBalance
+      .filter(a => a.account_type.toLowerCase() === 'asset' && (String(a.account_name || '').toLowerCase().includes('vat input') || String(a.account_name || '').toLowerCase().includes('vat receivable')))
+      .reduce((sum, a) => sum + Number(a.balance || 0), 0);
+    const vatPayable = trialBalance
+      .filter(a => a.account_type.toLowerCase() === 'liability' && String(a.account_name || '').toLowerCase().includes('vat'))
+      .reduce((sum, a) => sum + Number(a.balance || 0), 0);
     let totalCurrentAssets = 0;
     const bankPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1100');
     const arPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1200');
@@ -418,29 +515,44 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     }
     data.push({ type: 'subtotal', account: 'Total Current Assets', amount: totalCurrentAssets, accountId: null });
 
-    // Fixed Assets
-    data.push({ type: 'subheader', account: 'Fixed Assets', amount: 0, accountId: null });
-    const fixedAssets = trialBalance.filter(a => 
+    // Non-current Assets (NBV)
+    data.push({ type: 'subheader', account: 'Non-current Assets (NBV)', amount: 0, accountId: null });
+    const fixedAssetsAll = trialBalance.filter(a => 
       a.account_type.toLowerCase() === 'asset' && 
       parseInt(a.account_code || '0') >= 1500
     );
-    
+    const normalizeName = (name: string) => String(name || '').toLowerCase()
+      .replace(/accumulated/g, '')
+      .replace(/depreciation/g, '')
+      .replace(/[-_]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const accDepRows = fixedAssetsAll.filter(a => String(a.account_name || '').toLowerCase().includes('accumulated'));
+    const nonCurrentAssets = fixedAssetsAll.filter(a => !String(a.account_name || '').toLowerCase().includes('accumulated'));
+    const nbvFor = (assetRow: any) => {
+      const base = normalizeName(assetRow.account_name);
+      const related = accDepRows.filter(ad => {
+        const adBase = normalizeName(ad.account_name);
+        return adBase.includes(base) || base.includes(adBase);
+      });
+      const accTotal = related.reduce((sum, r) => sum + Number(r.balance || 0), 0);
+      return Number(assetRow.balance || 0) - accTotal;
+    };
     let totalFixedAssets = 0;
-    fixedAssets.forEach(acc => {
-      // Use balance from trial balance directly
-      const total = acc.balance || 0;
-      if (Math.abs(total) > 0.01) {
+    nonCurrentAssets.forEach(acc => {
+      const nbv = nbvFor(acc);
+      if (Math.abs(nbv) > 0.01) {
         data.push({ 
           type: 'asset', 
           account: acc.account_name, 
-          amount: total,
+          amount: nbv,
           accountId: acc.account_id,
           accountCode: acc.account_code
         });
-        totalFixedAssets += total;
+        totalFixedAssets += nbv;
       }
     });
-    data.push({ type: 'subtotal', account: 'Total Fixed Assets', amount: totalFixedAssets, accountId: null });
+    data.push({ type: 'subtotal', account: 'Total Fixed Assets (NBV)', amount: totalFixedAssets, accountId: null });
     data.push({ type: 'total', account: 'TOTAL ASSETS', amount: totalCurrentAssets + totalFixedAssets, accountId: null });
 
     // LIABILITIES & EQUITY - use trial balance balances directly
@@ -499,10 +611,7 @@ const calculateTotalInventoryValue = async (companyId: string) => {
         _period_start: periodStart,
         _period_end: periodEnd
       });
-
-      if (error) throw error;
-
-      if (data && data.length > 0) {
+      if (!error && data && data.length > 0) {
         const cf = data[0];
         return [
           { type: 'header', account: 'OPERATING ACTIVITIES', amount: 0, accountId: null },
@@ -519,10 +628,62 @@ const calculateTotalInventoryValue = async (companyId: string) => {
           { type: 'final', account: 'Closing Cash Balance', amount: cf.closing_cash || 0, accountId: null },
         ];
       }
-    } catch (error) {
-      console.error('Error generating cash flow:', error);
+    } catch {}
+    try {
+      const { data: entries } = await supabase
+        .from('transaction_entries')
+        .select(`debit, credit, account_id, transactions!inner (transaction_date, status, company_id), chart_of_accounts!inner (account_type, account_name)`) as any;
+      const inPeriod = (d: string) => new Date(d) >= new Date(periodStart) && new Date(d) <= new Date(periodEnd);
+      let income = 0; let expense = 0; let depreciation = 0; let recvChange = 0; let payChange = 0; let investing = 0; let financing = 0;
+      (entries || []).forEach((e: any) => {
+        if (String(e.transactions?.company_id || '') !== String(companyId)) return;
+        const posted = String(e.transactions?.status || '').toLowerCase() === 'posted';
+        if (!posted) return;
+        const dateStr = String(e.transactions?.transaction_date || '');
+        if (!inPeriod(dateStr)) return;
+        const type = String(e.chart_of_accounts?.account_type || '');
+        const name = String(e.chart_of_accounts?.account_name || '').toLowerCase();
+        const debit = Number(e.debit || 0); const credit = Number(e.credit || 0);
+        if (type.toLowerCase() === 'income') income += (credit - debit);
+        else if (type.toLowerCase() === 'expense') { expense += (debit - credit); if (name.includes('depreciation')) depreciation += debit; }
+        if (name.includes('receivable')) recvChange += (debit - credit);
+        if (name.includes('payable')) payChange += (credit - debit);
+        if (type.toLowerCase() === 'asset' && (name.includes('fixed asset') || name.includes('fixed deposit') || name.includes('investment'))) investing += (debit - credit);
+        if (name.includes('loan') || name.includes('capital')) financing += (credit - debit);
+      });
+      const operating = income - expense + depreciation - recvChange + payChange;
+      const { data: pre } = await supabase
+        .from('transaction_entries')
+        .select(`debit, credit, transactions!inner (transaction_date, status, company_id), chart_of_accounts!inner (account_type, account_name)`) as any;
+      let openingCash = 0;
+      (pre || []).forEach((e: any) => {
+        if (String(e.transactions?.company_id || '') !== String(companyId)) return;
+        const posted = String(e.transactions?.status || '').toLowerCase() === 'posted';
+        if (!posted) return;
+        const d = new Date(String(e.transactions?.transaction_date || ''));
+        if (!(d < new Date(periodStart))) return;
+        const type = String(e.chart_of_accounts?.account_type || '').toLowerCase();
+        const name = String(e.chart_of_accounts?.account_name || '').toLowerCase();
+        if (type === 'asset' && (name.includes('cash') || name.includes('bank'))) openingCash += Number(e.debit || 0) - Number(e.credit || 0);
+      });
+      const closingCash = openingCash + operating + (-1 * investing) + financing;
+      return [
+        { type: 'header', account: 'OPERATING ACTIVITIES', amount: 0, accountId: null },
+        { type: 'income', account: 'Net cash from operating activities', amount: operating, accountId: null },
+        { type: 'spacer', account: '', amount: 0, accountId: null },
+        { type: 'header', account: 'INVESTING ACTIVITIES', amount: 0, accountId: null },
+        { type: 'expense', account: 'Net cash from investing activities', amount: (-1 * investing), accountId: null },
+        { type: 'spacer', account: '', amount: 0, accountId: null },
+        { type: 'header', account: 'FINANCING ACTIVITIES', amount: 0, accountId: null },
+        { type: 'income', account: 'Net cash from financing activities', amount: financing, accountId: null },
+        { type: 'spacer', account: '', amount: 0, accountId: null },
+        { type: 'subtotal', account: 'Net Increase in Cash', amount: operating + (-1 * investing) + financing, accountId: null },
+        { type: 'asset', account: 'Opening Cash Balance', amount: openingCash, accountId: null },
+        { type: 'final', account: 'Closing Cash Balance', amount: closingCash, accountId: null },
+      ];
+    } catch {
+      return [];
     }
-    return [];
   };
 
   const handleExport = (format: 'pdf' | 'excel') => {
@@ -572,8 +733,26 @@ const calculateTotalInventoryValue = async (companyId: string) => {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="space-y-6">
+        <div className="animate-pulse">
+          <div className="h-8 w-64 bg-muted rounded mb-2"></div>
+          <div className="h-4 w-96 bg-muted rounded"></div>
+        </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <div className="h-5 w-5 bg-muted rounded"></div>
+              <div className="h-5 w-40 bg-muted rounded"></div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2 animate-pulse">
+              {[...Array(12)].map((_, i) => (
+                <div key={i} className="h-5 w-full bg-muted rounded"></div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -837,33 +1016,3 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     </div>
   );
 };
-      const { data: vatTx } = await supabase
-        .from('transactions')
-        .select('transaction_date, transaction_type, vat_rate, vat_inclusive, total_amount, vat_amount, base_amount')
-        .eq('company_id', profile.company_id)
-        .gte('transaction_date', periodStart)
-        .lte('transaction_date', periodEnd)
-        .in('status', ['approved','posted','pending']);
-      let out = 0;
-      let inn = 0;
-      (vatTx || []).forEach((t: any) => {
-        const type = String(t.transaction_type || '').toLowerCase();
-        const isIncome = ['income','sales','receipt'].includes(type);
-        const isPurchase = ['expense','purchase','bill','product_purchase'].includes(type);
-        const rate = Number(t.vat_rate || 0);
-        const total = Number(t.total_amount || 0);
-        const base = Number(t.base_amount || 0);
-        const inclusive = Boolean(t.vat_inclusive);
-        let vat = Number(t.vat_amount || 0);
-        if (vat === 0 && rate > 0) {
-          if (inclusive) {
-            const net = base > 0 ? base : total / (1 + rate / 100);
-            vat = total - net;
-          } else {
-            vat = total - (base > 0 ? base : total);
-          }
-        }
-        if (isIncome) out += Math.max(0, vat);
-        if (isPurchase) inn += Math.max(0, vat);
-      });
-      setVatNet(out - inn);

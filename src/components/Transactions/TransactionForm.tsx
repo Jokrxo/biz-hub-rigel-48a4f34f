@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertTriangle, CheckCircle2, Building2, AlertCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Building2, AlertCircle, Loader2 } from "lucide-react";
 
 // Loan calculation function
 const calculateMonthlyRepayment = (principal: number, monthlyRate: number, termMonths: number): number => {
@@ -532,7 +532,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             vat_rate: ratePct || null,
             vat_amount: vatAmount || null,
             base_amount: baseAmount,
-            vat_inclusive: isPurchaseTx ? !!form.amountIncludesVat : (ratePct > 0),
+            vat_inclusive: !!form.amountIncludesVat,
             total_amount: totalAmount,
           })
           .eq("id", editData.id)
@@ -556,7 +556,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             vat_rate: parseFloat(form.vatRate) || null,
             vat_amount: vatAmount || null,
             base_amount: baseAmount,
-            vat_inclusive: isPurchaseTx ? !!form.amountIncludesVat : ((parseFloat(form.vatRate) || 0) > 0),
+            vat_inclusive: !!form.amountIncludesVat,
             status: "pending"
           })
           .select()
@@ -1386,8 +1386,8 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={loading || !form.bankAccount}>
-            {loading ? "Posting..." : "Post Transaction"}
+          <Button onClick={handleSubmit} disabled={loading || !form.bankAccount} className="gap-2">
+            {loading ? (<><Loader2 className="h-4 w-4 animate-spin" /> Posting...</>) : "Post Transaction"}
           </Button>
         </DialogFooter>
       </DialogContent>

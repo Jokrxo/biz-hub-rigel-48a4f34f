@@ -16,6 +16,15 @@ export const calculateDepreciation = (
   currentDate: Date = new Date()
 ): DepreciationResult => {
   const purchase = new Date(purchaseDate);
+  if (currentDate.getTime() < purchase.getTime()) {
+    const annualDepreciationPre = cost / usefulLifeYears;
+    return {
+      annualDepreciation: annualDepreciationPre,
+      accumulatedDepreciation: 0,
+      netBookValue: 0,
+      monthsDepreciated: 0,
+    };
+  }
   const monthsDiff = Math.floor(
     (currentDate.getTime() - purchase.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
   );

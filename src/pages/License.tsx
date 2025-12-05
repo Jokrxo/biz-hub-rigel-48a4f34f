@@ -70,11 +70,11 @@ export default function License() {
             </div>
           </div>
         </div>
-        <Card>
-          <CardHeader>
+        <Card className="relative overflow-hidden">
+          <CardHeader className="relative z-10">
             <CardTitle>License Activation</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="relative z-10">
             <div className="grid md:grid-cols-2 gap-6">
               <div className="space-y-3">
                 <Label htmlFor="licenseKey">Enter License Key</Label>
@@ -100,6 +100,7 @@ export default function License() {
                 <div className="text-sm">Seats Available: <span className="font-mono">{seats.available}</span></div>
               </div>
             </div>
+            <img aria-hidden className="absolute right-0 bottom-0 w-48 h-48 opacity-10 pointer-events-none select-none object-contain blur-[0.5px]" src="/src/assets/stellkhygugvyt.jpg" alt="Watermark" />
           </CardContent>
         </Card>
 

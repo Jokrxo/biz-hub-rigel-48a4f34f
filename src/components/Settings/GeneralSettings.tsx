@@ -25,7 +25,17 @@ export const GeneralSettings = () => {
 
   const applyTheme = (theme: string) => {
     const root = document.documentElement;
-    if (theme === 'dark') root.classList.add('dark'); else root.classList.remove('dark');
+    ["theme-corp-blue","theme-fintech-green","theme-premium-navy","theme-neutral-enterprise","theme-dark-pro","theme-exec-gold","theme-ocean-gradient","theme-purple-digital","theme-tech-silver","theme-eco-green"].forEach(c => root.classList.remove(c));
+    if (theme === 'dark') {
+      root.classList.add('dark');
+      root.classList.add('theme-dark-pro');
+    } else if (theme === 'light') {
+      root.classList.remove('dark');
+    } else if (theme === 'system') {
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (prefersDark) { root.classList.add('dark'); root.classList.add('theme-dark-pro'); }
+      else { root.classList.remove('dark'); }
+    }
   };
 
   const handleSave = useCallback(async () => {

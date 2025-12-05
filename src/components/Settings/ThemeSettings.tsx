@@ -31,6 +31,8 @@ export const ThemeSettings = () => {
     ["theme-corp-blue","theme-fintech-green","theme-premium-navy","theme-neutral-enterprise","theme-dark-pro","theme-exec-gold","theme-ocean-gradient","theme-purple-digital","theme-tech-silver","theme-eco-green"].forEach(c => html.classList.remove(c));
     const t = themes.find(t => t.key === key);
     if (t && t.className) html.classList.add(t.className);
+    const isDarkFamily = key === "dark_pro" || key === "premium_navy" || key === "purple_digital";
+    if (isDarkFamily) html.classList.add('dark'); else html.classList.remove('dark');
     localStorage.setItem("app_theme", key);
     setCurrent(key);
   };

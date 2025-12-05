@@ -12,7 +12,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { toast as notify } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search } from "lucide-react";
+import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search, Loader2 } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandDialog } from "@/components/ui/command";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -203,6 +203,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [selectedAssetId, setSelectedAssetId] = useState<string>("");
   const [assetUsefulLifeYears, setAssetUsefulLifeYears] = useState<string>("5");
   const [assetUsefulLifeStartDate, setAssetUsefulLifeStartDate] = useState<string>(new Date().toISOString().slice(0,10));
+  const fixedAssetCodes = ['1500','1510','1600','1700','1800'];
   
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -232,6 +233,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   useEffect(() => {
     if (open && prefill) {
       setForm(prev => ({ ...prev, ...prefill }));
+      if (typeof (prefill as any).amountIncludesVAT !== 'undefined') {
+        setAmountIncludesVAT(!!(prefill as any).amountIncludesVAT);
+      }
       if ((prefill as any).usefulLifeYears) setAssetUsefulLifeYears(String((prefill as any).usefulLifeYears));
       if ((prefill as any).depreciationMethod) setDepreciationMethod(String((prefill as any).depreciationMethod));
       if ((prefill as any).usefulLifeStartDate) setAssetUsefulLifeStartDate(String((prefill as any).usefulLifeStartDate));
@@ -272,13 +276,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [depreciationMethod, setDepreciationMethod] = useState<string>("straight_line");
 
   useEffect(() => {
+    const selectedDebit = accounts.find((acc: any) => String(acc.id) === String(form.debitAccount));
+    const code = String((selectedDebit as any)?.account_code || '');
     setShowFixedAssetsUI(
-      form.element === 'asset' ||
-      form.element === 'depreciation' ||
-      form.element === 'asset_disposal' ||
-      (form.element === 'equity' && form.paymentMethod === 'asset')
+      ((form.element === 'asset') || (form.element === 'equity' && form.paymentMethod === 'asset')) && fixedAssetCodes.includes(code)
+      || form.element === 'depreciation' || form.element === 'asset_disposal'
     );
-  }, [form.element, form.paymentMethod]);
+  }, [form.element, form.paymentMethod, form.debitAccount, accounts]);
 
   useEffect(() => {
     if (!form.bankAccountId || !form.element || accounts.length === 0) return;
@@ -905,13 +909,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             reference_number: form.reference ? form.reference.trim() : null,
             transaction_type: lockType === 'po_sent' ? 'purchase' : (form.element || null),
             bank_account_id: form.bankAccountId && form.bankAccountId.trim() !== "" ? form.bankAccountId : null,
-            total_amount: isPurchase ? netAmount : (isNaN(amountNum) ? 0 : amountNum),
+            total_amount: (isNaN(amountNum) ? 0 : amountNum),
             debit_account_id: form.debitAccount,
             credit_account_id: form.creditAccount,
             vat_rate: vatRate > 0 ? vatRate : null,
             vat_amount: vatAmount > 0 ? vatAmount : null,
             base_amount: netAmount,
-            vat_inclusive: isPurchase ? false : inclusive,
+            vat_inclusive: inclusive,
            })
           .eq("id", editData.id);
 
@@ -1514,11 +1518,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           transaction_date: form.date,
           description: sanitizedDescription,
           reference_number: sanitizedReference,
-          total_amount: isPurchase ? netAmount : amount,
+          total_amount: amount,
           vat_rate: vatRate > 0 ? vatRate : null,
           vat_amount: vatAmount > 0 ? vatAmount : null,
           base_amount: netAmount,
-          vat_inclusive: isPurchase ? false : amountIncludesVAT,
+          vat_inclusive: amountIncludesVAT,
           bank_account_id: bankAccountId,
           transaction_type: lockType === 'po_sent' ? 'purchase' : form.element,
           category: autoClassification?.category || null,
@@ -2980,6 +2984,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   </div>
                 )
               )}
+              {(!form.element?.startsWith('loan_') && form.element !== 'depreciation' && form.element !== 'asset_disposal') && (
+                <div className="flex items-center gap-3">
+                  <Label htmlFor="vatInclusive">VAT Inclusive?</Label>
+                  <Switch id="vatInclusive" checked={amountIncludesVAT} onCheckedChange={(v: boolean) => setAmountIncludesVAT(!!v)} />
+                  <span className="text-xs text-muted-foreground">Yes = amount includes VAT • No = amount excludes VAT</span>
+                </div>
+              )}
               {form.element === 'asset' && (isLoanCreditSelected || form.assetFinancedByLoan) && (
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -3065,13 +3076,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             onClick={handleSubmit} 
             disabled={
               loading || chartMissing || !form.element || !form.debitAccount || !form.creditAccount ||
-              (showFixedAssetsUI && (form.element === 'asset' || (form.element === 'equity' && form.paymentMethod === 'asset')) && (
-                !assetUsefulLifeYears || !assetUsefulLifeStartDate
-              ))
+              (showFixedAssetsUI && ((form.element === 'asset') || (form.element === 'equity' && form.paymentMethod === 'asset')) && (!assetUsefulLifeYears || !assetUsefulLifeStartDate))
             }
             className="bg-gradient-primary hover:opacity-90"
           >
-            {loading ? "Posting Transaction..." : "Post Transaction"}
+            {loading ? (<><Loader2 className="h-4 w-4 animate-spin" /> Posting Transaction...</>) : "Post Transaction"}
           </Button>
         </DialogFooter>
           </div>

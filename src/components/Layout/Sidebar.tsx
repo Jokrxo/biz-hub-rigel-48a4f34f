@@ -41,6 +41,7 @@ const navItems = [
   { icon: TrendingUp, label: "Financial Reports", href: "/reports" },
   { icon: Wallet, label: "Budget", href: "/budget" },
   { icon: CreditCard, label: "Loans", href: "/loans" },
+  { icon: PieChart, label: "Investments", href: "/investments" },
   { icon: DollarSign, label: "Payroll", href: "/payroll" },
   { icon: Users, label: "Customers", href: "/customers" },
   { icon: Crown, label: "License", href: "/license" },

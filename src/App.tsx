@@ -13,10 +13,12 @@ import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import { AuthProvider } from "./context/AuthContext";
+import { useAuth } from "./context/useAuth";
 import { ProtectedRoute } from "./components/Auth/ProtectedRoute";
 import { SupabaseSetup } from "./components/Setup/SupabaseSetup";
 import { PageLoader } from "./components/ui/loading-spinner";
 import { InstallPrompt } from "./components/PWA/InstallPrompt";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "./components/ui/alert-dialog";
 
 // Lazy load pages
 const Transactions = lazy(() => import("./pages/Transactions"));
@@ -34,6 +36,7 @@ const Bank = lazy(() => import("./pages/Bank"));
 const Budget = lazy(() => import("./pages/Budget"));
 const Payroll = lazy(() => import("./pages/Payroll"));
 const Loans = lazy(() => import("./pages/Loans"));
+const Investments = lazy(() => import("./pages/Investments"));
 const PaymentPortal = lazy(() => import("./pages/PaymentPortal"));
 const License = lazy(() => import("./pages/License"));
 const LicenseAdmin = lazy(() => import("./pages/LicenseAdmin"));
@@ -58,6 +61,51 @@ const App = () => {
       <Sonner />
       <AuthProvider>
         <BrowserRouter>
+          {(() => {
+            const CookieConsentGate: React.FC = () => {
+              const { user } = useAuth();
+              const [open, setOpen] = React.useState(false);
+              const getCookie = (name: string) => {
+                try {
+                  const pairs = document.cookie.split('; ').map((s) => s.split('='));
+                  const found = pairs.find(([k]) => k === name);
+                  return found ? decodeURIComponent(found[1] || '') : null;
+                } catch { return null; }
+              };
+              const setCookie = (name: string, value: string, days: number) => {
+                try {
+                  const expires = new Date(Date.now() + days * 864e5).toUTCString();
+                  const secure = typeof window !== 'undefined' && window.location && window.location.protocol === 'https:' ? '; Secure' : '';
+                  document.cookie = `${name}=${encodeURIComponent(value)}; Path=/; Expires=${expires}; SameSite=Lax${secure}`;
+                } catch {}
+              };
+              React.useEffect(() => {
+                if (user) {
+                  const existing = getCookie('cookie_consent');
+                  if (!existing) setOpen(true);
+                }
+              }, [user]);
+              const accept = () => { setCookie('cookie_consent', 'accepted', 365); setOpen(false); };
+              const decline = () => { setCookie('cookie_consent', 'declined', 365); setOpen(false); };
+              return (
+                <AlertDialog open={open} onOpenChange={setOpen}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>We use cookies</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        We use essential cookies to keep you signed in and operate the app. You can accept or decline optional cookies.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel onClick={decline}>Decline</AlertDialogCancel>
+                      <AlertDialogAction onClick={accept}>Accept</AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              );
+            };
+            return <CookieConsentGate />;
+          })()}
           {(() => {
             try {
               const saved = localStorage.getItem('app_theme');
@@ -110,6 +158,7 @@ const App = () => {
             <Route path="/customers" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Customers /></Suspense></ProtectedRoute>} />
             <Route path="/budget" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Budget /></Suspense></ProtectedRoute>} />
             <Route path="/loans" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Loans /></Suspense></ProtectedRoute>} />
+            <Route path="/investments" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Investments /></Suspense></ProtectedRoute>} />
             <Route path="/payroll" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Payroll /></Suspense></ProtectedRoute>} />
             <Route path="/billing" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense></ProtectedRoute>} />
             <Route path="/license" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><License /></Suspense></ProtectedRoute>} />

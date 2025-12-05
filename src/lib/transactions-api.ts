@@ -38,6 +38,179 @@ export const transactionsApi = {
     if (error) throw error;
     return (data || []) as TransactionRow[];
   },
+  postInvestmentBuy: async (opts: { accountId: string; symbol: string; quantity: number; price: number; fees?: number; date: string; bankAccountId: string }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0,10);
+    const total = Number(opts.quantity || 0) * Number(opts.price || 0) + Number(opts.fees || 0);
+    if (!(total > 0)) throw new Error('Invalid buy amount');
+    const { data: accounts } = await supabase.from('chart_of_accounts').select('id, account_name, account_type, account_code, is_active').eq('company_id', companyId).eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => { const byType = list.filter(a => a.type === type.toLowerCase()); const byCode = byType.find(a => codes.includes(a.code)); if (byCode) return byCode.id; const byName = byType.find(a => names.some(n => a.name.includes(n))); return byName?.id || ''; };
+    let bankId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true }).select('id').single(); bankId = (created as any)?.id || ''; }
+    let investAssetId = pick('asset', ['1400'], ['investment','securities']);
+    if (!investAssetId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '1400', account_name: 'Investment Assets', account_type: 'asset', is_active: true }).select('id').single(); investAssetId = (created as any)?.id || ''; }
+    const { data: tx, error: txErr } = await supabase.from('transactions').insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Buy ${opts.symbol}`, reference_number: `INV-${opts.accountId}`, total_amount: total, bank_account_id: opts.bankAccountId, transaction_type: 'asset', status: 'pending' }).select('id').single();
+    if (txErr) throw txErr;
+    const rows = [ { transaction_id: (tx as any).id, account_id: investAssetId, debit: total, credit: 0, description: 'Investment buy', status: 'approved' }, { transaction_id: (tx as any).id, account_id: bankId, debit: 0, credit: total, description: 'Investment buy', status: 'approved' } ];
+    await supabase.from('transaction_entries').insert(rows);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
+    await supabase.from('ledger_entries').insert(ledgerRows as any);
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: total, _operation: 'subtract' }); } catch {}
+    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'buy', trade_date: postDate, symbol: opts.symbol, quantity: opts.quantity, price: opts.price, total_amount: total, fees: opts.fees || 0 }); } catch {}
+  },
+  postInvestmentSell: async (opts: { accountId: string; symbol: string; quantity: number; price: number; fees?: number; date: string; bankAccountId: string }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0,10);
+    const gross = Number(opts.quantity || 0) * Number(opts.price || 0);
+    const total = Math.max(0, gross - Number(opts.fees || 0));
+    if (!(total > 0)) throw new Error('Invalid sell amount');
+    const { data: accounts } = await supabase.from('chart_of_accounts').select('id, account_name, account_type, account_code, is_active').eq('company_id', companyId).eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => { const byType = list.filter(a => a.type === type.toLowerCase()); const byCode = byType.find(a => codes.includes(a.code)); if (byCode) return byCode.id; const byName = byType.find(a => names.some(n => a.name.includes(n))); return byName?.id || ''; };
+    let bankId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true }).select('id').single(); bankId = (created as any)?.id || ''; }
+    let investAssetId = pick('asset', ['1400'], ['investment','securities']);
+    if (!investAssetId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '1400', account_name: 'Investment Assets', account_type: 'asset', is_active: true }).select('id').single(); investAssetId = (created as any)?.id || ''; }
+    let realizedGainId = pick('income', ['4300'], ['realized gain','capital gain']);
+    if (!realizedGainId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '4300', account_name: 'Realized Gains', account_type: 'revenue', is_active: true }).select('id').single(); realizedGainId = (created as any)?.id || ''; }
+    const { data: tx, error: txErr } = await supabase.from('transactions').insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Sell ${opts.symbol}`, reference_number: `INV-${opts.accountId}`, total_amount: total, bank_account_id: opts.bankAccountId, transaction_type: 'income', status: 'pending' }).select('id').single();
+    if (txErr) throw txErr;
+    const rows = [ { transaction_id: (tx as any).id, account_id: bankId, debit: total, credit: 0, description: 'Investment sell', status: 'approved' }, { transaction_id: (tx as any).id, account_id: investAssetId, debit: 0, credit: total, description: 'Investment sell', status: 'approved' } ];
+    await supabase.from('transaction_entries').insert(rows);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
+    await supabase.from('ledger_entries').insert(ledgerRows as any);
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: total, _operation: 'add' }); } catch {}
+    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'sell', trade_date: postDate, symbol: opts.symbol, quantity: opts.quantity, price: opts.price, total_amount: total, fees: opts.fees || 0 }); } catch {}
+  },
+  postInvestmentDividend: async (opts: { accountId: string; amount: number; date: string; bankAccountId: string; symbol?: string }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0,10);
+    const amt = Number(opts.amount || 0);
+    if (!(amt > 0)) throw new Error('Invalid dividend amount');
+    const { data: accounts } = await supabase.from('chart_of_accounts').select('id, account_name, account_type, account_code, is_active').eq('company_id', companyId).eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => { const byType = list.filter(a => a.type === type.toLowerCase()); const byCode = byType.find(a => codes.includes(a.code)); if (byCode) return byCode.id; const byName = byType.find(a => names.some(n => a.name.includes(n))); return byName?.id || ''; };
+    let bankId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true }).select('id').single(); bankId = (created as any)?.id || ''; }
+    let dividendIncomeId = pick('revenue', ['4205'], ['dividend']);
+    if (!dividendIncomeId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '4205', account_name: 'Dividend Income', account_type: 'revenue', is_active: true }).select('id').single(); dividendIncomeId = (created as any)?.id || ''; }
+    const { data: tx, error: txErr } = await supabase.from('transactions').insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Dividend ${opts.symbol || ''}`.trim(), reference_number: `INV-${opts.accountId}`, total_amount: amt, bank_account_id: opts.bankAccountId, transaction_type: 'income', status: 'pending' }).select('id').single();
+    if (txErr) throw txErr;
+    const rows = [ { transaction_id: (tx as any).id, account_id: bankId, debit: amt, credit: 0, description: 'Dividend income', status: 'approved' }, { transaction_id: (tx as any).id, account_id: dividendIncomeId, debit: 0, credit: amt, description: 'Dividend income', status: 'approved' } ];
+    await supabase.from('transaction_entries').insert(rows);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
+    await supabase.from('ledger_entries').insert(ledgerRows as any);
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'add' }); } catch {}
+    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'dividend', trade_date: postDate, symbol: opts.symbol || null, total_amount: amt }); } catch {}
+  },
+  postInvestmentInterest: async (opts: { accountId: string; amount: number; date: string; bankAccountId: string; symbol?: string }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0,10);
+    const amt = Number(opts.amount || 0);
+    if (!(amt > 0)) throw new Error('Invalid interest amount');
+    const { data: accounts } = await supabase.from('chart_of_accounts').select('id, account_name, account_type, account_code, is_active').eq('company_id', companyId).eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => { const byType = list.filter(a => a.type === type.toLowerCase()); const byCode = byType.find(a => codes.includes(a.code)); if (byCode) return byCode.id; const byName = byType.find(a => names.some(n => a.name.includes(n))); return byName?.id || ''; };
+    let bankId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true }).select('id').single(); bankId = (created as any)?.id || ''; }
+    let interestIncomeId = pick('revenue', ['4200'], ['interest income','interest']);
+    if (!interestIncomeId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '4200', account_name: 'Interest Income', account_type: 'revenue', is_active: true }).select('id').single(); interestIncomeId = (created as any)?.id || ''; }
+    const { data: tx, error: txErr } = await supabase.from('transactions').insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Interest ${opts.symbol || ''}`.trim(), reference_number: `INV-${opts.accountId}`, total_amount: amt, bank_account_id: opts.bankAccountId, transaction_type: 'income', status: 'pending' }).select('id').single();
+    if (txErr) throw txErr;
+    const rows = [ { transaction_id: (tx as any).id, account_id: bankId, debit: amt, credit: 0, description: 'Interest income', status: 'approved' }, { transaction_id: (tx as any).id, account_id: interestIncomeId, debit: 0, credit: amt, description: 'Interest income', status: 'approved' } ];
+    await supabase.from('transaction_entries').insert(rows);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
+    await supabase.from('ledger_entries').insert(ledgerRows as any);
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'add' }); } catch {}
+    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'interest', trade_date: postDate, symbol: opts.symbol || null, total_amount: amt }); } catch {}
+  },
+  postInvestmentFee: async (opts: { accountId: string; amount: number; date: string; bankAccountId: string; description?: string }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0,10);
+    const amt = Number(opts.amount || 0);
+    if (!(amt > 0)) throw new Error('Invalid fee amount');
+    const { data: accounts } = await supabase.from('chart_of_accounts').select('id, account_name, account_type, account_code, is_active').eq('company_id', companyId).eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => { const byType = list.filter(a => a.type === type.toLowerCase()); const byCode = byType.find(a => codes.includes(a.code)); if (byCode) return byCode.id; const byName = byType.find(a => names.some(n => a.name.includes(n))); return byName?.id || ''; };
+    let bankId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true }).select('id').single(); bankId = (created as any)?.id || ''; }
+    let feesExpId = pick('expense', ['5950'], ['brokerage','bank charges','fees']);
+    if (!feesExpId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '5950', account_name: 'Bank Charges & Brokerage', account_type: 'expense', is_active: true }).select('id').single(); feesExpId = (created as any)?.id || ''; }
+    const { data: tx, error: txErr } = await supabase.from('transactions').insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: opts.description || 'Brokerage/Fees', reference_number: `INV-${opts.accountId}`, total_amount: amt, bank_account_id: opts.bankAccountId, transaction_type: 'expense', status: 'pending' }).select('id').single();
+    if (txErr) throw txErr;
+    const rows = [ { transaction_id: (tx as any).id, account_id: feesExpId, debit: amt, credit: 0, description: 'Fees', status: 'approved' }, { transaction_id: (tx as any).id, account_id: bankId, debit: 0, credit: amt, description: 'Fees', status: 'approved' } ];
+    await supabase.from('transaction_entries').insert(rows);
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
+    await supabase.from('ledger_entries').insert(ledgerRows as any);
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'subtract' }); } catch {}
+    try { await supabase.from('investment_transactions').insert({ account_id: opts.accountId, type: 'fee', trade_date: postDate, total_amount: amt }); } catch {}
+  },
+  postFixedDepositOpen: async (opts: { name: string; amount: number; rate: number; termMonths: number; date: string; bankAccountId: string }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0,10);
+    const amt = Number(opts.amount || 0);
+    if (!(amt > 0)) throw new Error('Invalid amount');
+    const { data: accounts } = await supabase.from('chart_of_accounts').select('id, account_name, account_type, account_code, is_active').eq('company_id', companyId).eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => { const byType = list.filter(a => a.type === type.toLowerCase()); const byCode = byType.find(a => codes.includes(a.code)); if (byCode) return byCode.id; const byName = byType.find(a => names.some(n => a.name.includes(n))); return byName?.id || ''; };
+    let bankId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankId) { const { data: created } = await supabase.from('chart_of_accounts').insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true }).select('id').single(); bankId = (created as any)?.id || ''; }
+    let fdAssetId = '';
+    try {
+      const { data: longInv } = await supabase
+        .from('chart_of_accounts')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('account_code', '1920')
+        .eq('account_type', 'asset')
+        .eq('is_active', true)
+        .limit(1);
+      fdAssetId = (longInv && longInv[0]?.id) ? String(longInv[0].id) : '';
+    } catch {}
+    if (!fdAssetId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1920', account_name: 'Long-term Investments', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      fdAssetId = (created as any)?.id || '';
+    }
+    const { data: tx, error: txErr } = await supabase.from('transactions').insert({ company_id: companyId, user_id: user.id, transaction_date: postDate, description: `Fixed Deposit Open ${opts.name}`, reference_number: `FD-${postDate}`, total_amount: amt, bank_account_id: opts.bankAccountId, transaction_type: 'asset', status: 'pending' }).select('id').single();
+    if (txErr) throw txErr;
+    const rows = [ { transaction_id: (tx as any).id, account_id: fdAssetId, debit: amt, credit: 0, description: 'Fixed deposit open', status: 'approved' }, { transaction_id: (tx as any).id, account_id: bankId, debit: 0, credit: amt, description: 'Fixed deposit open', status: 'approved' } ];
+    const { error: entErr } = await supabase.from('transaction_entries').insert(rows);
+    if (entErr) throw entErr;
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
+    const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
+    if (leErr) throw leErr;
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'subtract' }); } catch {}
+    const { data: invAcct } = await supabase.from('investment_accounts').insert({ company_id: companyId, name: opts.name, currency: 'ZAR', broker_name: 'Bank' }).select('id').single();
+    const invAccountId = (invAcct as any)?.id || '';
+    if (invAccountId) {
+      await supabase.from('investment_positions').insert({ account_id: invAccountId, symbol: `FD-${postDate}`, instrument_type: 'fixed_deposit', quantity: 1, avg_cost: amt, current_price: amt, market_value: amt, unrealized_gain: 0 });
+      await supabase.from('investment_transactions').insert({ account_id: invAccountId, type: 'buy', trade_date: postDate, symbol: `FD-${postDate}`, quantity: 1, price: amt, total_amount: amt, fees: 0, notes: `Rate ${(opts.rate*100).toFixed(2)}%, Term ${opts.termMonths}m` });
+    }
+    try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
+  },
   create: async (tx: { date: string; description: string; amount: number; reference?: string | null; status?: TransactionRow['status'] }): Promise<TransactionRow> => {
     const companyId = await getUserCompanyId();
     const { data: { user } } = await supabase.auth.getUser();
@@ -538,6 +711,85 @@ export const transactionsApi = {
     if (leErr) throw leErr;
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id as string);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'add' }); } catch {}
+    try {
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).maybeSingle();
+      if ((profile as any)?.company_id) await supabase.rpc('refresh_afs_cache', { _company_id: (profile as any).company_id });
+    } catch {}
+  },
+  postLoanAdvanced: async (opts: { date: string; amount: number; reference: string; bankAccountId: string; loanLedgerAccountId?: string }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0, 10);
+    const amt = Number(opts.amount || 0);
+    if (!amt || amt <= 0) throw new Error('Invalid loan amount');
+    if (!opts.bankAccountId) throw new Error('Bank account required');
+
+    const { data: accounts } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_name, account_type, account_code, is_active')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => {
+      const byType = list.filter(a => a.type === type.toLowerCase());
+      const byCode = byType.find(a => codes.includes(a.code));
+      if (byCode) return byCode.id;
+      const byName = byType.find(a => names.some(k => a.name.includes(k)));
+      return byName?.id || '';
+    };
+    let bankLedgerId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankLedgerId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      bankLedgerId = (created as any)?.id || '';
+    }
+    let loanAssetId = opts.loanLedgerAccountId || pick('asset', ['1200'], ['loan receivable','director loan']);
+    if (!loanAssetId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1200', account_name: 'Loan Receivable', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      loanAssetId = (created as any)?.id || '';
+    }
+    if (!loanAssetId) throw new Error('Loan receivable ledger missing');
+
+    const { data: tx, error: txErr } = await supabase
+      .from('transactions')
+      .insert({
+        company_id: companyId,
+        user_id: user.id,
+        transaction_date: postDate,
+        description: `Loan advanced ${opts.reference}`,
+        reference_number: opts.reference,
+        total_amount: amt,
+        transaction_type: 'loan_advanced',
+        status: 'pending',
+        bank_account_id: opts.bankAccountId,
+      })
+      .select('id')
+      .single();
+    if (txErr) throw txErr;
+
+    const rows = [
+      { transaction_id: tx.id as string, account_id: loanAssetId, debit: amt, credit: 0, description: 'Loan advanced', status: 'approved' },
+      { transaction_id: tx.id as string, account_id: bankLedgerId, debit: 0, credit: amt, description: 'Loan advanced', status: 'approved' },
+    ];
+    const { error: teErr } = await supabase.from('transaction_entries').insert(rows);
+    if (teErr) throw teErr;
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: tx.id as string, description: r.description }));
+    const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
+    if (leErr) throw leErr;
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id as string);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'subtract' }); } catch {}
+    try {
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).maybeSingle();
+      if ((profile as any)?.company_id) await supabase.rpc('refresh_afs_cache', { _company_id: (profile as any).company_id });
+    } catch {}
   },
 
   postLoanInterest: async (opts: { loanId: string; date?: string; bankAccountId: string; amountOverride?: number }): Promise<void> => {
@@ -707,6 +959,220 @@ export const transactionsApi = {
         .update({ outstanding_balance: newBalance, status: newBalance === 0 ? 'completed' : 'active' })
         .eq('id', opts.loanId);
       await supabase.from('loan_payments').insert({ loan_id: opts.loanId, payment_date: postDate, amount: amt, principal_component: amt, interest_component: 0 });
+    } catch {}
+  },
+
+  postDirectorLoanInterestReceived: async (opts: { loanId: string; date?: string; bankAccountId: string; amountOverride?: number }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0, 10);
+    if (!opts.bankAccountId) throw new Error('Bank account required');
+    const { data: loan } = await supabase
+      .from('loans')
+      .select('id, reference, outstanding_balance, interest_rate')
+      .eq('id', opts.loanId)
+      .single();
+    if (!loan) throw new Error('Loan not found');
+    const monthStart = new Date(postDate.slice(0,7) + '-01');
+    const nextMonth = new Date(monthStart); nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const monthStartStr = monthStart.toISOString().slice(0,10);
+    const nextMonthStr = nextMonth.toISOString().slice(0,10);
+    const { data: interestDup } = await supabase
+      .from('loan_payments')
+      .select('id')
+      .eq('loan_id', opts.loanId)
+      .gte('payment_date', monthStartStr)
+      .lt('payment_date', nextMonthStr)
+      .gt('interest_component', 0);
+    if ((interestDup || []).length > 0) throw new Error('Interest installment for this month is already recorded');
+    const computed = Number(loan.outstanding_balance || 0) * Number(loan.interest_rate || 0) / 12;
+    const amt = opts.amountOverride != null ? Number(opts.amountOverride) : computed;
+    if (!(amt > 0)) throw new Error('Interest amount must be > 0');
+
+    const { data: accounts } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_name, account_type, account_code, is_active')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => {
+      const byType = list.filter(a => a.type === type.toLowerCase());
+      const byCode = byType.find(a => codes.includes(a.code));
+      if (byCode) return byCode.id;
+      const byName = byType.find(a => names.some(k => a.name.includes(k)));
+      return byName?.id || '';
+    };
+    let bankLedgerId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankLedgerId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      bankLedgerId = (created as any)?.id || '';
+    }
+    let interestIncomeId = pick('revenue', ['4200'], ['interest income','interest']);
+    if (!interestIncomeId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '4200', account_name: 'Interest Income', account_type: 'revenue', is_active: true })
+        .select('id')
+        .single();
+      interestIncomeId = (created as any)?.id || '';
+    }
+
+    const { data: tx, error: txErr } = await supabase
+      .from('transactions')
+      .insert({
+        company_id: companyId,
+        user_id: user.id,
+        transaction_date: postDate,
+        description: `Director loan interest received ${loan.reference}`,
+        reference_number: loan.reference,
+        total_amount: amt,
+        transaction_type: 'director_loan_interest_received',
+        status: 'pending',
+        bank_account_id: opts.bankAccountId,
+      })
+      .select('id')
+      .single();
+    if (txErr) throw txErr;
+
+    const rows = [
+      { transaction_id: tx.id as string, account_id: bankLedgerId, debit: amt, credit: 0, description: 'Interest received', status: 'approved' },
+      { transaction_id: tx.id as string, account_id: interestIncomeId, debit: 0, credit: amt, description: 'Interest received', status: 'approved' },
+    ];
+    const { error: teErr } = await supabase.from('transaction_entries').insert(rows);
+    if (teErr) throw teErr;
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: tx.id as string, description: r.description }));
+    const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
+    if (leErr) throw leErr;
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id as string);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'add' }); } catch {}
+    await supabase.from('loan_payments').insert({ loan_id: opts.loanId, payment_date: postDate, amount: amt, principal_component: 0, interest_component: amt });
+    try {
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).maybeSingle();
+      if ((profile as any)?.company_id) await supabase.rpc('refresh_afs_cache', { _company_id: (profile as any).company_id });
+    } catch {}
+  },
+
+  postDirectorLoanPaymentReceived: async (opts: { loanId: string; date?: string; bankAccountId: string; amountOverride?: number }): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const postDate = opts.date || new Date().toISOString().slice(0, 10);
+    if (!opts.bankAccountId) throw new Error('Bank account required');
+    const { data: loan } = await supabase
+      .from('loans')
+      .select('id, reference, outstanding_balance, interest_rate, term_months, principal, monthly_repayment')
+      .eq('id', opts.loanId)
+      .single();
+    if (!loan) throw new Error('Loan not found');
+    const monthStart = new Date(postDate.slice(0,7) + '-01');
+    const nextMonth = new Date(monthStart); nextMonth.setMonth(nextMonth.getMonth() + 1);
+    const monthStartStr = monthStart.toISOString().slice(0,10);
+    const nextMonthStr = nextMonth.toISOString().slice(0,10);
+    const { data: princDup } = await supabase
+      .from('loan_payments')
+      .select('id')
+      .eq('loan_id', opts.loanId)
+      .gte('payment_date', monthStartStr)
+      .lt('payment_date', nextMonthStr)
+      .gt('principal_component', 0);
+    if ((princDup || []).length > 0) throw new Error('Principal installment for this month is already recorded');
+
+    const rate = Number(loan.interest_rate || 0);
+    const bal = Number(loan.outstanding_balance || 0);
+    const monthlyInterest = bal * (rate / 12);
+    const termMonths = Number(loan.term_months || 0);
+    const monthlyRate = rate / 12;
+    const principalAmount = Number(loan.principal || 0);
+    const fallbackPayment = (monthlyRate === 0 || termMonths <= 0)
+      ? (termMonths > 0 ? (principalAmount / termMonths) : principalAmount)
+      : (principalAmount * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
+    const totalAmt = opts.amountOverride != null ? Number(opts.amountOverride) : (Number(loan.monthly_repayment || 0) > 0 ? Number(loan.monthly_repayment) : fallbackPayment);
+    if (!(totalAmt > 0)) throw new Error('Repayment amount must be > 0');
+
+    const interestComponent = Math.min(monthlyInterest, totalAmt);
+    const principalComponent = Math.max(0, totalAmt - interestComponent);
+    const newBalance = Math.max(0, bal - principalComponent);
+
+    const { data: accounts } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_name, account_type, account_code, is_active')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const list = (accounts || []).map(a => ({ id: a.id as string, name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
+    const pick = (type: string, codes: string[], names: string[]) => {
+      const byType = list.filter(a => a.type === type.toLowerCase());
+      const byCode = byType.find(a => codes.includes(a.code));
+      if (byCode) return byCode.id;
+      const byName = byType.find(a => names.some(k => a.name.includes(k)));
+      return byName?.id || '';
+    };
+    let bankLedgerId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankLedgerId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      bankLedgerId = (created as any)?.id || '';
+    }
+    let loanAssetId = pick('asset', ['1250','1450','1200'], ['loan receivable','director loan']);
+    if (!loanAssetId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1200', account_name: 'Loan Receivable', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      loanAssetId = (created as any)?.id || '';
+    }
+    let interestIncomeId = pick('revenue', ['4200'], ['interest income','interest']);
+    if (!interestIncomeId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '4200', account_name: 'Interest Income', account_type: 'revenue', is_active: true })
+        .select('id')
+        .single();
+      interestIncomeId = (created as any)?.id || '';
+    }
+
+    const { data: tx, error: txErr } = await supabase
+      .from('transactions')
+      .insert({
+        company_id: companyId,
+        user_id: user.id,
+        transaction_date: postDate,
+        description: `Director loan payment received ${loan.reference}`,
+        reference_number: loan.reference,
+        total_amount: totalAmt,
+        transaction_type: 'director_loan_payment_received',
+        status: 'pending',
+        bank_account_id: opts.bankAccountId,
+      })
+      .select('id')
+      .single();
+    if (txErr) throw txErr;
+
+    const rows: Array<{ transaction_id: string; account_id: string; debit: number; credit: number; description: string; status: 'approved' }> = [
+      { transaction_id: tx.id as string, account_id: bankLedgerId, debit: totalAmt, credit: 0, description: 'Payment received', status: 'approved' },
+    ];
+    if (principalComponent > 0) rows.push({ transaction_id: tx.id as string, account_id: loanAssetId, debit: 0, credit: principalComponent, description: 'Principal received', status: 'approved' });
+    if (interestComponent > 0) rows.push({ transaction_id: tx.id as string, account_id: interestIncomeId, debit: 0, credit: interestComponent, description: 'Interest received', status: 'approved' });
+    const { error: teErr } = await supabase.from('transaction_entries').insert(rows);
+    if (teErr) throw teErr;
+    const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: tx.id as string, description: r.description }));
+    const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
+    if (leErr) throw leErr;
+    await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id as string);
+    try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: totalAmt, _operation: 'add' }); } catch {}
+    await supabase.from('loan_payments').insert({ loan_id: opts.loanId, payment_date: postDate, amount: totalAmt, principal_component: principalComponent, interest_component: interestComponent });
+    await supabase.from('loans').update({ outstanding_balance: newBalance, status: newBalance === 0 ? 'completed' : 'active' }).eq('id', opts.loanId);
+    try {
+      const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).maybeSingle();
+      if ((profile as any)?.company_id) await supabase.rpc('refresh_afs_cache', { _company_id: (profile as any).company_id });
     } catch {}
   },
   postPurchaseSentClient: async (po: any, postDateStr?: string): Promise<void> => {
