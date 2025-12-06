@@ -1,12 +1,15 @@
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
+import stellaLogo from "@/assets/stellkhygugvyt.jpg";
+import { Key, RefreshCw, CheckCircle2, Clock, Users, Calendar, Shield, CreditCard, Star, Mail, Phone, Info, Download } from "lucide-react";
+import jsPDF from "jspdf";
 
 const mask = (key: string) => key ? `${key.slice(0,4)}-****-****-${key.slice(-4)}` : "—";
 // South Africa WhatsApp number (country code 27, remove leading 0)
@@ -57,85 +60,377 @@ export default function License() {
     } finally { setLoading(false); }
   }
 
+  const downloadCertificate = () => {
+    try {
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      // Background Color
+      doc.setFillColor(248, 250, 252); // slate-50
+      doc.rect(0, 0, 210, 297, 'F');
+
+      // --- Watermarks ---
+      // Stella Lumen Watermark (Top Right)
+      const logoSize = 60;
+      doc.addImage(stellaLogo, 'JPEG', 140, 10, logoSize, logoSize, undefined, 'FAST');
+      
+      // Rigel Business Watermark (Center Page - Faded)
+      doc.setFontSize(80);
+      doc.setTextColor(200, 200, 200);
+      doc.saveGraphicsState();
+      doc.setGState(new doc.GState({ opacity: 0.05 }));
+      doc.text("RIGEL BUSINESS", 105, 150, { align: "center", angle: 45 });
+      doc.restoreGraphicsState();
+
+      // --- Header Content ---
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(28);
+      doc.setTextColor(30, 41, 59); // slate-800
+      doc.text("License Certificate", 20, 40);
+
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text("Proof of Subscription & Usage Rights", 20, 48);
+
+      // Separator Line
+      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setLineWidth(0.5);
+      doc.line(20, 55, 190, 55);
+
+      // --- License Details Section ---
+      const startY = 70;
+      const lineHeight = 12;
+
+      doc.setFontSize(14);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.setFont("helvetica", "bold");
+      doc.text("License Information", 20, startY);
+
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "normal");
+      
+      // Row 1: Plan
+      doc.setTextColor(100, 116, 139);
+      doc.text("Subscription Plan:", 20, startY + lineHeight);
+      doc.setTextColor(15, 23, 42);
+      doc.setFont("helvetica", "bold");
+      doc.text(status.plan || "Prototype", 80, startY + lineHeight);
+
+      // Row 2: Status
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "normal");
+      doc.text("License Status:", 20, startY + (lineHeight * 2));
+      doc.setTextColor(22, 163, 74); // green-600
+      doc.setFont("helvetica", "bold");
+      doc.text((status.status || "OPEN").toUpperCase(), 80, startY + (lineHeight * 2));
+
+      // Row 3: Product Key
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "normal");
+      doc.text("Product Key:", 20, startY + (lineHeight * 3));
+      doc.setTextColor(15, 23, 42);
+      doc.setFont("courier", "bold");
+      doc.text(status.key || "Not Activated", 80, startY + (lineHeight * 3));
+
+      // Row 4: Expiry
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139);
+      doc.text("Valid Until:", 20, startY + (lineHeight * 4));
+      doc.setTextColor(15, 23, 42);
+      doc.text(status.expiry && status.expiry !== '—' ? new Date(status.expiry).toLocaleDateString() : 'Lifetime / Indefinite', 80, startY + (lineHeight * 4));
+
+      // --- Footer Section ---
+      const footerY = 250;
+      doc.setDrawColor(226, 232, 240);
+      doc.line(20, footerY, 190, footerY);
+
+      doc.setFontSize(10);
+      doc.setTextColor(148, 163, 184); // slate-400
+      doc.text("Powered by Stella Lumen", 105, footerY + 10, { align: "center" });
+      doc.text("www.stella-lumen.com", 105, footerY + 16, { align: "center" });
+      
+      doc.text(`Generated on ${new Date().toLocaleDateString()}`, 20, 280);
+
+      doc.save("Rigel_License_Certificate.pdf");
+      toast({ title: "Certificate Downloaded", description: "Your license proof has been saved." });
+    } catch (e) {
+      console.error(e);
+      toast({ title: "Download Failed", description: "Could not generate PDF.", variant: "destructive" });
+    }
+  };
+
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src="/src/assets/stellkhygugvyt.jpg" alt="Stella Lumen" className="h-10 w-10 rounded object-cover border" />
-            <img src="/Modern Rigel Business Logo Design.png" alt="Rigel Business" className="h-10 w-10 rounded-lg object-cover" />
+      <div className="space-y-8">
+        {/* Header Section */}
+        <div className="flex flex-col md:flex-row items-center justify-between gap-6 bg-gradient-to-r from-blue-600 to-indigo-700 p-8 rounded-3xl text-white shadow-2xl relative overflow-hidden">
+          <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-soft-light"></div>
+          <div className="relative z-10 flex items-center gap-6">
+            <div className="bg-white/10 p-2 rounded-2xl backdrop-blur-md border border-white/20">
+              <img 
+                src="/Modern Rigel Business Logo Design.png" 
+                alt="Rigel Business" 
+                className="w-14 h-14 object-cover rounded-xl"
+              />
+            </div>
             <div>
-              <div className="text-xl font-bold">License Management</div>
-              <div className="text-xs text-muted-foreground">Activate your plan to enable production features</div>
+              <h1 className="text-3xl font-bold tracking-tight">License Management</h1>
+              <p className="text-blue-100 mt-2 text-lg">Manage your subscription, activate licenses, and view plan details.</p>
             </div>
           </div>
+          <div className="relative z-10 flex gap-4">
+            <Button variant="secondary" className="shadow-lg hover:shadow-xl transition-all" onClick={loadStatus}>
+              <RefreshCw className="mr-2 h-4 w-4" /> Refresh Status
+            </Button>
+          </div>
         </div>
-        <Card className="relative overflow-hidden">
-          <CardHeader className="relative z-10">
-            <CardTitle>License Activation</CardTitle>
-          </CardHeader>
-          <CardContent className="relative z-10">
-            <div className="grid md:grid-cols-2 gap-6">
-              <div className="space-y-3">
-                <Label htmlFor="licenseKey">Enter License Key</Label>
-                <Input id="licenseKey" placeholder="XXXX-XXXX-XXXX-XXXX" value={licenseKey} onChange={e => setLicenseKey(e.target.value)} />
-                <div className="flex gap-2">
-                  <Button onClick={activateLicense} disabled={loading}>{loading ? 'Activating…' : 'Activate'}</Button>
-                  <Button variant="outline" onClick={loadStatus}>Refresh Status</Button>
-                </div>
-                <div className="text-xs text-muted-foreground">Prototype mode: activation optional. All users can enter the app.</div>
-                {(!status?.key || status.status === 'OPEN') && (
-                  <div className="text-xs text-primary">Free tier enabled: view-only prototype access</div>
-                )}
-              </div>
-              <div className="space-y-2">
-                <div className="font-semibold">License Status</div>
-                <Separator className="my-2" />
-                <div className="text-sm">Plan Type: <span className="font-mono">{status.plan || 'Prototype (Free tier)'}</span></div>
-                <div className="text-sm">Status: <span className="font-mono">{status.status || 'OPEN'}</span></div>
-                <div className="text-sm">Expiry Date: <span className="font-mono">{status.expiry || '—'}</span></div>
-                <div className="text-sm">License Key: <span className="font-mono">{mask(status.key || '')}</span></div>
-                <Separator className="my-2" />
-                <div className="text-sm">Seats Used: <span className="font-mono">{seats.used}</span></div>
-                <div className="text-sm">Seats Available: <span className="font-mono">{seats.available}</span></div>
-              </div>
-            </div>
-            <img aria-hidden className="absolute right-0 bottom-0 w-48 h-48 opacity-10 pointer-events-none select-none object-contain blur-[0.5px]" src="/src/assets/stellkhygugvyt.jpg" alt="Watermark" />
-          </CardContent>
-        </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Pricing</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {[{ name: 'Free Tier', plan: 'Free', desc: 'Prototype • View-only access' }, { name: 'Monthly Plan', plan: 'Monthly', desc: 'Professional features' }, { name: 'Annual Plan', plan: 'Annual', desc: 'Professional features' }, { name: 'Lifetime Plan', plan: 'Lifetime', desc: 'Professional features' }].map(p => (
-                <Card key={p.plan} className="h-full">
-                  <CardContent className="p-4 h-full flex flex-col justify-between">
-                    <div>
-                      <div className="font-semibold mb-1">{p.name}</div>
-                      <div className="text-xs text-muted-foreground mb-3">{p.desc}</div>
-                      {p.plan !== 'Free' && (
-                        <div className="text-[11px] text-muted-foreground">Seats Used: {seats.used} • Seats Available: {seats.available}</div>
-                      )}
+        {/* Metrics Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <Card className="card-professional border-l-4 border-l-primary">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Current Plan</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                <Star className="h-5 w-5 text-yellow-500 fill-yellow-500" />
+                <div className="text-2xl font-bold">{status.plan || 'Prototype'}</div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Active subscription tier</p>
+            </CardContent>
+          </Card>
+          <Card className="card-professional border-l-4 border-l-green-500">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">License Status</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className={`h-5 w-5 ${status.status === 'ACTIVE' ? 'text-green-500' : 'text-muted-foreground'}`} />
+                <div className="text-2xl font-bold capitalize">{status.status?.toLowerCase() || 'Open'}</div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">System access level</p>
+            </CardContent>
+          </Card>
+          <Card className="card-professional border-l-4 border-l-blue-500">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Expiry Date</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-blue-500" />
+                <div className="text-2xl font-bold">{status.expiry && status.expiry !== '—' ? new Date(status.expiry).toLocaleDateString() : '—'}</div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Valid until</p>
+            </CardContent>
+          </Card>
+          <Card className="card-professional border-l-4 border-l-purple-500">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Seats Usage</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-purple-500" />
+                <div className="text-2xl font-bold">{seats.used} <span className="text-sm font-normal text-muted-foreground">/ {seats.available}</span></div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Active users</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Activation Panel */}
+          <Card className="lg:col-span-2 card-professional">
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Key className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <CardTitle>Activate License</CardTitle>
+                  <CardDescription>Enter your product key to unlock features</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="bg-muted/30 p-6 rounded-xl border border-dashed border-muted-foreground/25">
+                <div className="flex flex-col gap-4">
+                  <Label htmlFor="licenseKey" className="text-base font-medium">Product Key</Label>
+                  <div className="flex gap-3">
+                    <div className="relative flex-1">
+                      <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="licenseKey"
+                        placeholder="XXXX-XXXX-XXXX-XXXX"
+                        value={licenseKey}
+                        onChange={(e) => setLicenseKey(e.target.value)}
+                        className="pl-10 h-12 text-lg font-mono tracking-widest uppercase"
+                      />
                     </div>
-                    <div className="flex gap-2">
-                      {p.plan === 'Free' ? (
-                        <Button variant="outline" asChild><a href="/">Preview App</a></Button>
-                      ) : (
-                        <div className="flex flex-col gap-2 w-full">
-                          <Button asChild className="w-full"><a href={mailto(p.plan)}>Request License (Email)</a></Button>
-                          <Button variant="outline" asChild className="w-full"><a href={whatsapp(p.plan)} target="_blank" rel="noreferrer">WhatsApp</a></Button>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+                    <Button 
+                      onClick={activateLicense} 
+                      disabled={loading} 
+                      size="lg"
+                      className="bg-gradient-primary shadow-lg hover:shadow-xl transition-all px-8"
+                    >
+                      {loading ? <RefreshCw className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                      Activate
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Info className="h-4 w-4" />
+                    Your license key is sent to your registered email address upon purchase.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl border bg-card hover:bg-accent/5 transition-colors">
+                  <h4 className="font-semibold flex items-center gap-2 mb-2">
+                    <Shield className="h-4 w-4 text-green-600" />
+                    Active Protection
+                  </h4>
+                  <p className="text-sm text-muted-foreground">Your current session is secured. Prototype mode allows full exploration of features.</p>
+                </div>
+                <div className="p-4 rounded-xl border bg-card hover:bg-accent/5 transition-colors">
+                  <h4 className="font-semibold flex items-center gap-2 mb-2">
+                    <CreditCard className="h-4 w-4 text-blue-600" />
+                    Billing & Invoices
+                  </h4>
+                  <p className="text-sm text-muted-foreground">Manage your billing details and download past invoices from the settings menu.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Current License Details Side Panel */}
+          <Card className="card-professional bg-gradient-to-b from-slate-50 to-white">
+            <CardHeader>
+              <CardTitle>License Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <div className="flex justify-between items-center py-3 border-b border-dashed">
+                  <span className="text-sm text-muted-foreground">Status</span>
+                  <Badge variant={status.status === 'ACTIVE' ? 'default' : 'secondary'}>
+                    {status.status || 'OPEN'}
+                  </Badge>
+                </div>
+                <div className="flex justify-between items-center py-3 border-b border-dashed">
+                  <span className="text-sm text-muted-foreground">Product Key</span>
+                  <span className="font-mono text-sm font-medium">{mask(status.key || '')}</span>
+                </div>
+                <div className="flex justify-between items-center py-3 border-b border-dashed">
+                  <span className="text-sm text-muted-foreground">Activated On</span>
+                  <span className="text-sm font-medium">{status.status === 'ACTIVE' ? new Date().toLocaleDateString() : '—'}</span>
+                </div>
+                <div className="flex justify-between items-center py-3 border-b border-dashed">
+                  <span className="text-sm text-muted-foreground">Company ID</span>
+                  <span className="text-xs font-mono text-muted-foreground truncate max-w-[120px]" title="Company ID">
+                    {/* We could fetch this if needed, for now placeholder */}
+                    Rigel Business
+                  </span>
+                </div>
+              </div>
+
+              <Button 
+                variant="outline" 
+                className="w-full border-blue-200 text-blue-700 hover:bg-blue-50"
+                onClick={downloadCertificate}
+              >
+                <Download className="mr-2 h-4 w-4" /> Download Certificate
+              </Button>
+              
+              <div className="pt-4">
+                <img src={stellaLogo} alt="Stella Lumen" className="w-full h-auto rounded-lg border opacity-90" />
+                <p className="text-xs text-center text-muted-foreground mt-2">Powered by Stella Lumen</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Pricing Plans */}
+        <div className="space-y-6">
+          <div className="text-center max-w-2xl mx-auto mb-8">
+            <h2 className="text-3xl font-bold tracking-tight">Simple, Transparent Pricing</h2>
+            <p className="text-muted-foreground mt-2">Choose the plan that best fits your business needs. Upgrade or downgrade at any time.</p>
+          </div>
+          
+          <div className="grid gap-8 md:grid-cols-3">
+            {[
+              { 
+                name: 'Basic', 
+                price: 'R250', 
+                period: '/month',
+                desc: 'Essentials for small teams getting started.', 
+                features: ['Single User License', 'Basic Financial Reports', 'Email Support', '1GB Storage'],
+                popular: false,
+                color: 'blue'
+              },
+              { 
+                name: 'Pro', 
+                price: 'R300', 
+                period: '/month',
+                desc: 'Advanced features for growing businesses.', 
+                features: ['Up to 5 Users', 'Advanced Analytics', 'Priority Email Support', '10GB Storage', 'Custom Invoicing'],
+                popular: true,
+                color: 'indigo'
+              },
+              { 
+                name: 'Enterprise', 
+                price: 'R350', 
+                period: '/month',
+                desc: 'Full suite for established organizations.', 
+                features: ['Unlimited Users', 'Dedicated Account Manager', '24/7 Phone Support', 'Unlimited Storage', 'API Access'],
+                popular: false,
+                color: 'purple'
+              },
+            ].map((p) => (
+              <Card key={p.name} className={`relative flex flex-col h-full transition-all duration-200 hover:shadow-xl ${p.popular ? 'border-primary shadow-lg scale-105 z-10' : 'border-border'}`}>
+                {p.popular && (
+                  <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground px-4 py-1 rounded-full text-sm font-medium shadow-sm">
+                    Most Popular
+                  </div>
+                )}
+                <CardHeader>
+                  <CardTitle className="text-xl font-bold">{p.name}</CardTitle>
+                  <div className="flex items-baseline gap-1 mt-2">
+                    <span className="text-4xl font-extrabold tracking-tight">{p.price}</span>
+                    <span className="text-muted-foreground font-medium">{p.period}</span>
+                  </div>
+                  <CardDescription className="mt-2">{p.desc}</CardDescription>
+                </CardHeader>
+                <CardContent className="flex-1">
+                  <ul className="space-y-3 mb-6">
+                    {p.features.map((f) => (
+                      <li key={f} className="flex items-center gap-3 text-sm">
+                        <CheckCircle2 className={`h-5 w-5 ${p.popular ? 'text-primary' : 'text-muted-foreground'}`} />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+                <div className="p-6 pt-0 mt-auto">
+                  <div className="grid gap-3">
+                    <Button asChild className={`w-full ${p.popular ? 'bg-gradient-primary shadow-md' : ''}`} variant={p.popular ? 'default' : 'outline'}>
+                      <a href={mailto(p.name)}>
+                        <Mail className="mr-2 h-4 w-4" /> Request via Email
+                      </a>
+                    </Button>
+                    <Button asChild variant="ghost" className="w-full text-muted-foreground hover:text-foreground">
+                      <a href={whatsapp(p.name)} target="_blank" rel="noreferrer">
+                        <Phone className="mr-2 h-4 w-4" /> Chat on WhatsApp
+                      </a>
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
       </div>
     </DashboardLayout>
   );

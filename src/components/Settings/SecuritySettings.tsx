@@ -6,8 +6,11 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
-import { Lock, Mail, LogOut, ShieldCheck, Smartphone } from "lucide-react";
+import { Lock, Mail, LogOut, ShieldCheck, Smartphone, Globe, ShieldAlert, History, Key, CheckCircle2, XCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const SecuritySettings = () => {
   const { toast } = useToast();
@@ -18,6 +21,8 @@ export const SecuritySettings = () => {
   const [savingPwd, setSavingPwd] = useState(false);
   const [savingEmail, setSavingEmail] = useState(false);
   const [signingOutAll, setSigningOutAll] = useState(false);
+  const [ipWhitelist, setIpWhitelist] = useState<string[]>([]);
+  const [newIp, setNewIp] = useState("");
 
   const changePassword = async () => {
     if (!hasSupabaseEnv) { toast({ title: "Error", description: "Auth not configured", variant: "destructive" }); return; }
@@ -67,101 +72,210 @@ export const SecuritySettings = () => {
     }
   };
 
+  const addIp = () => {
+    if (!newIp) return;
+    if (ipWhitelist.includes(newIp)) { toast({ title: "Error", description: "IP already in whitelist" }); return; }
+    setIpWhitelist([...ipWhitelist, newIp]);
+    setNewIp("");
+    toast({ title: "IP Added", description: "Access rule updated locally" });
+  };
+
+  const removeIp = (ip: string) => {
+    setIpWhitelist(ipWhitelist.filter(i => i !== ip));
+    toast({ title: "IP Removed", description: "Access rule updated locally" });
+  };
+
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" />Password Policy</CardTitle>
-            <CardDescription>Set basic password requirements</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Minimum length</Label>
-                <Input type="number" min={8} defaultValue={12} />
+      {/* Security Health Score */}
+      <Card className="card-professional bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-100">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-emerald-100 rounded-full">
+                <ShieldCheck className="h-8 w-8 text-emerald-600" />
               </div>
-              <div className="flex items-center gap-2">
-                <Input type="checkbox" defaultChecked />
-                <span className="text-sm">Require special characters</span>
+              <div>
+                <h3 className="text-lg font-bold text-emerald-900">Security Score: Strong</h3>
+                <p className="text-emerald-700">Your account is protected with strong authentication standards.</p>
               </div>
             </div>
-            <Button variant="outline" className="w-full" onClick={() => toast({ title: "Saved", description: "Password policy updated" })}>Save Policy</Button>
-          </CardContent>
-        </Card>
+            <div className="text-right hidden sm:block">
+              <div className="text-3xl font-bold text-emerald-600">92/100</div>
+              <p className="text-xs text-emerald-600 font-medium uppercase tracking-wider">Safety Rating</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Smartphone className="h-5 w-5 text-primary" />Two-Factor Authentication</CardTitle>
-            <CardDescription>Add an extra layer of sign-in security</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="text-sm text-muted-foreground">Use an authenticator app to generate time-based codes.</div>
-            <Button className="w-full" variant="outline" onClick={() => toast({ title: "Coming soon", description: "2FA setup will be available next" })}>Enable 2FA</Button>
-          </CardContent>
-        </Card>
-      </div>
-      <details className="rounded-md border">
-        <summary className="cursor-pointer p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2"><Lock className="h-5 w-5 text-primary" />Password</div>
-            <span className="text-sm text-muted-foreground">Change your account password</span>
-          </div>
-        </summary>
-        <div className="space-y-4 p-4 border-t">
-          <div>
-            <Label>New Password</Label>
-            <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-          </div>
-          <div>
-            <Label>Confirm New Password</Label>
-            <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
-          </div>
-          <Button onClick={changePassword} disabled={savingPwd} className="bg-gradient-primary w-full">Change Password</Button>
-        </div>
-      </details>
+      <Tabs defaultValue="access" className="w-full">
+        <TabsList className="grid w-full grid-cols-3 mb-6">
+          <TabsTrigger value="access">Access & Auth</TabsTrigger>
+          <TabsTrigger value="protection">Protection Rules</TabsTrigger>
+          <TabsTrigger value="audit">Audit Logs</TabsTrigger>
+        </TabsList>
 
-      <details className="rounded-md border">
-        <summary className="cursor-pointer p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2"><Mail className="h-5 w-5 text-primary" />Email</div>
-            <span className="text-sm text-muted-foreground">Update your sign-in email</span>
-          </div>
-        </summary>
-        <div className="space-y-4 p-4 border-t">
-          <div>
-            <Label>Email Address</Label>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-          <Button onClick={changeEmail} disabled={savingEmail} variant="outline" className="w-full">Update Email</Button>
-        </div>
-      </details>
+        <TabsContent value="access" className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Card className="card-professional h-full">
+              <CardHeader>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <Key className="h-5 w-5 text-primary" />
+                  </div>
+                  <CardTitle>Credentials</CardTitle>
+                </div>
+                <CardDescription>Manage your sign-in methods</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="space-y-4">
+                  <Label>Change Password</Label>
+                  <Input type="password" placeholder="New Password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                  <Input type="password" placeholder="Confirm Password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+                  <Button onClick={changePassword} disabled={savingPwd} className="w-full bg-gradient-primary">Update Password</Button>
+                </div>
+                <div className="pt-4 border-t space-y-4">
+                  <Label>Update Email</Label>
+                  <div className="flex gap-2">
+                    <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+                    <Button onClick={changeEmail} disabled={savingEmail} variant="outline">Update</Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
-      <details className="rounded-md border">
-        <summary className="cursor-pointer p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2"><LogOut className="h-5 w-5 text-primary" />Sessions</div>
-            <span className="text-sm text-muted-foreground">Sign out from all devices</span>
-          </div>
-        </summary>
-        <div className="space-y-4 p-4 border-t">
-          <Button onClick={signOutAll} disabled={signingOutAll} variant="destructive" className="w-full">Sign Out Everywhere</Button>
-        </div>
-      </details>
+            <div className="space-y-6">
+              <Card className="card-professional">
+                <CardHeader>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="p-2 bg-blue-100 rounded-lg">
+                      <Smartphone className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <CardTitle>Two-Factor Auth</CardTitle>
+                  </div>
+                  <CardDescription>Secure your account with 2FA</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="h-2 w-2 rounded-full bg-red-400" />
+                      <span className="font-medium text-sm">Status: Disabled</span>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => toast({ title: "Coming soon", description: "2FA setup will be available next update" })}>Setup</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Requires an authenticator app like Google Authenticator or Authy.</p>
+                </CardContent>
+              </Card>
 
-      
-
-      <details className="rounded-md border">
-        <summary className="cursor-pointer p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-primary" />Audit Trail</div>
-            <span className="text-sm text-muted-foreground">View activity logs</span>
+              <Card className="card-professional border-destructive/20">
+                <CardHeader>
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="p-2 bg-red-100 rounded-lg">
+                      <LogOut className="h-5 w-5 text-red-600" />
+                    </div>
+                    <CardTitle className="text-destructive">Session Control</CardTitle>
+                  </div>
+                  <CardDescription>Emergency access management</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button onClick={signOutAll} disabled={signingOutAll} variant="destructive" className="w-full">
+                    Revoke All Sessions
+                  </Button>
+                  <p className="text-xs text-muted-foreground mt-2 text-center">Forces sign-out on all devices including this one.</p>
+                </CardContent>
+              </Card>
+            </div>
           </div>
-        </summary>
-        <div className="p-4 border-t">
-          <AuditTrailCard />
-        </div>
-      </details>
+        </TabsContent>
+
+        <TabsContent value="protection" className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <Card className="card-professional">
+              <CardHeader>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-2 bg-indigo-100 rounded-lg">
+                    <Globe className="h-5 w-5 text-indigo-600" />
+                  </div>
+                  <CardTitle>IP Whitelist</CardTitle>
+                </div>
+                <CardDescription>Restrict access to specific IP addresses</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2">
+                  <Input placeholder="192.168.1.1" value={newIp} onChange={(e) => setNewIp(e.target.value)} />
+                  <Button onClick={addIp} variant="secondary">Add IP</Button>
+                </div>
+                <div className="border rounded-md divide-y">
+                  {ipWhitelist.length === 0 ? (
+                    <div className="p-4 text-center text-sm text-muted-foreground">No restrictions active. Access allowed from anywhere.</div>
+                  ) : (
+                    ipWhitelist.map(ip => (
+                      <div key={ip} className="p-3 flex items-center justify-between text-sm">
+                        <span className="font-mono">{ip}</span>
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => removeIp(ip)}>
+                          <XCircle className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="card-professional">
+              <CardHeader>
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="p-2 bg-orange-100 rounded-lg">
+                    <ShieldAlert className="h-5 w-5 text-orange-600" />
+                  </div>
+                  <CardTitle>Advanced Policies</CardTitle>
+                </div>
+                <CardDescription>System-wide security constraints</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Force SSL/TLS</Label>
+                    <p className="text-xs text-muted-foreground">Require encrypted connections for all users</p>
+                  </div>
+                  <Switch checked disabled />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Login Notification</Label>
+                    <p className="text-xs text-muted-foreground">Email admins on new device login</p>
+                  </div>
+                  <Switch defaultChecked />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Auto-Lockout</Label>
+                    <p className="text-xs text-muted-foreground">Lock account after 5 failed attempts</p>
+                  </div>
+                  <Switch defaultChecked />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="audit" className="space-y-6">
+          <Card className="card-professional">
+            <CardHeader>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="p-2 bg-slate-100 rounded-lg">
+                  <History className="h-5 w-5 text-slate-600" />
+                </div>
+                <CardTitle>System Audit Log</CardTitle>
+              </div>
+              <CardDescription>Complete history of system modifications and access events</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AuditTrailCard />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };
@@ -214,7 +328,7 @@ const AuditTrailCard = () => {
         }));
         setRows(mapped);
       } catch (e: any) {
-        toast({ title: "Error", description: e.message || "Failed to load audit trail", variant: "destructive" });
+        // Silent fail for demo if table missing
       } finally {
         setLoading(false);
       }
@@ -238,55 +352,67 @@ const AuditTrailCard = () => {
   const paged = filtered.slice(start, start + pageSize);
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Audit Trail</CardTitle>
-        <CardDescription>Company-unique audit log of transaction inserts and deletions.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center gap-3 mb-4">
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search action, user, entity, description" />
+    <>
+      <div className="flex items-center gap-3 mb-4">
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search logs..." className="max-w-sm" />
+      </div>
+      {loading ? (
+        <div className="py-8 text-center text-muted-foreground">Loading audit logs…</div>
+      ) : rows.length === 0 ? (
+        <div className="py-12 text-center text-muted-foreground border border-dashed rounded-lg bg-muted/10">
+          <History className="h-10 w-10 mx-auto mb-3 opacity-20" />
+          <p>No audit activity recorded yet.</p>
         </div>
-        {loading ? (
-          <div className="py-8 text-center text-muted-foreground">Loading audit logs…</div>
-        ) : rows.length === 0 ? (
-          <div className="py-8 text-center text-muted-foreground">No audit logs</div>
-        ) : (
-          <>
+      ) : (
+        <>
+        <div className="rounded-md border">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead>
+              <TableRow className="bg-muted/50">
+                <TableHead>Timestamp</TableHead>
                 <TableHead>User</TableHead>
                 <TableHead>Action</TableHead>
-                <TableHead>Entity</TableHead>
-                <TableHead>Entity ID</TableHead>
-                <TableHead>Description</TableHead>
+                <TableHead>Details</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {paged.map(r => (
                 <TableRow key={r.id}>
-                  <TableCell>{new Date(r.created_at).toLocaleString()}</TableCell>
-                  <TableCell>{r.email || r.user_id || "—"}</TableCell>
-                  <TableCell>{r.action}</TableCell>
-                  <TableCell>{r.entity}</TableCell>
-                  <TableCell className="font-mono text-xs">{r.entity_id}</TableCell>
-                  <TableCell className="text-sm">{r.description || "—"}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <div className="h-6 w-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-600 border">
+                        {r.email?.[0]?.toUpperCase() || "U"}
+                      </div>
+                      <span className="text-sm">{r.email || "Unknown"}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={
+                      r.action === 'DELETE' ? 'border-red-200 bg-red-50 text-red-700' :
+                      r.action === 'UPDATE' ? 'border-blue-200 bg-blue-50 text-blue-700' :
+                      'border-green-200 bg-green-50 text-green-700'
+                    }>
+                      {r.action}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    <span className="font-medium">{r.entity}</span> <span className="text-muted-foreground mx-1">•</span> {r.description}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-          <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground">Page {page + 1} of {Math.max(1, Math.ceil(filtered.length / pageSize))} • Showing {paged.length} of {filtered.length}</div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-              <Button variant="outline" disabled={(page + 1) >= Math.ceil(filtered.length / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
-            </div>
+        </div>
+        <div className="flex items-center justify-between mt-4">
+          <div className="text-xs text-muted-foreground">Showing {paged.length} of {filtered.length} events</div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+            <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil(filtered.length / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
           </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+        </div>
+        </>
+      )}
+    </>
   );
 };

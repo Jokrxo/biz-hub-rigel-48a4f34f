@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,25 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { transactionsApi } from "@/lib/transactions-api";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Package, Trash2, Edit } from "lucide-react";
+import { 
+  Plus, 
+  Package, 
+  Trash2, 
+  Edit, 
+  Search, 
+  MoreHorizontal, 
+  FileText,
+  Briefcase,
+  Box
+} from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -36,7 +54,14 @@ export const SalesProducts = () => {
   const { isAdmin, isAccountant } = useRoles();
   const canEdit = isAdmin || isAccountant;
   const [companyId, setCompanyId] = useState<string>("");
+  const [searchTerm, setSearchTerm] = useState("");
+  
+  // Dialog states
   const [createOpen, setCreateOpen] = useState(false);
+  const [serviceOpen, setServiceOpen] = useState(false);
+  const [openingOpen, setOpeningOpen] = useState(false);
+
+  // Forms
   const [createForm, setCreateForm] = useState({
     name: "",
     description: "",
@@ -52,6 +77,9 @@ export const SalesProducts = () => {
     quantity_on_hand: "",
   });
 
+  const [serviceForm, setServiceForm] = useState({ name: "", description: "", unit_price: "" });
+  const [openingForm, setOpeningForm] = useState({ productId: "", quantity: "", costPrice: "", date: new Date().toISOString().slice(0,10) });
+
   const loadProducts = useCallback(async () => {
     try {
       const { data: profile } = await supabase
@@ -61,6 +89,7 @@ export const SalesProducts = () => {
         .maybeSingle();
       if (!profile) return;
       setCompanyId(profile.company_id as string);
+      
       const { data, error } = await supabase
         .from("items")
         .select("*")
@@ -69,6 +98,7 @@ export const SalesProducts = () => {
         .order("name");
       if (error) throw error;
       setProducts(data || []);
+      
       const { data: svc } = await supabase
         .from("items")
         .select("*")
@@ -98,7 +128,15 @@ export const SalesProducts = () => {
     };
   }, [loadProducts]);
 
-  
+  const filteredItems = useMemo(() => {
+    const allItems = [...products, ...services];
+    if (!searchTerm) return allItems.sort((a, b) => a.name.localeCompare(b.name));
+    
+    return allItems.filter(item => 
+      item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.description && item.description.toLowerCase().includes(searchTerm.toLowerCase()))
+    ).sort((a, b) => a.name.localeCompare(b.name));
+  }, [products, services, searchTerm]);
 
   const openDialog = (product: Product) => {
     setEditingProduct(product);
@@ -130,12 +168,6 @@ export const SalesProducts = () => {
     }
 
     try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user?.id)
-        .single();
-
       if (!editingProduct) return;
       const { error } = await supabase
         .from("items")
@@ -154,11 +186,11 @@ export const SalesProducts = () => {
   };
 
   const deleteProduct = async (id: string) => {
-    if (!confirm("Delete this product?")) return;
+    if (!confirm("Delete this item?")) return;
     try {
       const { error } = await supabase.from("items").delete().eq("id", id);
       if (error) throw error;
-      toast({ title: "Success", description: "Product deleted" });
+      toast({ title: "Success", description: "Item deleted" });
       loadProducts();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -183,19 +215,11 @@ export const SalesProducts = () => {
         return;
       }
       const cost = createForm.cost_price ? parseFloat(createForm.cost_price) : 0;
-      const { data: { user: u } } = await supabase.auth.getUser();
-      if (!u) throw new Error("Not authenticated");
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", u.id)
-        .single();
-      const company_id = (profile as any)?.company_id || companyId;
-      if (!company_id) throw new Error("Company context missing");
+      
       const { error } = await supabase
         .from("items")
         .insert({
-          company_id,
+          company_id: companyId,
           name,
           description: (createForm.description || "").trim(),
           item_type: "product",
@@ -213,11 +237,6 @@ export const SalesProducts = () => {
     }
   };
 
-  const [serviceOpen, setServiceOpen] = useState(false);
-  const [serviceForm, setServiceForm] = useState({ name: "", description: "", unit_price: "" });
-
-  const [openingOpen, setOpeningOpen] = useState(false);
-  const [openingForm, setOpeningForm] = useState({ productId: "", quantity: "", costPrice: "", date: new Date().toISOString().slice(0,10) });
   const handleCreateService = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canEdit) { toast({ title: "Permission denied", variant: "destructive" }); return; }
@@ -226,18 +245,17 @@ export const SalesProducts = () => {
       if (!name) { toast({ title: "Name required", description: "Enter a service name", variant: "destructive" }); return; }
       const unit = parseFloat(serviceForm.unit_price || "0");
       if (!unit || unit <= 0) { toast({ title: "Invalid price", description: "Enter a valid service price", variant: "destructive" }); return; }
-      const { data: { user: u } } = await supabase.auth.getUser();
-      if (!u) throw new Error("Not authenticated");
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", u.id)
-        .single();
-      const company_id = (profile as any)?.company_id || companyId;
-      if (!company_id) throw new Error("Company context missing");
+      
       const { error } = await supabase
         .from("items")
-        .insert({ company_id, name, description: (serviceForm.description || "").trim(), item_type: "service", unit_price: unit, quantity_on_hand: 0 } as any);
+        .insert({ 
+          company_id: companyId, 
+          name, 
+          description: (serviceForm.description || "").trim(), 
+          item_type: "service", 
+          unit_price: unit, 
+          quantity_on_hand: 0 
+        } as any);
       if (error) throw error;
       toast({ title: "Service created", description: "Service added to catalog" });
       setServiceOpen(false);
@@ -248,136 +266,116 @@ export const SalesProducts = () => {
     }
   };
 
-  const totalValue = products.reduce((sum, p) => sum + (p.unit_price * p.quantity_on_hand), 0);
-  const totalCost = products.reduce((sum, p) => sum + (Number(p.cost_price ?? 0) * p.quantity_on_hand), 0);
-
   return (
-    <div className="mt-6 space-y-6">
-      {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Products</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{products.length}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Cost</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">R {totalCost.toLocaleString('en-ZA')}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Stock</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {products.reduce((sum, p) => sum + p.quantity_on_hand, 0)}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Value</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">R {totalValue.toLocaleString('en-ZA')}</div>
-          </CardContent>
-        </Card>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="relative w-full sm:w-72">
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search products & services..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+        {canEdit && (
+          <div className="flex gap-2 w-full sm:w-auto">
+            <Button size="sm" className="bg-gradient-primary" onClick={() => setCreateOpen(true)}>
+              <Box className="h-4 w-4 mr-2" /> New Product
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setServiceOpen(true)}>
+              <Briefcase className="h-4 w-4 mr-2" /> New Service
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => setOpeningOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" /> Opening Stock
+            </Button>
+          </div>
+        )}
       </div>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <Package className="h-5 w-5 text-primary" />
-            Products & Services
-          </CardTitle>
-          {canEdit && (
-            <div className="flex gap-2">
-              <Button size="sm" className="bg-gradient-primary" onClick={() => setCreateOpen(true)}>+ New Product</Button>
-              <Button size="sm" variant="outline" onClick={() => setServiceOpen(true)}>+ New Service</Button>
-              <Button size="sm" variant="secondary" onClick={() => setOpeningOpen(true)}>+ Opening Stock</Button>
-            </div>
-          )}
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="text-center py-8">Loading...</div>
-          ) : products.length === 0 && services.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">No products or services added yet</div>
-          ) : (
-            <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead className="text-right">Cost Price</TableHead>
-              <TableHead className="text-right">Unit Price</TableHead>
-              <TableHead className="text-right">Stock</TableHead>
-              <TableHead className="text-right">Total Value</TableHead>
-              {canEdit && <TableHead>Actions</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {products.map((product) => (
-              <TableRow key={product.id}>
-                <TableCell className="font-medium">{product.name}</TableCell>
-                <TableCell className="text-muted-foreground text-sm">
-                  {product.description || "-"}
-                </TableCell>
-                <TableCell className="text-right">R {Number(product.cost_price ?? 0).toLocaleString('en-ZA')}</TableCell>
-                <TableCell className="text-right">R {Number(product.unit_price).toLocaleString('en-ZA')}</TableCell>
-                <TableCell className="text-right">
-                  <Badge variant={product.quantity_on_hand < 10 ? "destructive" : "secondary"}>
-                    {product.quantity_on_hand}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right font-semibold">
-                  R {(product.unit_price * product.quantity_on_hand).toLocaleString('en-ZA')}
-                </TableCell>
-                {canEdit && (
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => openDialog(product)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => deleteProduct(product.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                )}
+      <div className="rounded-md border bg-card">
+        {loading ? (
+          <div className="text-center py-8">Loading...</div>
+        ) : filteredItems.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground">
+            <Package className="h-12 w-12 mx-auto mb-4 opacity-20" />
+            <p>No products or services found</p>
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Type</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead className="text-right">Cost Price</TableHead>
+                <TableHead className="text-right">Unit Price</TableHead>
+                <TableHead className="text-right">Stock</TableHead>
+                <TableHead className="text-right">Total Value</TableHead>
+                <TableHead className="w-[50px]"></TableHead>
               </TableRow>
-            ))}
-            {services.map((svc) => (
-              <TableRow key={svc.id}>
-                <TableCell className="font-medium">{svc.name}</TableCell>
-                <TableCell className="text-muted-foreground text-sm">{svc.description || "-"}</TableCell>
-                <TableCell className="text-right">-</TableCell>
-                <TableCell className="text-right">R {Number(svc.unit_price).toLocaleString('en-ZA')}</TableCell>
-                <TableCell className="text-right">-</TableCell>
-                <TableCell className="text-right font-semibold">-</TableCell>
-                {canEdit && (
+            </TableHeader>
+            <TableBody>
+              {filteredItems.map((item) => (
+                <TableRow key={item.id}>
                   <TableCell>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="ghost" onClick={() => deleteProduct(svc.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                    {item.item_type === 'service' ? (
+                      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">Service</Badge>
+                    ) : (
+                      <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">Product</Badge>
+                    )}
                   </TableCell>
-                )}
-              </TableRow>
-            ))}
-          </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                  <TableCell className="font-medium">{item.name}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm max-w-[200px] truncate">
+                    {item.description || "-"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {item.item_type === 'product' ? `R ${Number(item.cost_price ?? 0).toLocaleString('en-ZA')}` : '-'}
+                  </TableCell>
+                  <TableCell className="text-right">R {Number(item.unit_price).toLocaleString('en-ZA')}</TableCell>
+                  <TableCell className="text-right">
+                    {item.item_type === 'product' ? (
+                      <Badge variant={item.quantity_on_hand < 10 ? "destructive" : "secondary"}>
+                        {item.quantity_on_hand}
+                      </Badge>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right font-semibold">
+                    {item.item_type === 'product' 
+                      ? `R ${(item.unit_price * item.quantity_on_hand).toLocaleString('en-ZA')}`
+                      : '-'
+                    }
+                  </TableCell>
+                  <TableCell>
+                    {canEdit && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" className="h-8 w-8 p-0">
+                            <span className="sr-only">Open menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => openDialog(item)}>
+                            <Edit className="mr-2 h-4 w-4" /> Edit Price
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onClick={() => deleteProduct(item.id)} className="text-destructive">
+                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
@@ -514,6 +512,7 @@ export const SalesProducts = () => {
           </form>
         </DialogContent>
       </Dialog>
+
       <Dialog open={serviceOpen} onOpenChange={setServiceOpen}>
         <DialogContent>
           <DialogHeader>

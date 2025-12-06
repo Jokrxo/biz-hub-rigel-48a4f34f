@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
-import { RefreshCw, Download, Eye, Calendar, FileDown } from "lucide-react";
+import { RefreshCw, Download, Eye, Calendar, FileDown, Scale, Activity, ArrowLeftRight, History, PieChart, BarChart3, Filter } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -167,7 +167,7 @@ export const GAAPFinancialStatements = () => {
         toLower(r.account_name).includes('receivable') ||
         toLower(r.account_name).includes('inventory') ||
         parseInt(String(r.account_code || '0'), 10) < 1500
-      ) && !toLower(r.account_name).includes('vat') && !['1210','2110','2210'].includes(String(r.account_code || ''))
+      ) && !toLower(r.account_name).includes('vat') && !['1210','2110','2210'].includes(String(r.account_code || '')) && (!toLower(r.account_name).includes('inventory') || String(r.account_code || '') === '1300')
     );
     const currentAssets = assets.filter(isCurrentAsset);
     const totalCurrentAssets = currentAssets.reduce((s, r) => s + Number(r.balance || 0), 0) + Math.max(0, -vatNet);
@@ -225,8 +225,11 @@ export const GAAPFinancialStatements = () => {
     });
   }, [trialBalance, trialBalanceAsOf, vatNet, ppeBookValue, openingEquityTotal, periodEnd]);
 
+  const [loadingProgress, setLoadingProgress] = useState(0);
+
   async function loadFinancialData() {
     setLoading(true);
+    setLoadingProgress(0);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
@@ -238,6 +241,8 @@ export const GAAPFinancialStatements = () => {
         .single();
 
       if (!companyProfile?.company_id) throw new Error("Company not found");
+      
+      setLoadingProgress(20);
 
       // Fetch period-scoped trial balance using transaction entry dates
       const tbData = await fetchTrialBalanceForPeriod(companyProfile.company_id, periodStart, periodEnd);
@@ -252,9 +257,14 @@ export const GAAPFinancialStatements = () => {
         balance: Number(r.balance || 0),
       }));
       setTrialBalance(normalized);
+      
+      setLoadingProgress(40);
+
       const totalRevPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'revenue' || String(r.account_type || '').toLowerCase() === 'income').reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
       const totalExpPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat')).reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
       setNetProfitPeriod(totalRevPeriod - totalExpPeriod);
+
+      setLoadingProgress(60);
 
       // Fetch cumulative trial balance as of period end for balance sheet
       const tbAsOf = await fetchTrialBalanceAsOf(companyProfile.company_id, periodEnd);
@@ -269,6 +279,9 @@ export const GAAPFinancialStatements = () => {
         balance: Number(r.balance || 0),
       }));
       setTrialBalanceAsOf(normalizedAsOf);
+      
+      setLoadingProgress(80);
+
       const vatRecvSum = normalizedAsOf
         .filter((r: any) => String(r.account_type || '').toLowerCase() === 'asset' && (String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable')))
         .reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
@@ -277,6 +290,7 @@ export const GAAPFinancialStatements = () => {
         .reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
       setVatReceivableAsOf(vatRecvSum);
       setVatPayableAsOf(vatPaySum);
+      
       if (periodMode === 'monthly') {
         const startObj = new Date(periodStart);
         const ytdStartObj = new Date(startObj.getFullYear(), 0, 1);
@@ -305,6 +319,8 @@ export const GAAPFinancialStatements = () => {
 
       const cogsFallback = await calculateCOGSFromInvoices(companyProfile.company_id, periodStart, periodEnd);
       setFallbackCOGS(cogsFallback);
+      
+      setLoadingProgress(100);
 
       const assetsAsOf = normalizedAsOf.filter((r: any) => String(r.account_type || '').toLowerCase() === 'asset');
       const accDepRowsAsOf = assetsAsOf.filter((r: any) => String(r.account_name || '').toLowerCase().includes('accumulated'));
@@ -673,6 +689,7 @@ export const GAAPFinancialStatements = () => {
           ))
           .filter((x: any) => !toLower(x.account_name).includes('vat'))
           .filter((x: any) => !['1210','2110','2210'].includes(String(x.account_code || '')))
+          .filter((x: any) => (!toLower(x.account_name).includes('inventory') || String(x.account_code || '') === '1300'))
           .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
         const vatReceivableItem = {
           label: 'VAT Receivable',
@@ -757,15 +774,23 @@ export const GAAPFinancialStatements = () => {
   const handleStatementExport = (report: 'bs' | 'pl' | 'cf', type: 'pdf' | 'excel') => {
     try {
       if (report === 'bs') {
-        const currentAssets = trialBalance.filter(r =>
-          r.account_type.toLowerCase() === 'asset' &&
-          (r.account_name.toLowerCase().includes('cash') ||
-           r.account_name.toLowerCase().includes('bank') ||
-           r.account_name.toLowerCase().includes('receivable') ||
-           r.account_name.toLowerCase().includes('inventory') ||
-           parseInt(r.account_code) < 1500)
-        );
-        const nonCurrentAssetsAll = trialBalance.filter(r => r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r));
+        const currentAssets = trialBalance
+          .filter(r =>
+            r.account_type.toLowerCase() === 'asset' &&
+            (
+              r.account_name.toLowerCase().includes('cash') ||
+              r.account_name.toLowerCase().includes('bank') ||
+              r.account_name.toLowerCase().includes('receivable') ||
+              r.account_name.toLowerCase().includes('inventory') ||
+              parseInt(String(r.account_code || '0'), 10) < 1500
+            )
+          )
+          .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'))
+          .filter(r => !['1210','2110','2210'].includes(String(r.account_code || '')))
+          .filter(r => (!String(r.account_name || '').toLowerCase().includes('inventory') || String(r.account_code || '') === '1300'));
+        const nonCurrentAssetsAll = trialBalance
+          .filter(r => r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r))
+          .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
         const accDepRows = nonCurrentAssetsAll.filter(r => r.account_name.toLowerCase().includes('accumulated'));
         const nonCurrentAssets = nonCurrentAssetsAll.filter(r => !r.account_name.toLowerCase().includes('accumulated'));
         const normalizeName = (name: string) => name.toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -828,10 +853,10 @@ export const GAAPFinancialStatements = () => {
           { account: 'ASSETS', amount: 0, type: 'header' },
           { account: 'Current Assets', amount: 0, type: 'subheader' },
           ...currentAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'asset' })),
+          { account: 'VAT Receivable', amount: vatReceivableAsOf, type: 'asset' },
           { account: 'Total Current Assets', amount: totalCurrentAssets, type: 'subtotal' },
           { account: 'Non-current Assets', amount: 0, type: 'subheader' },
           ...nonCurrentAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: nbvFor(r), type: 'asset' })),
-          ...vatInputAsAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'asset' })),
           { account: 'Total Fixed Assets (NBV)', amount: totalNonCurrentAssets, type: 'asset' },
           { account: 'Total Non-current Assets', amount: totalNonCurrentAssets, type: 'subtotal' },
           { account: 'TOTAL ASSETS', amount: totalAssets, type: 'total' },
@@ -1065,7 +1090,9 @@ export const GAAPFinancialStatements = () => {
     );
     
     const nonCurrentAssetsAll = trialBalanceAsOf.filter(r =>
-      r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r)
+      r.account_type.toLowerCase() === 'asset' &&
+      !currentAssets.includes(r) &&
+      !String(r.account_name || '').toLowerCase().includes('vat')
     );
     const accDepRows = nonCurrentAssetsAll.filter(r => r.account_name.toLowerCase().includes('accumulated'));
     const nonCurrentAssets = nonCurrentAssetsAll.filter(r => !r.account_name.toLowerCase().includes('accumulated'));
@@ -1317,7 +1344,8 @@ export const GAAPFinancialStatements = () => {
        r.account_name.toLowerCase().includes('inventory') ||
        parseInt(r.account_code) < 1500) &&
       !String(r.account_name || '').toLowerCase().includes('vat') &&
-      !['1210','2110','2210'].includes(String(r.account_code || ''))
+      !['1210','2110','2210'].includes(String(r.account_code || '')) &&
+      (!String(r.account_name || '').toLowerCase().includes('inventory') || String(r.account_code || '') === '1300')
     );
     const nonCurrentAssetsAll = tb.filter(r => r.account_type.toLowerCase() === 'asset' && !currentAssets.includes(r));
     const accDepRows = nonCurrentAssetsAll.filter(r => String(r.account_name || '').toLowerCase().includes('accumulated'));
@@ -2119,33 +2147,7 @@ export const GAAPFinancialStatements = () => {
     );
   };
 
-  if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="animate-pulse">
-          <div className="h-8 w-80 bg-muted rounded mb-2"></div>
-          <div className="h-4 w-[28rem] bg-muted rounded"></div>
-        </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>Statement Skeleton</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3 animate-pulse">
-              <div className="h-5 w-48 bg-muted rounded"></div>
-              {[...Array(10)].map((_, i) => (
-                <div key={i} className="h-4 w-full bg-muted rounded"></div>
-              ))}
-              <div className="h-5 w-56 bg-muted rounded"></div>
-              {[...Array(8)].map((_, i) => (
-                <div key={i} className="h-4 w-full bg-muted rounded"></div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+
 
   return (
       <div className="space-y-6">
@@ -2154,80 +2156,126 @@ export const GAAPFinancialStatements = () => {
             <h1 className="text-3xl font-bold">GAAP Financial Statements</h1>
             <p className="text-muted-foreground">Annual Financial Statements with drill-down</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button onClick={handleRefresh} disabled={loading}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh AFS
-            </Button>
-            <Button variant="outline" onClick={() => setShowFilters(v => !v)}>
-              {showFilters ? 'Hide Filters' : 'Show Filters'}
-            </Button>
+          <div className="flex items-center gap-3 bg-background p-1.5 rounded-xl border shadow-sm">
+             <Button 
+               variant="ghost" 
+               size="sm" 
+               onClick={() => setShowFilters(v => !v)}
+               className={`h-9 px-4 gap-2 rounded-lg transition-all ${showFilters ? 'bg-secondary text-secondary-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+             >
+               <Filter className="h-4 w-4" />
+               Filters
+             </Button>
+             <div className="h-6 w-px bg-border" />
+             <Button 
+               onClick={handleRefresh} 
+               disabled={loading}
+               size="sm"
+               className="h-9 px-4 gap-2 rounded-lg shadow-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
+             >
+               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+               {loading ? `Loading ${loadingProgress}%` : 'Refresh Data'}
+             </Button>
           </div>
         </div>
 
       {showFilters && (
-      <Card>
-        <CardHeader>
-          <CardTitle>Reporting Period</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Label>Mode</Label>
-            <div className="flex gap-2">
-              <Button variant={periodMode === 'monthly' ? 'default' : 'outline'} size="sm" onClick={() => setPeriodMode('monthly')}>Monthly</Button>
-              <Button variant={periodMode === 'annual' ? 'default' : 'outline'} size="sm" onClick={() => setPeriodMode('annual')}>Annual</Button>
-            </div>
-          </div>
+      <div className="animate-in fade-in slide-in-from-top-4 duration-300">
+        <Card className="border shadow-sm bg-muted/10">
+          <CardContent className="p-6">
+            <div className="grid gap-6 md:grid-cols-3 items-end">
+              <div className="space-y-3">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Report Mode</Label>
+                <div className="flex p-1 bg-background border rounded-lg shadow-sm">
+                  <Button 
+                    variant={periodMode === 'monthly' ? 'secondary' : 'ghost'} 
+                    size="sm" 
+                    onClick={() => setPeriodMode('monthly')}
+                    className="flex-1 rounded-md text-sm font-medium transition-all"
+                  >
+                    Monthly
+                  </Button>
+                  <Button 
+                    variant={periodMode === 'annual' ? 'secondary' : 'ghost'} 
+                    size="sm" 
+                    onClick={() => setPeriodMode('annual')}
+                    className="flex-1 rounded-md text-sm font-medium transition-all"
+                  >
+                    Annual
+                  </Button>
+                </div>
+              </div>
 
-          {periodMode === 'monthly' ? (
-            <div className="flex gap-4">
-              <div className="flex-1">
-                <Label htmlFor="selectedMonth">Month</Label>
-                <Input id="selectedMonth" type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+              <div className="space-y-3">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  {periodMode === 'monthly' ? 'Select Period' : 'Fiscal Year'}
+                </Label>
+                {periodMode === 'monthly' ? (
+                  <Input 
+                    type="month" 
+                    value={selectedMonth} 
+                    onChange={e => setSelectedMonth(e.target.value)}
+                    className="bg-background border-muted-foreground/20 focus:border-primary h-10" 
+                  />
+                ) : (
+                  <div className="relative">
+                    <Input 
+                      type="number" 
+                      min={2000} 
+                      max={2100} 
+                      value={selectedYear} 
+                      onChange={e => setSelectedYear(parseInt(e.target.value || `${new Date().getFullYear()}`, 10))}
+                      className="bg-background border-muted-foreground/20 focus:border-primary h-10 pl-10" 
+                    />
+                    <Calendar className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                 <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Effective Date Range</Label>
+                 <div className="flex items-center gap-2 text-sm text-muted-foreground bg-background p-2.5 rounded-lg border border-muted-foreground/20">
+                    <Calendar className="h-4 w-4 text-primary" />
+                    <span>{periodStart}</span>
+                    <ArrowLeftRight className="h-3 w-3 mx-1" />
+                    <span>{periodEnd}</span>
+                 </div>
               </div>
             </div>
-          ) : (
-            <div className="flex gap-4">
-              <div className="flex-1">
-                <Label htmlFor="selectedYear">Year</Label>
-                <Input id="selectedYear" type="number" min={1900} max={2100} value={selectedYear} onChange={e => setSelectedYear(parseInt(e.target.value || `${new Date().getFullYear()}`, 10))} />
-              </div>
-            </div>
-          )}
-
-          <div className="flex gap-4">
-            <div className="flex-1">
-              <Label htmlFor="periodStart">Period Start</Label>
-              <Input
-                id="periodStart"
-                type="date"
-                value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
-              />
-            </div>
-            <div className="flex-1">
-              <Label htmlFor="periodEnd">Period End</Label>
-              <Input
-                id="periodEnd"
-                type="date"
-                value={periodEnd}
-                onChange={(e) => setPeriodEnd(e.target.value)}
-              />
-            </div>
-          </div>
-      </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
       )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-      <TabsList>
-        <TabsTrigger value="balance-sheet">Statement of Financial Position</TabsTrigger>
-        <TabsTrigger value="income">Income Statement</TabsTrigger>
-        <TabsTrigger value="cash-flow">Cash Flow Statement</TabsTrigger>
-        <TabsTrigger value="comparative">Comparative</TabsTrigger>
-        <TabsTrigger value="retained-earnings">Retained Earnings</TabsTrigger>
-        <TabsTrigger value="monthly-report">Monthly Report</TabsTrigger>
-      </TabsList>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <div className="border-b pb-px overflow-x-auto">
+          <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0 rounded-none">
+            <TabsTrigger value="balance-sheet" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+              <Scale className="h-4 w-4" />
+              Statement of Financial Position
+            </TabsTrigger>
+            <TabsTrigger value="income" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+              <Activity className="h-4 w-4" />
+              Income Statement
+            </TabsTrigger>
+            <TabsTrigger value="cash-flow" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+              <ArrowLeftRight className="h-4 w-4" />
+              Cash Flow Statement
+            </TabsTrigger>
+            <TabsTrigger value="comparative" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+              <History className="h-4 w-4" />
+              Comparative
+            </TabsTrigger>
+            <TabsTrigger value="retained-earnings" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+              <PieChart className="h-4 w-4" />
+              Retained Earnings
+            </TabsTrigger>
+            <TabsTrigger value="monthly-report" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Monthly Report
+            </TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="balance-sheet">
           <Card>
@@ -2330,73 +2378,7 @@ export const GAAPFinancialStatements = () => {
         <TabsContent value="monthly-report">
           <Card>
             <CardContent className="pt-6">
-              {monthlyAFSLoading ? (
-                <div className="space-y-8 animate-pulse">
-                  <div>
-                    <div className="h-6 w-72 bg-muted rounded mb-2"></div>
-                    <div className="overflow-x-auto">
-                      <div className="min-w-[1000px]">
-                        <div className="flex">
-                          <div className="w-48 h-5 bg-muted rounded mr-2"></div>
-                          {Array.from({ length: 12 }).map((_, i) => (
-                            <div key={i} className="flex-1 h-5 bg-muted rounded mr-2"></div>
-                          ))}
-                        </div>
-                        {Array.from({ length: 12 }).map((_, r) => (
-                          <div key={r} className="flex mt-2">
-                            <div className="w-48 h-4 bg-muted rounded mr-2"></div>
-                            {Array.from({ length: 12 }).map((_, i) => (
-                              <div key={i} className="flex-1 h-4 bg-muted rounded mr-2"></div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="h-6 w-60 bg-muted rounded mb-2"></div>
-                    <div className="overflow-x-auto">
-                      <div className="min-w-[1000px]">
-                        <div className="flex">
-                          <div className="w-48 h-5 bg-muted rounded mr-2"></div>
-                          {Array.from({ length: 12 }).map((_, i) => (
-                            <div key={i} className="flex-1 h-5 bg-muted rounded mr-2"></div>
-                          ))}
-                        </div>
-                        {Array.from({ length: 10 }).map((_, r) => (
-                          <div key={r} className="flex mt-2">
-                            <div className="w-48 h-4 bg-muted rounded mr-2"></div>
-                            {Array.from({ length: 12 }).map((_, i) => (
-                              <div key={i} className="flex-1 h-4 bg-muted rounded mr-2"></div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="h-6 w-56 bg-muted rounded mb-2"></div>
-                    <div className="overflow-x-auto">
-                      <div className="min-w-[1000px]">
-                        <div className="flex">
-                          <div className="w-48 h-5 bg-muted rounded mr-2"></div>
-                          {Array.from({ length: 12 }).map((_, i) => (
-                            <div key={i} className="flex-1 h-5 bg-muted rounded mr-2"></div>
-                          ))}
-                        </div>
-                        {Array.from({ length: 6 }).map((_, r) => (
-                          <div key={r} className="flex mt-2">
-                            <div className="w-48 h-4 bg-muted rounded mr-2"></div>
-                            {Array.from({ length: 12 }).map((_, i) => (
-                              <div key={i} className="flex-1 h-4 bg-muted rounded mr-2"></div>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : monthlyAFSError ? (
+              {monthlyAFSError ? (
                 <div className="text-red-600 dark:text-red-400 text-sm">{monthlyAFSError}</div>
               ) : monthlyAFSData.length === 0 ? (
                 <div className="text-sm text-muted-foreground">No monthly data loaded</div>
@@ -2766,6 +2748,90 @@ const calculateTotalInventoryValue = async (companyId: string) => {
   }
 };
 
+// Calculate inventory value as-of a cutoff date using product catalog and date-aware movements
+const calculateInventoryValueAsOf = async (companyId: string, end: string) => {
+  try {
+    const endDateObj = new Date(end);
+    endDateObj.setHours(23, 59, 59, 999);
+    const endISO = endDateObj.toISOString();
+
+    const { data: products } = await supabase
+      .from('items')
+      .select('id, name, cost_price, quantity_on_hand')
+      .eq('company_id', companyId)
+      .eq('item_type', 'product');
+
+    const catalog = (products || []).map((p: any) => ({
+      id: String(p.id),
+      name: String(p.name || '').toLowerCase().trim(),
+      cost: Number(p.cost_price || 0),
+      currentQty: Number(p.quantity_on_hand || 0)
+    }));
+    const nameList = catalog.map(c => c.name);
+
+    const { data: invItemsAfter } = await supabase
+      .from('invoice_items')
+      .select(`
+        description,
+        quantity,
+        item_type,
+        invoices!inner (
+          invoice_date,
+          company_id,
+          status
+        )
+      `)
+      .eq('invoices.company_id', companyId)
+      .gt('invoices.invoice_date', endISO);
+
+    const salesAfter = (invItemsAfter || []).filter((it: any) => String(it.item_type || '').toLowerCase() === 'product');
+    const saleQtyByName = new Map<string, number>();
+    salesAfter.forEach((it: any) => {
+      const desc = String(it.description || '').toLowerCase().trim();
+      const qty = Number(it.quantity || 0);
+      const key = nameList.find(n => n === desc) || nameList.find(n => desc.includes(n) || n.includes(desc)) || desc;
+      saleQtyByName.set(key, (saleQtyByName.get(key) || 0) + qty);
+    });
+
+    const { data: poItemsAfter } = await supabase
+      .from('purchase_order_items')
+      .select(`
+        description,
+        quantity,
+        unit_price,
+        purchase_orders!inner (
+          po_date,
+          status,
+          company_id
+        )
+      `)
+      .eq('purchase_orders.company_id', companyId)
+      .in('purchase_orders.status', ['sent','paid'])
+      .gt('purchase_orders.po_date', endISO);
+
+    const purchaseQtyByName = new Map<string, number>();
+    (poItemsAfter || []).forEach((it: any) => {
+      const desc = String(it.description || '').toLowerCase().trim();
+      const qty = Number(it.quantity || 0);
+      const key = nameList.find(n => n === desc) || nameList.find(n => desc.includes(n) || n.includes(desc)) || desc;
+      purchaseQtyByName.set(key, (purchaseQtyByName.get(key) || 0) + qty);
+    });
+
+    let totalValue = 0;
+    catalog.forEach((prod) => {
+      const purchasesAfter = Number(purchaseQtyByName.get(prod.name) || 0);
+      const salesAfterQty = Number(saleQtyByName.get(prod.name) || 0);
+      const qtyAsOf = Math.max(0, prod.currentQty - purchasesAfter + salesAfterQty);
+      totalValue += qtyAsOf * prod.cost;
+    });
+
+    return totalValue;
+  } catch (error) {
+    console.error('Error calculating inventory value as-of date:', error);
+    return 0;
+  }
+};
+
 const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
   const startDateObj = new Date(start);
   const startISO = startDateObj.toISOString();
@@ -2791,13 +2857,18 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
       account_id,
       debit,
       credit,
+      description,
       transactions!inner (
-        transaction_date
+        transaction_date,
+        status,
+        company_id
       )
     `)
     .eq('transactions.company_id', companyId)
+    .eq('transactions.status', 'posted')
     .gte('transactions.transaction_date', startISO)
-    .lte('transactions.transaction_date', endISO);
+    .lte('transactions.transaction_date', endISO)
+    .not('description', 'ilike', '%Opening balance (carry forward)%');
 
   if (txError) throw txError;
 
@@ -2813,8 +2884,23 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
 
   const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
 
-  // Calculate total inventory value from products
-  const totalInventoryValue = await calculateTotalInventoryValue(companyId);
+  let apBalanceAsOf: number | undefined = undefined;
+  let arBalanceAsOf: number | undefined = undefined;
+  let loanShortAsOf: number | undefined = undefined;
+  let loanLongAsOf: number | undefined = undefined;
+  try {
+    const asOfTB = await fetchTrialBalanceAsOf(companyId, end);
+    const apRow = (asOfTB || []).find((r: any) => String(r.account_code || '') === '2000');
+    const arRow = (asOfTB || []).find((r: any) => String(r.account_code || '') === '1200');
+    const loanShortRow = (asOfTB || []).find((r: any) => String(r.account_code || '') === '2300');
+    const loanLongRow = (asOfTB || []).find((r: any) => String(r.account_code || '') === '2400');
+    apBalanceAsOf = apRow?.balance;
+    arBalanceAsOf = arRow?.balance;
+    loanShortAsOf = loanShortRow?.balance;
+    loanLongAsOf = loanLongRow?.balance;
+  } catch {}
+
+  
 
   // Process each account
   const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
@@ -2844,10 +2930,17 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
     const naturalDebit = type === 'asset' || type === 'expense';
     let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
-    // Special handling for inventory account - use actual product values (only account 1300)
-    if (acc.account_code === '1300') {
-      balance = totalInventoryValue;
-      console.log(`Inventory account ${acc.account_code} - Using total product value: R ${totalInventoryValue}`);
+    if (String(acc.account_code || '') === '2000' && typeof apBalanceAsOf === 'number') {
+      balance = apBalanceAsOf;
+    }
+    if (String(acc.account_code || '') === '1200' && typeof arBalanceAsOf === 'number') {
+      balance = arBalanceAsOf;
+    }
+    if (String(acc.account_code || '') === '2300' && typeof loanShortAsOf === 'number') {
+      balance = loanShortAsOf;
+    }
+    if (String(acc.account_code || '') === '2400' && typeof loanLongAsOf === 'number') {
+      balance = loanLongAsOf;
     }
 
     const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
@@ -2896,7 +2989,8 @@ const fetchTrialBalanceAsOf = async (companyId: string, end: string) => {
     `)
     .eq('transactions.company_id', companyId)
     .eq('transactions.status', 'posted')
-    .lte('transactions.transaction_date', endISO);
+    .lte('transactions.transaction_date', endISO)
+    .not('description', 'ilike', '%Opening balance (carry forward)%');
   if (txError) throw txError;
 
   const { data: ledgerEntries, error: ledgerError } = await supabase
@@ -2908,10 +3002,11 @@ const fetchTrialBalanceAsOf = async (companyId: string, end: string) => {
   if (ledgerError) throw ledgerError;
 
   const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
-  const totalInventoryValue = await calculateTotalInventoryValue(companyId);
 
   const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
   const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
+  const inventoryValueAsOf = await calculateInventoryValueAsOf(companyId, end);
 
   (accounts || []).forEach((acc: any) => {
     let sumDebit = 0;
@@ -2936,7 +3031,7 @@ const fetchTrialBalanceAsOf = async (companyId: string, end: string) => {
     let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
     if (acc.account_code === '1300') {
-      balance = totalInventoryValue;
+      balance = inventoryValueAsOf;
     }
 
     const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');

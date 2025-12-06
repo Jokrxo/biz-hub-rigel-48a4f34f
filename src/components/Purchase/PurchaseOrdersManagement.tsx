@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
-import { Plus, Trash2, FileText, Download } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { Plus, Trash2, FileText, Download, Search, MoreHorizontal, Calendar, Filter, Send, CreditCard } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,6 +9,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { transactionsApi } from "@/lib/transactions-api";
@@ -39,6 +47,7 @@ interface PurchaseOrder {
   supplier_id: string;
   notes?: string;
   suppliers?: { name: string };
+  supplierName?: string;
 }
 
 export const PurchaseOrdersManagement = () => {
@@ -62,8 +71,9 @@ export const PurchaseOrdersManagement = () => {
   const [poSentOrder, setPoSentOrder] = useState<PurchaseOrder | null>(null);
   const [poSentDate, setPoSentDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [poSentIncludeVAT, setPoSentIncludeVAT] = useState<boolean>(true);
-  const [page, setPage] = useState(0);
-  const [pageSize] = useState(7);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
 
   const [form, setForm] = useState({
     po_date: new Date().toISOString().slice(0, 10),
@@ -129,7 +139,19 @@ export const PurchaseOrdersManagement = () => {
     loadData();
   }, [loadData]);
 
-  
+  const filteredOrders = useMemo(() => {
+    return orders.filter(order => {
+      const matchesSearch = 
+        order.po_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (order.supplierName && order.supplierName.toLowerCase().includes(searchTerm.toLowerCase()));
+      
+      const matchesDate = 
+        (!startDate || order.po_date >= startDate) &&
+        (!endDate || order.po_date <= endDate);
+
+      return matchesSearch && matchesDate;
+    });
+  }, [orders, searchTerm, startDate, endDate]);
 
   const addItem = () => {
     setForm({
@@ -558,101 +580,138 @@ export const PurchaseOrdersManagement = () => {
   };
 
   const totals = calculateTotals();
-  const totalCount = orders.length;
-  const start = page * pageSize;
-  const pagedOrders = orders.slice(start, start + pageSize);
-  useEffect(() => { setPage(0); }, [orders.length]);
 
   if (loading) return <div className="p-6">Loading...</div>;
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold">Purchase Orders</h2>
-          <p className="text-muted-foreground">Manage purchase orders</p>
-        </div>
-        <Button onClick={() => setShowForm(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          New Purchase Order
-        </Button>
-      </div>
-
-      <Card>
-        <CardHeader>
+    <Card className="card-professional">
+      <CardHeader>
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <CardTitle>Purchase Orders</CardTitle>
-        </CardHeader>
-        <CardContent>
+          <Button onClick={() => setShowForm(true)} className="bg-gradient-primary shadow-elegant hover:shadow-lg transition-all">
+            <Plus className="h-4 w-4 mr-2" />
+            New Purchase Order
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-col sm:flex-row items-center gap-4 mb-6">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search PO number or supplier..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Input 
+              type="date" 
+              className="w-auto"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+            <span className="text-muted-foreground">-</span>
+            <Input 
+              type="date" 
+              className="w-auto"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="rounded-md border">
           {orders.length === 0 ? (
-            <div className="text-center py-8">
-              <FileText className="h-12 w-12 mx-auto opacity-50 mb-4" />
-              <p className="text-muted-foreground">No purchase orders yet</p>
+            <div className="text-center py-12 text-muted-foreground">
+              <FileText className="h-12 w-12 mx-auto mb-4 opacity-20" />
+              <p>No purchase orders found</p>
             </div>
           ) : (
-            <>
             <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>PO Number</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Supplier</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Outstanding</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pagedOrders.map(order => (
-                <TableRow key={order.id}>
-                  <TableCell className="font-mono">{order.po_number}</TableCell>
-                  <TableCell>{new Date(order.po_date).toLocaleDateString("en-ZA")}</TableCell>
-                  <TableCell>{(order as any).supplierName || "N/A"}</TableCell>
-                  <TableCell>
-                    <Badge variant={order.status === "draft" ? "secondary" : "default"}>
-                      {order.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right font-mono">
-                    R {Math.max(0, Number(order.total_amount || 0) - Number(paidMap[order.po_number] || 0)).toLocaleString('en-ZA')}
-                  </TableCell>
-                  <TableCell className="text-right font-mono">
-                    R {order.total_amount.toLocaleString("en-ZA")}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      {order.status === 'draft' && (
-                        <Button size="sm" onClick={() => markSent(order)} disabled={sentLoading === order.id}>
-                          Sent
-                        </Button>
-                      )}
-                      {order.status === 'sent' && (
-                        <Button size="sm" variant="outline" onClick={() => openPayDialog(order)}>
-                          Paid
-                        </Button>
-                      )}
-                      <Button size="sm" variant="ghost" onClick={() => deletePO(order.id)}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>PO Number</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Supplier</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Outstanding</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="w-[100px] text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground">
-              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedOrders.length} of {totalCount}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-              <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
-            </div>
-          </div>
-          </>
+              </TableHeader>
+              <TableBody>
+                {filteredOrders.map(order => (
+                  <TableRow key={order.id}>
+                    <TableCell className="font-mono font-medium">{order.po_number}</TableCell>
+                    <TableCell>{new Date(order.po_date).toLocaleDateString("en-ZA")}</TableCell>
+                    <TableCell>{(order as any).supplierName || "N/A"}</TableCell>
+                    <TableCell>
+                      <Badge variant={
+                        order.status === "paid" ? "default" : 
+                        order.status === "sent" ? "secondary" : "outline"
+                      } className={
+                        order.status === "paid" ? "bg-green-100 text-green-700 hover:bg-green-100 border-green-200" :
+                        order.status === "sent" ? "bg-blue-100 text-blue-700 hover:bg-blue-100 border-blue-200" : ""
+                      }>
+                        {order.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">
+                      R {Math.max(0, Number(order.total_amount || 0) - Number(paidMap[order.po_number] || 0)).toLocaleString('en-ZA')}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-medium">
+                      R {order.total_amount.toLocaleString("en-ZA")}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
+                        {order.status === 'draft' && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                            onClick={() => markSent(order)}
+                            disabled={sentLoading === order.id}
+                            title="Mark as Sent"
+                          >
+                            <Send className="h-4 w-4" />
+                          </Button>
+                        )}
+                        {order.status === 'sent' && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
+                            onClick={() => openPayDialog(order)}
+                            title="Record Payment"
+                          >
+                            <CreditCard className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" className="h-8 w-8 p-0">
+                              <span className="sr-only">Open menu</span>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => deletePO(order.id)} className="text-destructive">
+                              <Trash2 className="mr-2 h-4 w-4" /> Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </CardContent>
 
       <Dialog open={poSentDialogOpen} onOpenChange={setPoSentDialogOpen}>
         <DialogContent className="max-w-md">
@@ -809,7 +868,7 @@ export const PurchaseOrdersManagement = () => {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowForm(false)}>Cancel</Button>
-            <Button onClick={handleSubmit}>Create Purchase Order</Button>
+            <Button onClick={handleSubmit} className="bg-gradient-primary">Create Purchase Order</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -848,11 +907,11 @@ export const PurchaseOrdersManagement = () => {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setPayDialogOpen(false)}>Cancel</Button>
-          <Button onClick={confirmPayment}>Confirm</Button>
+          <Button onClick={confirmPayment} className="bg-gradient-primary">Confirm</Button>
         </DialogFooter>
       </DialogContent>
       </Dialog>
       <TransactionFormEnhanced open={journalOpen} onOpenChange={setJournalOpen} onSuccess={loadData} editData={journalEditData} />
-    </div>
+    </Card>
   );
 };

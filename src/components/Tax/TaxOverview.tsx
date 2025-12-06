@@ -107,37 +107,116 @@ export const TaxOverview = () => {
   return (
     <div className="space-y-6 mt-6">
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {stats.map((stat) => (
-          <Card key={stat.title} className="card-professional">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
-              <stat.icon className={`h-5 w-5 ${stat.color}`} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stat.value}</div>
-              <p className="text-xs text-muted-foreground mt-1">{stat.period}</p>
-            </CardContent>
-          </Card>
-        ))}
+        <Card className="border-none shadow-md bg-gradient-to-br from-primary/10 via-primary/5 to-background">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Current VAT Due</CardTitle>
+            <DollarSign className="h-5 w-5 text-primary" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-primary">R {vatDue.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+            <p className="text-xs text-muted-foreground mt-1">Live from ledger</p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-none shadow-md bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-background">
+           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+             <CardTitle className="text-sm font-medium text-muted-foreground">Next Filing Date</CardTitle>
+             <Calendar className="h-5 w-5 text-blue-600" />
+           </CardHeader>
+           <CardContent>
+             <div className="text-2xl font-bold text-blue-700">{nextFiling}</div>
+             <p className="text-xs text-muted-foreground mt-1">Estimated</p>
+           </CardContent>
+        </Card>
+
+        <Card className="border-none shadow-md bg-gradient-to-br from-purple-500/10 via-purple-500/5 to-background">
+           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+             <CardTitle className="text-sm font-medium text-muted-foreground">Submitted Returns</CardTitle>
+             <FileText className="h-5 w-5 text-purple-600" />
+           </CardHeader>
+           <CardContent>
+             <div className="text-2xl font-bold text-purple-700">—</div>
+             <p className="text-xs text-muted-foreground mt-1">Coming soon</p>
+           </CardContent>
+        </Card>
+
+        <Card className="border-none shadow-md bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-background">
+           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+             <CardTitle className="text-sm font-medium text-muted-foreground">Pending Action</CardTitle>
+             <AlertCircle className="h-5 w-5 text-amber-600" />
+           </CardHeader>
+           <CardContent>
+             <div className="text-2xl font-bold text-amber-700">{vatDue > 0 ? "Payable" : "—"}</div>
+             <p className="text-xs text-muted-foreground mt-1">{vatDue > 0 ? "Review & file" : "—"}</p>
+           </CardContent>
+        </Card>
       </div>
-      <Card className="card-professional">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">VAT Output vs VAT Input</CardTitle>
+
+      <Card className="border-none shadow-md">
+        <CardHeader className="border-b bg-muted/10 pb-4">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            VAT Trends (Output vs Input)
+          </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-6">
           {series.length === 0 ? (
-            <div className="py-6 text-muted-foreground">No VAT activity yet</div>
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <div className="rounded-full bg-muted p-4 mb-3">
+                <FileText className="h-8 w-8 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-medium">No VAT Data Available</h3>
+              <p className="text-muted-foreground max-w-sm mt-1">
+                Start recording transactions with VAT to see your tax liability trends here.
+              </p>
+            </div>
           ) : (
-            <div className="h-64 w-full">
+            <div className="h-[350px] w-full">
               <ResponsiveContainer>
-                <LineChart data={series} margin={{ top: 10, right: 24, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} />
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`]} />
-                  <Legend />
-                  <Line type="monotone" dataKey="vatOutput" name="VAT Output" stroke="#22c55e" strokeWidth={2} dot={false} />
-                  <Line type="monotone" dataKey="vatInput" name="VAT Input" stroke="#ef4444" strokeWidth={2} dot={false} />
+                <LineChart data={series} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                  <XAxis 
+                    dataKey="month" 
+                    tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} 
+                    axisLine={false}
+                    tickLine={false}
+                    dy={10}
+                  />
+                  <YAxis 
+                    tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }} 
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(val) => `R${val}`}
+                  />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: 'hsl(var(--background))', 
+                      borderColor: 'hsl(var(--border))', 
+                      borderRadius: '8px',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.1)' 
+                    }}
+                    itemStyle={{ fontSize: '12px' }}
+                    labelStyle={{ fontWeight: 'bold', marginBottom: '4px' }}
+                    formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA', {minimumFractionDigits: 2})}`]} 
+                  />
+                  <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                  <Line 
+                    type="monotone" 
+                    dataKey="vatOutput" 
+                    name="VAT Output (Sales)" 
+                    stroke="hsl(var(--primary))" 
+                    strokeWidth={3} 
+                    dot={{ r: 4, strokeWidth: 2 }} 
+                    activeDot={{ r: 6 }} 
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="vatInput" 
+                    name="VAT Input (Purchases)" 
+                    stroke="#ef4444" 
+                    strokeWidth={3} 
+                    dot={{ r: 4, strokeWidth: 2 }} 
+                    activeDot={{ r: 6 }}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>

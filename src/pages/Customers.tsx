@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Users, Mail, Phone, Info, FileDown } from "lucide-react";
+import { Plus, Users, Mail, Phone, Info, FileDown, Search, MoreHorizontal, UserPlus, FileText, CreditCard, MapPin } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
@@ -15,6 +15,16 @@ import { useRoles } from "@/hooks/use-roles";
 import { exportCustomerStatementToPDF } from "@/lib/export-utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface Customer {
   id: string;
@@ -47,6 +57,7 @@ export default function CustomersPage() {
   const [paymentDate, setPaymentDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [selectedBankId, setSelectedBankId] = useState<string>("");
+  const [searchTerm, setSearchTerm] = useState("");
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
@@ -99,7 +110,24 @@ export default function CustomersPage() {
     }
   }, [user?.id]);
 
-  
+  const filteredCustomers = useMemo(() => {
+    if (!searchTerm) return customers;
+    const lower = searchTerm.toLowerCase();
+    return customers.filter(c => 
+      c.name.toLowerCase().includes(lower) || 
+      (c.email && c.email.toLowerCase().includes(lower)) ||
+      (c.phone && c.phone.includes(lower))
+    );
+  }, [customers, searchTerm]);
+
+  const getInitials = (name: string) => {
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .substring(0, 2);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -550,167 +578,271 @@ export default function CustomersPage() {
       <SEO title="Customers | Rigel Business" description="Manage customer information" />
       <DashboardLayout>
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold">Customers</h1>
-              <p className="text-muted-foreground mt-1">Manage your customer database</p>
+              <h1 className="text-3xl font-bold tracking-tight">Customers</h1>
+              <p className="text-muted-foreground mt-1">Manage your customer database and relationships</p>
             </div>
             <div className="flex items-center gap-3">
               <Button variant="outline" onClick={() => setTutorialOpen(true)}>
                 <Info className="h-4 w-4 mr-2" />
-                Help & Tutorial
+                Help
               </Button>
-              {canEdit && (
-                <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button className="bg-gradient-primary">
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Customer
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Add New Customer</DialogTitle>
-                    </DialogHeader>
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                      <div>
-                        <Label>Customer Name</Label>
-                        <Input
-                          value={formData.name}
-                          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Email</Label>
-                        <Input
-                          type="email"
-                          value={formData.email}
-                          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label>Phone</Label>
-                        <Input
-                          value={formData.phone}
-                          onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label>Address</Label>
-                        <Input
-                          value={formData.address}
-                          onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <Label>Opening Balance</Label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            value={formData.openingBalance}
-                            onChange={(e) => setFormData({ ...formData, openingBalance: e.target.value })}
-                            placeholder="0.00"
-                          />
-                        </div>
-                        <div>
-                          <Label>Opening Balance Date</Label>
-                          <Input
-                            type="date"
-                            value={formData.openingDate}
-                            onChange={(e) => setFormData({ ...formData, openingDate: e.target.value })}
-                          />
-                        </div>
-                      </div>
-                      <Button type="submit" className="w-full bg-gradient-primary">Add Customer</Button>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-              )}
             </div>
           </div>
 
-          <Card>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card className="card-professional">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Total Customers</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-primary">{customers.length}</div>
+                <p className="text-xs text-muted-foreground mt-1">Registered clients</p>
+              </CardContent>
+            </Card>
+            <Card className="card-professional">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">New This Month</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-accent">
+                  {customers.filter(c => {
+                    const d = new Date(c.created_at);
+                    const now = new Date();
+                    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+                  }).length}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Recently added</p>
+              </CardContent>
+            </Card>
+            <Card className="card-professional">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Active Database</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{customers.length > 0 ? "100%" : "0%"}</div>
+                <p className="text-xs text-muted-foreground mt-1">Data integrity</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card className="card-professional">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-primary" />
-                All Customers
-              </CardTitle>
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-primary" />
+                  All Customers
+                </CardTitle>
+                {canEdit && (
+                  <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                    <DialogTrigger asChild>
+                      <Button className="bg-gradient-primary shadow-elegant hover:shadow-lg transition-all">
+                        <UserPlus className="h-4 w-4 mr-2" />
+                        Add Customer
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Add New Customer</DialogTitle>
+                      </DialogHeader>
+                      <form onSubmit={handleSubmit} className="space-y-4">
+                        <div>
+                          <Label>Customer Name *</Label>
+                          <Input
+                            value={formData.name}
+                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                            required
+                            placeholder="Business or individual name"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label>Email</Label>
+                            <Input
+                              type="email"
+                              value={formData.email}
+                              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                              placeholder="client@example.com"
+                            />
+                          </div>
+                          <div>
+                            <Label>Phone</Label>
+                            <Input
+                              value={formData.phone}
+                              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                              placeholder="082 123 4567"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Label>Address</Label>
+                          <Input
+                            value={formData.address}
+                            onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                            placeholder="Physical address"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                          <div>
+                            <Label className="text-xs">Opening Balance</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              value={formData.openingBalance}
+                              onChange={(e) => setFormData({ ...formData, openingBalance: e.target.value })}
+                              placeholder="0.00"
+                              className="bg-background"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Date</Label>
+                            <Input
+                              type="date"
+                              value={formData.openingDate}
+                              onChange={(e) => setFormData({ ...formData, openingDate: e.target.value })}
+                              className="bg-background"
+                            />
+                          </div>
+                        </div>
+                        <Button type="submit" className="w-full bg-gradient-primary">Add Customer</Button>
+                      </form>
+                    </DialogContent>
+                  </Dialog>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
+              <div className="relative max-w-sm mb-6">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search customers..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-8"
+                />
+              </div>
+
               {loading ? (
-                <div className="text-center py-8 text-muted-foreground">Loading...</div>
+                <div className="text-center py-12 text-muted-foreground">Loading...</div>
               ) : customers.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">No customers yet</div>
+                <div className="text-center py-12 text-muted-foreground">
+                  <Users className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                  <p>No customers found</p>
+                  {canEdit && <p className="text-sm mt-2">Add your first customer to get started</p>}
+                </div>
               ) : (
                 <>
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Phone</TableHead>
-                      <TableHead>Address</TableHead>
-                      <TableHead>Added</TableHead>
-                      <TableHead>Actions</TableHead>
+                      <TableHead>Customer</TableHead>
+                      <TableHead>Contact Info</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="w-[80px] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {customers.slice(page * pageSize, page * pageSize + pageSize).map((customer) => (
+                    {filteredCustomers.slice(page * pageSize, page * pageSize + pageSize).map((customer) => (
                       <TableRow key={customer.id}>
-                        <TableCell className="font-medium">{customer.name}</TableCell>
                         <TableCell>
-                          {customer.email ? (
-                            <span className="flex items-center gap-1">
-                              <Mail className="h-3 w-3" />
-                              {customer.email}
-                            </span>
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-9 w-9 border border-primary/20">
+                              <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs">
+                                {getInitials(customer.name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex flex-col">
+                              <span className="font-medium text-sm">{customer.name}</span>
+                              <span className="text-xs text-muted-foreground">Added {new Date(customer.created_at).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            {customer.email && (
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Mail className="h-3 w-3" />
+                                {customer.email}
+                              </div>
+                            )}
+                            {customer.phone && (
+                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Phone className="h-3 w-3" />
+                                {customer.phone}
+                              </div>
+                            )}
+                            {!customer.email && !customer.phone && <span className="text-muted-foreground">-</span>}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {customer.address ? (
+                            <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                              <MapPin className="h-3 w-3" />
+                              <span className="truncate max-w-[150px]">{customer.address}</span>
+                            </div>
                           ) : (
-                            "-"
+                            <span className="text-muted-foreground">-</span>
                           )}
                         </TableCell>
                         <TableCell>
-                          {customer.phone ? (
-                            <span className="flex items-center gap-1">
-                              <Phone className="h-3 w-3" />
-                              {customer.phone}
-                            </span>
-                          ) : (
-                            "-"
-                          )}
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">Active</Badge>
                         </TableCell>
-                        <TableCell>{customer.address || "-"}</TableCell>
-                        <TableCell>{new Date(customer.created_at).toLocaleDateString()}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm" onClick={() => openStatementDialog(customer)}>
-                              <FileDown className="h-4 w-4 mr-2" /> Statement PDF
-                            </Button>
-                            <Button variant="secondary" size="sm" onClick={() => openStatementViewer(customer)}>
-                              View Statement
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                              onClick={() => openStatementViewer(customer)}
+                              title="View Statement"
+                            >
+                              <FileText className="h-4 w-4" />
                             </Button>
                             {canEdit && (
-                              <Button className="bg-gradient-primary" size="sm" onClick={() => openPayment(customer)}>
-                                Receive Payment
+                              <Button 
+                                variant="ghost" 
+                                size="icon"
+                                className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                onClick={() => openPayment(customer)}
+                                title="Receive Payment"
+                              >
+                                <CreditCard className="h-4 w-4" />
                               </Button>
                             )}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" className="h-8 w-8 p-0">
+                                  <span className="sr-only">Open menu</span>
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                <DropdownMenuItem onClick={() => openStatementDialog(customer)}>
+                                  <FileDown className="mr-2 h-4 w-4" /> Statement PDF
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
-                <div className="flex items-center justify-between mt-3">
-                  <div className="text-sm text-muted-foreground">Page {page + 1} of {Math.max(1, Math.ceil(customers.length / pageSize))}</div>
+                <div className="flex items-center justify-between mt-4">
+                  <div className="text-xs text-muted-foreground">
+                    Page {page + 1} of {Math.max(1, Math.ceil(filteredCustomers.length / pageSize))}
+                  </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-                    <Button variant="outline" disabled={(page + 1) >= Math.ceil(customers.length / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+                    <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+                    <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil(filteredCustomers.length / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
                   </div>
                 </div>
                 </>
               )}
-          </CardContent>
+            </CardContent>
           </Card>
 
           <Dialog open={statementOpen} onOpenChange={setStatementOpen}>
@@ -786,20 +918,20 @@ export default function CustomersPage() {
                     <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
                   </div>
                 </div>
-                <div className="flex justify-between items-center">
-                  <div className="text-sm">Opening balance: {statementOpeningBalance.toFixed(2)}</div>
-                  <Button variant="outline" onClick={refreshStatementViewer}>Refresh</Button>
+                <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
+                  <div className="text-sm font-medium">Opening balance: <span className="font-mono">{statementOpeningBalance.toFixed(2)}</span></div>
+                  <Button variant="outline" size="sm" onClick={refreshStatementViewer}>Refresh</Button>
                 </div>
-                <div className="border rounded">
+                <div className="border rounded-md overflow-hidden">
                   <Table>
-                    <TableHeader>
+                    <TableHeader className="bg-muted/50">
                       <TableRow>
                         <TableHead>Date</TableHead>
                         <TableHead>Description</TableHead>
                         <TableHead>Reference</TableHead>
-                        <TableHead>Dr</TableHead>
-                        <TableHead>Cr</TableHead>
-                        <TableHead>Balance</TableHead>
+                        <TableHead className="text-right">Dr</TableHead>
+                        <TableHead className="text-right">Cr</TableHead>
+                        <TableHead className="text-right">Balance</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -809,12 +941,12 @@ export default function CustomersPage() {
                           running = running + Number(e.dr || 0) - Number(e.cr || 0);
                           return (
                             <TableRow key={idx}>
-                              <TableCell>{new Date(e.date).toLocaleDateString('en-ZA')}</TableCell>
-                              <TableCell>{e.description}</TableCell>
-                              <TableCell>{e.reference || '-'}</TableCell>
-                              <TableCell>{Number(e.dr || 0).toFixed(2)}</TableCell>
-                              <TableCell>{Number(e.cr || 0).toFixed(2)}</TableCell>
-                              <TableCell>{running.toFixed(2)}</TableCell>
+                              <TableCell className="text-xs">{new Date(e.date).toLocaleDateString('en-ZA')}</TableCell>
+                              <TableCell className="text-xs font-medium">{e.description}</TableCell>
+                              <TableCell className="text-xs">{e.reference || '-'}</TableCell>
+                              <TableCell className="text-xs text-right font-mono text-muted-foreground">{Number(e.dr || 0) > 0 ? Number(e.dr).toFixed(2) : '-'}</TableCell>
+                              <TableCell className="text-xs text-right font-mono text-muted-foreground">{Number(e.cr || 0) > 0 ? Number(e.cr).toFixed(2) : '-'}</TableCell>
+                              <TableCell className="text-xs text-right font-mono font-bold">{running.toFixed(2)}</TableCell>
                             </TableRow>
                           );
                         });
@@ -834,7 +966,7 @@ export default function CustomersPage() {
               <div className="space-y-4">
                 <div>
                   <Label>Customer</Label>
-                  <Input readOnly value={paymentCustomer?.name || ''} />
+                  <Input readOnly value={paymentCustomer?.name || ''} className="bg-muted" />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -847,10 +979,10 @@ export default function CustomersPage() {
                   </div>
                 </div>
                 <div>
-                  <Label>Bank</Label>
+                  <Label>Bank Account</Label>
                   <Select value={selectedBankId} onValueChange={setSelectedBankId}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select bank" />
+                      <SelectValue placeholder="Select bank account" />
                     </SelectTrigger>
                     <SelectContent>
                       {bankAccounts.map((b) => (
@@ -870,4 +1002,3 @@ export default function CustomersPage() {
     </>
   );
 }
-import React from "react";

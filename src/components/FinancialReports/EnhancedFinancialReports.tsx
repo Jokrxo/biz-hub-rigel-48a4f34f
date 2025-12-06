@@ -89,28 +89,6 @@ export const EnhancedFinancialReports = () => {
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd, loadFinancialData]);
 
 
-  // Function to calculate total inventory value from products
-const calculateTotalInventoryValue = async (companyId: string) => {
-  try {
-    const { data: products } = await supabase
-      .from('items')
-      .select('cost_price, quantity_on_hand')
-      .eq('company_id', companyId)
-      .eq('item_type', 'product')
-      .gt('quantity_on_hand', 0);
-    
-    const totalValue = (products || []).reduce((sum, product) => {
-      const cost = Number(product.cost_price || 0);
-      const qty = Number(product.quantity_on_hand || 0);
-      return sum + (cost * qty);
-    }, 0);
-    
-    return totalValue;
-  } catch (error) {
-    console.error('Error calculating inventory value:', error);
-    return 0;
-  }
-};
 
   // Fetch period-specific trial balance using transaction_entries joined to transactions.date within range (posted only)
   const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end: string) => {
@@ -162,7 +140,6 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     if (ledgerError) throw ledgerError;
 
     const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
-    const totalInventoryValue = await calculateTotalInventoryValue(companyId);
 
     const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
     const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
@@ -187,11 +164,9 @@ const calculateTotalInventoryValue = async (companyId: string) => {
 
       const type = (acc.account_type || '').toLowerCase();
       const naturalDebit = type === 'asset' || type === 'expense';
-      let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+      const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
-      if (acc.account_code === '1300') {
-        balance = totalInventoryValue;
-      }
+      
 
       const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
       const isPrimaryInventory = acc.account_code === '1300';
@@ -256,7 +231,6 @@ const calculateTotalInventoryValue = async (companyId: string) => {
     if (ledgerError) throw ledgerError;
 
     const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
-    const totalInventoryValue = await calculateTotalInventoryValue(companyId);
 
     const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
     const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
@@ -281,11 +255,9 @@ const calculateTotalInventoryValue = async (companyId: string) => {
 
       const type = (acc.account_type || '').toLowerCase();
       const naturalDebit = type === 'asset' || type === 'expense';
-      let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+      const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
-      if (acc.account_code === '1300') {
-        balance = totalInventoryValue;
-      }
+      
 
       const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
       const isPrimaryInventory = acc.account_code === '1300';
@@ -478,7 +450,8 @@ const calculateTotalInventoryValue = async (companyId: string) => {
       a.account_type.toLowerCase() === 'asset' && 
       parseInt(a.account_code || '0') < 1500 &&
       !String(a.account_name || '').toLowerCase().includes('vat') &&
-      !['1210','2110','2210'].includes(String(a.account_code || ''))
+      !['1210','2110','2210'].includes(String(a.account_code || '')) &&
+      (!String(a.account_name || '').toLowerCase().includes('inventory') || String(a.account_code || '') === '1300')
     );
     
     const vatReceivable = trialBalance

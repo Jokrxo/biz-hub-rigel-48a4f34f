@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,15 +8,17 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { transactionsApi } from "@/lib/transactions-api";
 import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
-import { Download, Mail, Plus, Trash2, FileText } from "lucide-react";
+import { Download, Mail, Plus, Trash2, FileText, MoreHorizontal, CheckCircle2, Clock, AlertTriangle, DollarSign, FilePlus, ArrowRight } from "lucide-react";
 import { exportInvoiceToPDF, buildInvoicePDFByTemplate, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
 import { exportInvoicesToExcel } from '@/lib/export-utils';
+import { MetricCard } from "@/components/ui/MetricCard";
 
 interface Invoice {
   id: string;
@@ -166,8 +168,6 @@ export const SalesInvoices = () => {
     };
     loadCompanyEmail();
   }, []);
-
-  
 
   const handleConfirmSent = async () => {
     if (!sentInvoice) return;
@@ -870,6 +870,10 @@ export const SalesInvoices = () => {
   const start = page * pageSize;
   const pagedInvoices = filteredByDateInvoices.slice(start, start + pageSize);
 
+  // Advanced Metrics & Charts Logic REMOVED as per user request (moved to ARDashboard)
+  // Kept simple stats for metric cards? User said "hide them on invoice module".
+  // Removing Metric Cards from return JSX.
+
   useEffect(() => {
     setPage(0);
   }, [statusFilter, yearFilter, monthFilter]);
@@ -879,420 +883,436 @@ export const SalesInvoices = () => {
     exportInvoicesToExcel(filteredByDateInvoices as any, filename);
   };
 
-  const exportFilteredInvoices = () => {
-    const filename = `invoices_${statusFilter}`;
-    exportInvoicesToExcel(filteredInvoices as any, filename);
+  const getStatusBadge = (status: string, dueDate: string | null, amountPaid: number, totalAmount: number) => {
+    const outstanding = Math.max(0, totalAmount - amountPaid);
+    if (status === 'paid' || outstanding <= 0) return <Badge className="bg-green-500 hover:bg-green-600">Paid</Badge>;
+    if (status === 'cancelled') return <Badge variant="secondary">Cancelled</Badge>;
+    if (status === 'draft') return <Badge variant="outline" className="text-muted-foreground">Draft</Badge>;
+    if (dueDate && new Date(dueDate) < new Date()) return <Badge variant="destructive">Overdue</Badge>;
+    return <Badge className="bg-amber-500 hover:bg-amber-600">Pending</Badge>;
   };
 
   return (
-    <Card className="mt-6">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-2">
-          <FileText className="h-5 w-5 text-primary" />
-          Sales Invoices
-        </CardTitle>
-        <div className="flex items-center gap-2">
-          <Select value={yearFilter} onValueChange={setYearFilter}>
-            <SelectTrigger className="w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Years</SelectItem>
-              {Array.from(new Set(invoices.map(i => new Date(i.invoice_date).getFullYear()))).sort((a,b)=>b-a).map(y => (
-                <SelectItem key={String(y)} value={String(y)}>{String(y)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={monthFilter} onValueChange={setMonthFilter}>
-            <SelectTrigger className="w-36">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Months</SelectItem>
-              {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
-                <SelectItem key={m} value={m}>{new Date(2025, Number(m)-1, 1).toLocaleString('en-ZA', { month: 'long' })}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="unpaid">Unpaid</SelectItem>
-              <SelectItem value="paid">Paid</SelectItem>
-              <SelectItem value="draft">Draft</SelectItem>
-              <SelectItem value="cancelled">Cancelled</SelectItem>
-              <SelectItem value="overdue">Overdue</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" onClick={exportFilteredInvoicesDate}>Export</Button>
-          {canEdit && (
-            <Button className="bg-gradient-primary" onClick={() => setDialogOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              New Invoice
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent>
-        {lastPosting && (
-          <div className="mb-4 p-3 border rounded bg-muted/30 text-sm">
-            {lastPosting}
-          </div>
-        )}
-        {loading ? (
-          <div className="text-center py-8">Loading...</div>
-        ) : invoices.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            No invoices yet. Click "New Invoice" to create one.
-          </div>
-        ) : (<>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Invoice #</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Due Date</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead className="text-right">Outstanding</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pagedInvoices.map((invoice) => (
-                <TableRow key={invoice.id}>
-                  <TableCell className="font-medium">{invoice.invoice_number}</TableCell>
-                  <TableCell>{invoice.customer_name}</TableCell>
-                  <TableCell>{new Date(invoice.invoice_date).toLocaleDateString('en-ZA')}</TableCell>
-                  <TableCell>{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-ZA') : "-"}</TableCell>
-                  <TableCell className="text-right font-semibold">R {Number(invoice.total_amount).toLocaleString('en-ZA')}</TableCell>
-                  <TableCell className="text-right font-semibold text-primary">R {Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.amount_paid || 0)).toLocaleString('en-ZA')}</TableCell>
-                  <TableCell>
-                    <Select
-                      value={invoice.status}
-                      onValueChange={(value) => updateStatus(invoice.id, value)}
-                      disabled={!canEdit}
-                    >
-                      <SelectTrigger className="w-[120px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="sent">Sent</SelectItem>
-                        <SelectItem value="paid">Paid</SelectItem>
-                        <SelectItem value="overdue">Overdue</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => handleDownloadInvoice(invoice)}>
-                        <Download className="h-3 w-3" />
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => openSendDialog(invoice)}>
-                        <Mail className="h-3 w-3" />
-                      </Button>
-                      {canEdit && (
-                        <Button size="sm" variant="ghost" onClick={() => deleteInvoice(invoice.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground">
-              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedInvoices.length} of {totalCount}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-              <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
-            </div>
-          </div>
-        </>)}
-      </CardContent>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Create Invoice</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="flex items-center justify-between">
-                  <Label>Customer *</Label>
-                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/customers', '_blank')}>Add customer</Button>
-                </div>
-                <Select value={formData.customer_name} onValueChange={(value) => applyCustomerSelection(value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={customers.length ? "Select customer" : "No customers found"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c: any) => (
-                      <SelectItem key={c.id ?? c.name} value={c.name}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Customer Email</Label>
-                <Input
-                  type="email"
-                  value={formData.customer_email}
-                  onChange={(e) => setFormData({ ...formData, customer_email: e.target.value })}
-                  placeholder="customer@example.com"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Invoice Date *</Label>
-                <Input
-                  type="date"
-                  value={formData.invoice_date}
-                  onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
-                  max={todayStr}
-                  required
-                />
-              </div>
-              <div>
-                <Label>Due Date</Label>
-                <Input
-                  type="date"
-                  value={formData.due_date}
-                  onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
-                  min={formData.invoice_date}
-                />
-              </div>
-            </div>
-            <div>
-              <Label>Notes</Label>
-              <Textarea
-                value={formData.notes}
-                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                rows={2}
-              />
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <div className="flex items-center gap-3">
-                  <Label>Items</Label>
-                  <Button type="button" variant="link" size="sm" onClick={() => window.open('/sales?tab=products', '_blank')}>Add product</Button>
-                </div>
-                <Button type="button" size="sm" variant="outline" onClick={addItem}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Item
-                </Button>
-              </div>
-
-              <div className="space-y-3">
-                {formData.items.map((item, index) => (
-                  <div key={index} className="grid grid-cols-12 gap-2 items-end p-3 border rounded-lg">
-                    <div className="col-span-4">
-                      <Label className="text-xs">Product/Service</Label>
-                      <Select value={item.product_id || ""} onValueChange={(val) => updateItemProduct(index, val)}>
-                        <SelectTrigger>
-                          <SelectValue placeholder={(products.length + services.length) ? "Select an item" : "No items found"} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {products.map((p: any) => (
-                            <SelectItem key={p.id} value={String(p.id)}>
-                              {(p.name ?? p.title ?? p.description ?? `Product ${p.id}`) as string}
-                            </SelectItem>
-                          ))}
-                          {services.map((s: any) => (
-                            <SelectItem key={s.id} value={String(s.id)}>
-                              {((s.name ?? s.title ?? s.description ?? `Service ${s.id}`) as string)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <div className="mt-2 text-[11px] text-muted-foreground">{item.description}</div>
-                    </div>
-                    <div className="col-span-2">
-                      <Label className="text-xs">Qty</Label>
-                      <Input
-                        type="number"
-                        step="1"
-                        value={item.quantity}
-                        onChange={(e) => updateItem(index, "quantity", parseFloat(e.target.value) || 0)}
-                        required
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <Label className="text-xs">Price</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={item.unit_price}
-                        onChange={(e) => updateItem(index, "unit_price", parseFloat(e.target.value) || 0)}
-                        required
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <Label className="text-xs">Tax %</Label>
-                      <Input
-                        type="number"
-                        step="1"
-                        value={item.tax_rate}
-                        onChange={(e) => updateItem(index, "tax_rate", parseFloat(e.target.value) || 0)}
-                      />
-                    </div>
-                    <div className="col-span-1">
-                      <Label className="text-xs">Amount</Label>
-                      <div className="text-sm font-mono py-2">
-                        {(item.quantity * item.unit_price).toFixed(2)}
-                      </div>
-                    </div>
-                    <div className="col-span-1">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => removeItem(index)}
-                        disabled={formData.items.length === 1}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="p-4 bg-muted rounded-lg space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Subtotal:</span>
-                <span className="font-mono">R {totals.subtotal.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>Tax:</span>
-                <span className="font-mono">R {totals.taxAmount.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between font-bold pt-2 border-t">
-                <span>Total:</span>
-                <span className="font-mono">R {totals.total.toFixed(2)}</span>
-              </div>
-            </div>
-
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }}>Cancel</Button>
-              <Button type="submit" className="bg-gradient-primary">Create Invoice</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={sentDialogOpen} onOpenChange={setSentDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Post Sent Invoice</DialogTitle>
-            <DialogDescription>
-              Confirm date and amounts to post Debtors (AR), Revenue and VAT.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>Posting Date</Label>
-              <Input type="date" value={sentDate} max={todayStr} onChange={(e) => setSentDate(e.target.value)} />
-            </div>
-            {sentInvoice && (
-              <div className="p-3 border rounded bg-muted/30 space-y-1 text-sm">
-                <div className="flex justify-between"><span>Amount (excl. VAT)</span><span className="font-mono">R {Number(sentInvoice.subtotal || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
-                <div className="flex justify-between"><span>VAT amount</span><span className="font-mono">R {Number(sentInvoice.tax_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
-                <div className="flex justify-between"><span>Total</span><span className="font-mono">R {Number(sentInvoice.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
-                <div className="flex justify-between"><span>Revenue account</span><span className="font-mono">4000 - Sales Revenue</span></div>
-                <div className="flex items-center gap-2 pt-2">
-                  <Label htmlFor="includeVat">Include VAT in posting?</Label>
-                  <input id="includeVat" type="checkbox" checked={sentIncludeVAT} onChange={e => setSentIncludeVAT(e.target.checked)} />
-                </div>
-              </div>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setSentDialogOpen(false)}>Cancel</Button>
-              <Button className="bg-gradient-primary" onClick={handleConfirmSent}>Post</Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Confirm Payment</DialogTitle>
-            <DialogDescription>
-              Select the payment date to post Bank and settle Debtors.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {paymentInvoice && (
-              <div className="text-sm text-muted-foreground">
-                Outstanding: R {Math.max(0, Number(paymentInvoice.total_amount || 0) - Number(paymentInvoice.amount_paid || 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
-              </div>
-            )}
-            <div>
-              <Label>Payment Amount</Label>
-              <Input type="number" min={0} step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(Number(e.target.value))} />
-            </div>
-            <div>
-              <Label>Payment Date</Label>
-              <Input type="date" value={paymentDate} max={todayStr} onChange={(e) => setPaymentDate(e.target.value)} />
-            </div>
-            <div>
-              <Label>Bank Account</Label>
-              <Select value={selectedBankId} onValueChange={(v) => setSelectedBankId(v)}>
-                <SelectTrigger>
-              <SelectValue placeholder={bankAccounts.length ? "Select bank account" : "No bank accounts"} />
+    <div className="space-y-6">
+      {/* Charts and Metric Cards REMOVED */}
+      
+      <Card className="shadow-sm">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-primary" />
+            Invoices
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <Select value={yearFilter} onValueChange={setYearFilter}>
+              <SelectTrigger className="w-28">
+                <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                  {bankAccounts.map((b: any) => (
-                    <SelectItem key={b.id} value={String(b.id)}>{`${b.bank_name} - ${b.account_name} (${b.account_number})`}</SelectItem>
-                  ))}
+                <SelectItem value="all">All Years</SelectItem>
+                {Array.from(new Set(invoices.map(i => new Date(i.invoice_date).getFullYear()))).sort((a,b)=>b-a).map(y => (
+                  <SelectItem key={String(y)} value={String(y)}>{String(y)}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
+            <Select value={monthFilter} onValueChange={setMonthFilter}>
+              <SelectTrigger className="w-36">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Months</SelectItem>
+                {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => (
+                  <SelectItem key={m} value={m}>{new Date(2025, Number(m)-1, 1).toLocaleString('en-ZA', { month: 'long' })}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="unpaid">Unpaid</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="draft">Draft</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
+                <SelectItem value="overdue">Overdue</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" onClick={exportFilteredInvoicesDate}>Export</Button>
+            {canEdit && (
+              <Button className="bg-gradient-primary" onClick={() => setDialogOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                New Invoice
+              </Button>
+            )}
           </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
-              <Button className="bg-gradient-primary" onClick={handleConfirmPayment}>Post Payment</Button>
+        </CardHeader>
+        <CardContent>
+          {lastPosting && (
+            <div className="mb-4 p-3 border rounded bg-muted/30 text-sm">
+              {lastPosting}
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+          )}
+          {loading ? (
+            <div className="text-center py-8">Loading...</div>
+          ) : invoices.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              No invoices yet. Click "New Invoice" to create one.
+            </div>
+          ) : (<>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Invoice #</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Due Date</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="text-right">Outstanding</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pagedInvoices.map((invoice) => (
+                  <TableRow key={invoice.id}>
+                    <TableCell className="font-medium">{invoice.invoice_number}</TableCell>
+                    <TableCell>{invoice.customer_name}</TableCell>
+                    <TableCell>{new Date(invoice.invoice_date).toLocaleDateString('en-ZA')}</TableCell>
+                    <TableCell>{invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-ZA') : "-"}</TableCell>
+                    <TableCell className="text-right font-semibold">R {Number(invoice.total_amount).toLocaleString('en-ZA')}</TableCell>
+                    <TableCell className="text-right font-semibold text-primary">R {Math.max(0, Number(invoice.total_amount || 0) - Number(invoice.amount_paid || 0)).toLocaleString('en-ZA')}</TableCell>
+                    <TableCell>
+                      {getStatusBadge(invoice.status, invoice.due_date, invoice.amount_paid || 0, invoice.total_amount || 0)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" className="h-8 w-8 p-0">
+                            <span className="sr-only">Open menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => handleDownloadInvoice(invoice)}>
+                            <Download className="mr-2 h-4 w-4" /> Download PDF
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openSendDialog(invoice)}>
+                            <Mail className="mr-2 h-4 w-4" /> Send Email
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {canEdit && (
+                            <>
+                              <DropdownMenuLabel>Update Status</DropdownMenuLabel>
+                              <DropdownMenuItem onClick={() => updateStatus(invoice.id, "sent")}>
+                                Mark as Sent
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => updateStatus(invoice.id, "paid")}>
+                                <DollarSign className="mr-2 h-4 w-4" /> Mark as Paid
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => updateStatus(invoice.id, "cancelled")} className="text-destructive">
+                                Cancel Invoice
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => deleteInvoice(invoice.id)} className="text-destructive">
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <div className="flex items-center justify-between mt-3">
+              <div className="text-sm text-muted-foreground">
+                Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedInvoices.length} of {totalCount}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+                <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+              </div>
+            </div>
+          </>)}
+        </CardContent>
 
-      <TransactionFormEnhanced
-        open={journalOpen}
-        onOpenChange={setJournalOpen}
-        onSuccess={loadData}
-        editData={journalEditData}
-      />
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Create Invoice</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="flex items-center justify-between">
+                    <Label>Customer *</Label>
+                    <Button type="button" variant="link" size="sm" onClick={() => window.open('/customers', '_blank')}>Add customer</Button>
+                  </div>
+                  <Select value={formData.customer_name} onValueChange={(value) => applyCustomerSelection(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={customers.length ? "Select customer" : "No customers found"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customers.map((c: any) => (
+                        <SelectItem key={c.id ?? c.name} value={c.name}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Customer Email</Label>
+                  <Input
+                    type="email"
+                    value={formData.customer_email}
+                    onChange={(e) => setFormData({ ...formData, customer_email: e.target.value })}
+                    placeholder="customer@example.com"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Invoice Date *</Label>
+                  <Input
+                    type="date"
+                    value={formData.invoice_date}
+                    onChange={(e) => setFormData({ ...formData, invoice_date: e.target.value })}
+                    max={todayStr}
+                    required
+                  />
+                </div>
+                <div>
+                  <Label>Due Date</Label>
+                  <Input
+                    type="date"
+                    value={formData.due_date}
+                    onChange={(e) => setFormData({ ...formData, due_date: e.target.value })}
+                    min={formData.invoice_date}
+                  />
+                </div>
+              </div>
+              <div>
+                <Label>Notes</Label>
+                <Textarea
+                  value={formData.notes}
+                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  rows={2}
+                />
+              </div>
 
-      {/* Send Invoice Dialog */}
-      <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Send invoice</DialogTitle>
-            <DialogDescription>Enter recipient email. Message is prefilled. Sender CC: {companyEmail || 'not set'}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input type="email" placeholder="Recipient email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} />
-            <Textarea rows={6} value={sendMessage} onChange={(e) => setSendMessage(e.target.value)} />
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setSendDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSendEmail} disabled={sending}>{sending ? 'Sending…' : 'Send'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </Card>
+              <div>
+                <div className="flex justify-between items-center mb-2">
+                  <div className="flex items-center gap-3">
+                    <Label>Items</Label>
+                    <Button type="button" variant="link" size="sm" onClick={() => window.open('/sales?tab=products', '_blank')}>Add product</Button>
+                  </div>
+                  <Button type="button" size="sm" variant="outline" onClick={addItem}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Item
+                  </Button>
+                </div>
+
+                <div className="space-y-3">
+                  {formData.items.map((item, index) => (
+                    <div key={index} className="grid grid-cols-12 gap-2 items-end p-3 border rounded-lg">
+                      <div className="col-span-4">
+                        <Label className="text-xs">Product/Service</Label>
+                        <Select value={item.product_id || ""} onValueChange={(val) => updateItemProduct(index, val)}>
+                          <SelectTrigger>
+                            <SelectValue placeholder={(products.length + services.length) ? "Select an item" : "No items found"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {products.map((p: any) => (
+                              <SelectItem key={p.id} value={String(p.id)}>
+                                {(p.name ?? p.title ?? p.description ?? `Product ${p.id}`) as string}
+                              </SelectItem>
+                            ))}
+                            {services.map((s: any) => (
+                              <SelectItem key={s.id} value={String(s.id)}>
+                                {((s.name ?? s.title ?? s.description ?? `Service ${s.id}`) as string)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <div className="mt-2 text-[11px] text-muted-foreground">{item.description}</div>
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-xs">Qty</Label>
+                        <Input
+                          type="number"
+                          step="1"
+                          value={item.quantity}
+                          onChange={(e) => updateItem(index, "quantity", parseFloat(e.target.value) || 0)}
+                          required
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-xs">Price</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={item.unit_price}
+                          onChange={(e) => updateItem(index, "unit_price", parseFloat(e.target.value) || 0)}
+                          required
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Label className="text-xs">Tax %</Label>
+                        <Input
+                          type="number"
+                          step="1"
+                          value={item.tax_rate}
+                          onChange={(e) => updateItem(index, "tax_rate", parseFloat(e.target.value) || 0)}
+                        />
+                      </div>
+                      <div className="col-span-1">
+                        <Label className="text-xs">Amount</Label>
+                        <div className="text-sm font-mono py-2">
+                          {(item.quantity * item.unit_price).toFixed(2)}
+                        </div>
+                      </div>
+                      <div className="col-span-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => removeItem(index)}
+                          disabled={formData.items.length === 1}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-4 bg-muted rounded-lg space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Subtotal:</span>
+                  <span className="font-mono">R {totals.subtotal.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>Tax:</span>
+                  <span className="font-mono">R {totals.taxAmount.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between font-bold pt-2 border-t">
+                  <span>Total:</span>
+                  <span className="font-mono">R {totals.total.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => { setDialogOpen(false); resetForm(); }}>Cancel</Button>
+                <Button type="submit" className="bg-gradient-primary">Create Invoice</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={sentDialogOpen} onOpenChange={setSentDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Post Sent Invoice</DialogTitle>
+              <DialogDescription>
+                Confirm date and amounts to post Debtors (AR), Revenue and VAT.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>Posting Date</Label>
+                <Input type="date" value={sentDate} max={todayStr} onChange={(e) => setSentDate(e.target.value)} />
+              </div>
+              {sentInvoice && (
+                <div className="p-3 border rounded bg-muted/30 space-y-1 text-sm">
+                  <div className="flex justify-between"><span>Amount (excl. VAT)</span><span className="font-mono">R {Number(sentInvoice.subtotal || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                  <div className="flex justify-between"><span>VAT amount</span><span className="font-mono">R {Number(sentInvoice.tax_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                  <div className="flex justify-between"><span>Total</span><span className="font-mono">R {Number(sentInvoice.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
+                  <div className="flex justify-between"><span>Revenue account</span><span className="font-mono">4000 - Sales Revenue</span></div>
+                  <div className="flex items-center gap-2 pt-2">
+                    <Label htmlFor="includeVat">Include VAT in posting?</Label>
+                    <input id="includeVat" type="checkbox" checked={sentIncludeVAT} onChange={e => setSentIncludeVAT(e.target.checked)} />
+                  </div>
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setSentDialogOpen(false)}>Cancel</Button>
+                <Button className="bg-gradient-primary" onClick={handleConfirmSent}>Post</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Confirm Payment</DialogTitle>
+              <DialogDescription>
+                Select the payment date to post Bank and settle Debtors.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {paymentInvoice && (
+                <div className="text-sm text-muted-foreground">
+                  Outstanding: R {Math.max(0, Number(paymentInvoice.total_amount || 0) - Number(paymentInvoice.amount_paid || 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                </div>
+              )}
+              <div>
+                <Label>Payment Amount</Label>
+                <Input type="number" min={0} step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(Number(e.target.value))} />
+              </div>
+              <div>
+                <Label>Payment Date</Label>
+                <Input type="date" value={paymentDate} max={todayStr} onChange={(e) => setPaymentDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>Bank Account</Label>
+                <Select value={selectedBankId} onValueChange={(v) => setSelectedBankId(v)}>
+                  <SelectTrigger>
+                <SelectValue placeholder={bankAccounts.length ? "Select bank account" : "No bank accounts"} />
+                </SelectTrigger>
+                <SelectContent>
+                    {bankAccounts.map((b: any) => (
+                      <SelectItem key={b.id} value={String(b.id)}>{`${b.bank_name} - ${b.account_name} (${b.account_number})`}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Cancel</Button>
+                <Button className="bg-gradient-primary" onClick={handleConfirmPayment}>Post Payment</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <TransactionFormEnhanced
+          open={journalOpen}
+          onOpenChange={setJournalOpen}
+          onSuccess={loadData}
+          editData={journalEditData}
+        />
+
+        {/* Send Invoice Dialog */}
+        <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Send invoice</DialogTitle>
+              <DialogDescription>Enter recipient email. Message is prefilled. Sender CC: {companyEmail || 'not set'}</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <Input type="email" placeholder="Recipient email" value={sendEmail} onChange={(e) => setSendEmail(e.target.value)} />
+              <Textarea rows={6} value={sendMessage} onChange={(e) => setSendMessage(e.target.value)} />
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setSendDialogOpen(false)}>Cancel</Button>
+              <Button onClick={handleSendEmail} disabled={sending}>{sending ? 'Sending…' : 'Send'}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </Card>
+    </div>
   );
 };

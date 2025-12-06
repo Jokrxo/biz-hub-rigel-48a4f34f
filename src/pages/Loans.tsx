@@ -1,25 +1,67 @@
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { CreditCard, BarChart3, Plus, Menu } from "lucide-react";
-import { Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge";
+import { 
+  CreditCard, 
+  BarChart3, 
+  Plus, 
+  Menu, 
+  LayoutDashboard, 
+  List, 
+  History, 
+  FileText, 
+  User, 
+  Trash2, 
+  TrendingUp, 
+  Wallet, 
+  ArrowUpRight, 
+  ArrowDownLeft, 
+  DollarSign,
+  Calendar,
+  Percent,
+  Search,
+  Filter
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
 import { transactionsApi } from "@/lib/transactions-api";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 
 type Loan = { id: string; company_id: string; reference: string; loan_type: "short" | "long"; principal: number; interest_rate: number; start_date: string; term_months: number; monthly_repayment: number | null; status: string; outstanding_balance: number };
 type LoanPayment = { id: string; loan_id: string; payment_date: string; amount: number; principal_component: number; interest_component: number };
+
+// --- Metric Card Component ---
+function MetricCard({ title, value, icon: Icon, color, trend }: { title: string; value: string; icon: any; color: string; trend?: string }) {
+  return (
+    <Card className="border-none shadow-md overflow-hidden relative">
+      <div className={`absolute inset-0 bg-gradient-to-br ${color} opacity-10`} />
+      <CardContent className="p-6 relative">
+        <div className="flex justify-between items-start">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-muted-foreground">{title}</p>
+            <h3 className="text-2xl font-bold tracking-tight">{value}</h3>
+            {trend && <p className="text-xs text-muted-foreground">{trend}</p>}
+          </div>
+          <div className={`p-3 rounded-xl bg-gradient-to-br ${color} text-white shadow-lg`}>
+            <Icon className="h-5 w-5" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Loans() {
   const [tab, setTab] = useState("dashboard");
@@ -28,6 +70,7 @@ export default function Loans() {
   const [companyId, setCompanyId] = useState<string>("");
   const [refreshKey, setRefreshKey] = useState(0);
   
+  // Dialog States
   const [addLoanOpen, setAddLoanOpen] = useState(false);
   const [transactionOpen, setTransactionOpen] = useState(false);
   const [transactionPrefill, setTransactionPrefill] = useState<any>(null);
@@ -38,11 +81,18 @@ export default function Loans() {
   const [directorsLoanOpen, setDirectorsLoanOpen] = useState(false);
   const [clearLoansOpen, setClearLoansOpen] = useState(false);
   const [isClearingLoans, setIsClearingLoans] = useState(false);
+
+  // Action States
   const [actionLoan, setActionLoan] = useState<Loan | null>(null);
   const [actionBankId, setActionBankId] = useState<string>("");
   const [actionAmount, setActionAmount] = useState<string>("");
+  const [actionDate, setActionDate] = useState<string>(new Date().toISOString().slice(0,10));
+  
+  // Data States
   const [loanAccounts, setLoanAccounts] = useState<Array<{ id: string; account_name: string; account_code: string }>>([]);
   const [banks, setBanks] = useState<Array<{ id: string; account_name: string }>>([]);
+  
+  // Director Loan Form
   const [directorLoanDirection, setDirectorLoanDirection] = useState<'to_director' | 'from_director'>('from_director');
   const [directorPrincipal, setDirectorPrincipal] = useState<string>('');
   const [directorInterestRate, setDirectorInterestRate] = useState<string>('0');
@@ -50,27 +100,23 @@ export default function Loans() {
   const [directorLoanAccountId, setDirectorLoanAccountId] = useState<string>('');
   const [directorBankAccountId, setDirectorBankAccountId] = useState<string>('');
   const [directorDate, setDirectorDate] = useState<string>(new Date().toISOString().slice(0,10));
+  
+  // Standard Loan Form
   const [loanForm, setLoanForm] = useState({
     reference: "",
     principal: "",
     interestRatePercent: "",
     termValue: "",
-    termUnit: "months", // months | years
-    classification: "short", // short | long
+    termUnit: "months",
+    classification: "short",
     loanAccountId: "",
-    bankAccountId: ""
+    bankAccountId: "",
+    startDate: new Date().toISOString().slice(0,10)
   });
 
   const generateUniqueLoanRef = () => {
     const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
-    let rand = '';
-    try {
-      const arr = new Uint8Array(4);
-      (window.crypto || (globalThis as any).crypto)?.getRandomValues(arr);
-      rand = Array.from(arr).map(b => b.toString(16).padStart(2,'0')).join('').slice(0,6);
-    } catch {
-      rand = Math.random().toString(36).slice(2,8);
-    }
+    let rand = Math.random().toString(36).slice(2,8);
     return `LN-${today}-${rand}`;
   };
 
@@ -106,8 +152,6 @@ export default function Loans() {
     loadAux();
   }, [companyId]);
 
-  
-
   useEffect(() => {
     if (addLoanOpen) {
       const ref = generateUniqueLoanRef();
@@ -121,21 +165,13 @@ export default function Loans() {
     if (loanForm.bankAccountId && loanForm.bankAccountId.trim() !== "") return loanForm.bankAccountId;
     if (banks.length > 0) return banks[0].id;
     if (!companyId) return "";
-    const { data: bankList } = await supabase
-      .from("bank_accounts" as any)
-      .select("id, account_name")
-      .eq("company_id", companyId)
-      .order("account_name");
+    const { data: bankList } = await supabase.from("bank_accounts" as any).select("id, account_name").eq("company_id", companyId).order("account_name");
     if (Array.isArray(bankList) && bankList.length > 0) {
       const banksSafe = (bankList as any[]).filter((b: any) => b && typeof b.id === 'string' && typeof b.account_name === 'string');
       setBanks(banksSafe as any);
       return String((banksSafe[0] as any).id);
     }
-    const { data: created } = await supabase
-      .from("bank_accounts" as any)
-      .insert({ company_id: companyId, account_name: "Default Bank Account" })
-      .select("id")
-      .single();
+    const { data: created } = await supabase.from("bank_accounts" as any).insert({ company_id: companyId, account_name: "Default Bank Account" }).select("id").single();
     const newId = (created as any)?.id || "";
     if (newId) setBanks([{ id: newId, account_name: "Default Bank Account" }]);
     return newId;
@@ -145,7 +181,6 @@ export default function Loans() {
     try {
       const principal = Number(directorPrincipal || '0');
       if (!principal || principal <= 0) { toast({ title: 'Principal required', variant: 'destructive' }); return; }
-      // loan account is optional for director loans; will auto-resolve asset/liability appropriately
       if (!directorBankAccountId) { toast({ title: 'Select bank', variant: 'destructive' }); return; }
       const ref = `DIR-${generateUniqueLoanRef()}`;
       const shortOrLong: 'short' | 'long' = Number(directorTermMonths || '0') >= 12 ? 'long' : 'short';
@@ -153,18 +188,11 @@ export default function Loans() {
         .from('loans' as any)
         .insert({ company_id: companyId, reference: ref, loan_type: shortOrLong, principal, interest_rate: Number(directorInterestRate || '0') / 100, start_date: directorDate, term_months: Number(directorTermMonths || '0'), monthly_repayment: null, status: 'active', outstanding_balance: principal });
       if (loanErr) throw loanErr;
-      // Resolve correct posting behavior:
-      // - 'from_director' should DECREASE bank and go to asset (loan receivable)
-      // - 'to_director' should INCREASE bank and go to liability (loan payable)
+      
       if (directorLoanDirection === 'from_director') {
-        // Choose current vs non-current asset account for director loan receivable
         let loanAssetId = directorLoanAccountId;
         try {
-          const { data: accts } = await supabase
-            .from('chart_of_accounts' as any)
-            .select('id, account_name, account_type, account_code, is_active')
-            .eq('company_id', companyId)
-            .eq('is_active', true);
+          const { data: accts } = await supabase.from('chart_of_accounts' as any).select('id, account_name, account_type, account_code, is_active').eq('company_id', companyId).eq('is_active', true);
           const list = (accts || []).map((a: any) => ({ id: String(a.id), name: String(a.account_name || '').toLowerCase(), type: String(a.account_type || '').toLowerCase(), code: String(a.account_code || '') }));
           const isLong = shortOrLong === 'long';
           const desiredName = isLong ? 'Director Loan Receivable - Non-current' : 'Director Loan Receivable - Current';
@@ -172,11 +200,7 @@ export default function Loans() {
           const found = list.find(a => a.type === 'asset' && (a.name.includes('director') && a.name.includes('loan')) && (isLong ? a.name.includes('non') : a.name.includes('current')));
           loanAssetId = found?.id || '';
           if (!loanAssetId) {
-            const { data: created } = await supabase
-              .from('chart_of_accounts' as any)
-              .insert({ company_id: companyId, account_code: desiredCode, account_name: desiredName, account_type: 'asset', is_active: true })
-              .select('id')
-              .single();
+            const { data: created } = await supabase.from('chart_of_accounts' as any).insert({ company_id: companyId, account_code: desiredCode, account_name: desiredName, account_type: 'asset', is_active: true }).select('id').single();
             loanAssetId = (created as any)?.id || '';
           }
         } catch {}
@@ -209,6 +233,7 @@ export default function Loans() {
     setActionLoan(loan);
     setActionBankId(bankId);
     setActionAmount(amountStr);
+    setActionDate(today);
     setInterestQuickOpen(true);
   };
 
@@ -230,23 +255,17 @@ export default function Loans() {
     setActionLoan(loan);
     setActionBankId(bankId);
     setActionAmount(String(Number(amount).toFixed(2)));
+    setActionDate(today);
     setRepaymentQuickOpen(true);
   };
 
   const handleClearAllLoans = async () => {
     try {
       setIsClearingLoans(true);
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user?.id || "")
-        .maybeSingle();
+      const { data: profile } = await supabase.from("profiles").select("company_id").eq("user_id", user?.id || "").maybeSingle();
       const cid = profile?.company_id || companyId;
       if (!cid) throw new Error("Company not found");
-      const { data: loanRows } = await supabase
-        .from("loans" as any)
-        .select("id")
-        .eq("company_id", cid);
+      const { data: loanRows } = await supabase.from("loans" as any).select("id").eq("company_id", cid);
       const loanIds = (loanRows || []).map((r: any) => r.id);
       if (loanIds.length) {
         await supabase.from("loan_payments" as any).delete().in("loan_id", loanIds as any);
@@ -267,313 +286,167 @@ export default function Loans() {
       <SEO title="Loans | Rigel Business" description="Manage company loans" />
       <DashboardLayout>
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold">Loans</h1>
-              <p className="text-muted-foreground mt-1">Dashboard, List, Payments, Reports</p>
+              <h1 className="text-3xl font-bold tracking-tight">Loan Management</h1>
+              <p className="text-muted-foreground">Track company loans, director loans, and repayment schedules</p>
             </div>
-          <div className="flex items-center gap-2">
-            <Button className="bg-gradient-primary" onClick={() => setActionsOpen(true)}>
-              <Menu className="h-4 w-4 mr-2" />
-              Actions
-            </Button>
-          </div>
+            <div className="flex items-center gap-2">
+              <Button onClick={() => setActionsOpen(true)} className="shadow-md">
+                <Menu className="h-4 w-4 mr-2" />
+                Quick Actions
+              </Button>
+            </div>
           </div>
 
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList>
-              <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-              <TabsTrigger value="list">Loan List</TabsTrigger>
-              <TabsTrigger value="payments">Payment History</TabsTrigger>
-              <TabsTrigger value="reports">Reports</TabsTrigger>
-              <TabsTrigger value="director">Director Loans</TabsTrigger>
-            </TabsList>
+          {/* Main Tabs */}
+          <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+            <div className="border-b pb-px overflow-x-auto">
+              <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0 rounded-none">
+                <TabsTrigger value="dashboard" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <LayoutDashboard className="h-4 w-4" />
+                  Overview
+                </TabsTrigger>
+                <TabsTrigger value="list" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <List className="h-4 w-4" />
+                  Loan List
+                </TabsTrigger>
+                <TabsTrigger value="payments" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <History className="h-4 w-4" />
+                  Payment History
+                </TabsTrigger>
+                <TabsTrigger value="director" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <User className="h-4 w-4" />
+                  Director Loans
+                </TabsTrigger>
+                <TabsTrigger value="reports" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Reports
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-            <TabsContent value="dashboard">
+            <TabsContent value="dashboard" className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <LoansDashboard key={refreshKey} companyId={companyId} />
             </TabsContent>
-            <TabsContent value="list">
+            <TabsContent value="list" className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <LoanList key={refreshKey} companyId={companyId} onOpenInterest={openInterestPayment} onOpenRepayment={openLoanRepayment} />
             </TabsContent>
-            <TabsContent value="payments">
+            <TabsContent value="payments" className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <LoanPayments key={refreshKey} companyId={companyId} />
             </TabsContent>
-            <TabsContent value="reports">
+            <TabsContent value="reports" className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <LoanReports key={refreshKey} companyId={companyId} />
             </TabsContent>
-            <TabsContent value="director">
+            <TabsContent value="director" className="animate-in fade-in slide-in-from-bottom-4 duration-500">
               <DirectorLoansList companyId={companyId} />
             </TabsContent>
           </Tabs>
 
-          
+          {/* Quick Actions Sheet */}
           <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
-            <SheetContent className="sm:max-w-[520px]">
-              <div className="space-y-4">
-                <div className="text-lg font-semibold">Quick Actions</div>
-                <div className="text-sm text-muted-foreground">Choose what you want to do.</div>
-                <div className="grid gap-3">
-                  <Button className="w-full" onClick={() => { setActionsOpen(false); setAddLoanOpen(true); }}>
+            <SheetContent className="sm:max-w-[400px]">
+              <SheetHeader>
+                <SheetTitle>Quick Actions</SheetTitle>
+                <SheetDescription>Manage loans and repayments efficiently.</SheetDescription>
+              </SheetHeader>
+              <div className="grid gap-4 py-6">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">New Records</h4>
+                  <Button className="w-full justify-start" onClick={() => { setActionsOpen(false); setAddLoanOpen(true); }}>
                     <Plus className="h-4 w-4 mr-2" />
                     Add New Loan
                   </Button>
-                  <Button className="w-full" variant="outline" onClick={() => { setActionsOpen(false); setDirectorsLoanOpen(true); }}>
-                    <CreditCard className="h-4 w-4 mr-2" />
-                    Director's Loan
+                  <Button className="w-full justify-start" variant="outline" onClick={() => { setActionsOpen(false); setDirectorsLoanOpen(true); }}>
+                    <User className="h-4 w-4 mr-2" />
+                    Record Director's Loan
                   </Button>
-                  <Button className="w-full" variant="outline" onClick={() => { setActionsOpen(false); setTab('director'); }}>
-                    <CreditCard className="h-4 w-4 mr-2" />
-                    Open Director Loans
+                </div>
+                <Separator />
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Management</h4>
+                  <Button className="w-full justify-start" variant="ghost" onClick={() => { setActionsOpen(false); setTab('director'); }}>
+                    <ArrowUpRight className="h-4 w-4 mr-2" />
+                    View Director Loans
                   </Button>
-                  <Button className="w-full" variant="outline" onClick={() => { setActionsOpen(false); setTutorialOpen(true); }}>
-                    Help & Tutorial
+                  <Button className="w-full justify-start" variant="ghost" onClick={() => { setActionsOpen(false); setTutorialOpen(true); }}>
+                    <FileText className="h-4 w-4 mr-2" />
+                    Help & Documentation
                   </Button>
-                  <Button className="w-full" variant="destructive" onClick={() => { setActionsOpen(false); setClearLoansOpen(true); }}>
+                </div>
+                <Separator />
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-destructive/80 uppercase tracking-wider">Danger Zone</h4>
+                  <Button className="w-full justify-start hover:bg-destructive/10 hover:text-destructive" variant="ghost" onClick={() => { setActionsOpen(false); setClearLoansOpen(true); }}>
                     <Trash2 className="h-4 w-4 mr-2" />
-                    Clear All Loans (Test)
+                    Clear All Loans Data
                   </Button>
                 </div>
               </div>
             </SheetContent>
           </Sheet>
 
+          {/* Dialogs */}
           <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
-            <DialogContent className="sm:max-w-[640px] p-4">
+            <DialogContent className="sm:max-w-[600px]">
               <DialogHeader>
-                <DialogTitle>Loans Module Tutorial</DialogTitle>
+                <DialogTitle>Loans Module Guide</DialogTitle>
+                <DialogDescription>Learn how to manage your company loans.</DialogDescription>
               </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <p>Overview: Manage company loans, post interest and repayments, view payment history and reports.</p>
-                <p>Add Loan: Open Actions, choose Add New Loan. Reference is auto-generated and cannot be edited. Enter principal, interest rate, term and unit, select loan account and bank. Posting records the loan and creates the transaction.</p>
-                <p>Interest Payment: From Loan List, click Interest Payment. The amount is prefilled based on outstanding balance and monthly interest. You can adjust the amount and select the bank. Duplicate monthly interest is prevented.</p>
-                <p>Loan Repayment: From Loan List, click Payment. The amount is prefilled from the annuity calculation or saved monthly repayment. You can adjust the amount and select the bank. The system records principal vs interest and prevents duplicate monthly installments.</p>
-                <p>Payment History: See each payment with date, total amount, principal component and interest component.</p>
-                <p>Reports: Review totals for active/completed loans, total interest and outstanding exposure.</p>
-              </div>
-              <div className="pt-2">
-                <Button onClick={() => setTutorialOpen(false)}>Close</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={directorsLoanOpen} onOpenChange={setDirectorsLoanOpen}>
-            <DialogContent className="sm:max-w-[560px] p-4">
-              <DialogHeader>
-                <DialogTitle>Director's Loan</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm">Direction</label>
-              <Select value={directorLoanDirection} onValueChange={(v: any) => setDirectorLoanDirection(v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="from_director">Loan to director (asset — bank minus)</SelectItem>
-                  <SelectItem value="to_director">Loan from director (liability — bank plus)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-                  <div>
-                    <label className="text-sm">Date</label>
-                    <Input type="date" value={directorDate} onChange={e => setDirectorDate(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-sm">Principal</label>
-                    <Input type="number" value={directorPrincipal} onChange={e => setDirectorPrincipal(e.target.value)} placeholder="0.00" />
-                  </div>
-                  <div>
-                    <label className="text-sm">Interest Rate (%)</label>
-                    <Input type="number" value={directorInterestRate} onChange={e => setDirectorInterestRate(e.target.value)} placeholder="0" />
-                  </div>
-                  <div>
-                    <label className="text-sm">Term (months)</label>
-                    <Input type="number" value={directorTermMonths} onChange={e => setDirectorTermMonths(e.target.value)} placeholder="12" />
-                  </div>
-                  <div>
-                    <label className="text-sm">Loan Account</label>
-                    <Select value={directorLoanAccountId} onValueChange={(v: any) => setDirectorLoanAccountId(v)}>
-                      <SelectTrigger><SelectValue placeholder="Select loan account" /></SelectTrigger>
-                      <SelectContent>
-                        {loanAccounts.map(acc => (
-                          <SelectItem key={acc.id} value={acc.id}>{acc.account_code} • {acc.account_name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="text-sm">Bank</label>
-                    <Select value={directorBankAccountId} onValueChange={(v: any) => setDirectorBankAccountId(v)}>
-                      <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
-                      <SelectContent>
-                        {banks.map(b => (
-                          <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+              <div className="space-y-4 text-sm text-muted-foreground">
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold text-foreground mb-1">Loan Management</h4>
+                  <p>Create and track loans from external providers. The system calculates amortization schedules and tracks outstanding balances.</p>
                 </div>
-                <div className="pt-2 flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => setDirectorsLoanOpen(false)}>Cancel</Button>
-                  <Button onClick={createDirectorsLoan}>Record Director Loan</Button>
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold text-foreground mb-1">Director Loans</h4>
+                  <p>Specialized tracking for loans between the company and its directors. Supports both loans to and from directors.</p>
+                </div>
+                <div className="p-3 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold text-foreground mb-1">Payments & Interest</h4>
+                  <p>Record interest payments and capital repayments. The system automatically splits repayments between principal and interest components.</p>
                 </div>
               </div>
+              <DialogFooter>
+                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
 
-          <Dialog open={clearLoansOpen} onOpenChange={setClearLoansOpen}>
-            <DialogContent className="sm:max-w-[520px] p-4">
-              <DialogHeader>
-                <DialogTitle className="text-destructive">Confirm Loan Deletion</DialogTitle>
-                <DialogDescription>
-                  This will delete all loans and loan payments for your company. This action is for testing.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setClearLoansOpen(false)} disabled={isClearingLoans}>Cancel</Button>
-                <Button variant="destructive" onClick={handleClearAllLoans} disabled={isClearingLoans}>{isClearingLoans ? "Deleting..." : "Delete All Loans"}</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={interestQuickOpen} onOpenChange={setInterestQuickOpen}>
-            <DialogContent className="sm:max-w-[520px] p-4">
-              <DialogHeader>
-                <DialogTitle>Interest Payment</DialogTitle>
-              </DialogHeader>
-              {actionLoan && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-sm">Loan Reference</label>
-                      <Input value={actionLoan.reference} disabled readOnly />
-                    </div>
-                    <div>
-                      <label className="text-sm">Interest Rate (%)</label>
-                      <Input value={(actionLoan.interest_rate * 100).toFixed(2)} disabled readOnly />
-                    </div>
-                    <div>
-                      <label className="text-sm">Outstanding Balance</label>
-                      <Input value={`R ${actionLoan.outstanding_balance.toFixed(2)}`} disabled readOnly />
-                    </div>
-                    <div>
-                      <label className="text-sm">Bank</label>
-                      <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
-                        <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
-                        <SelectContent>
-                          {banks.map(b => (
-                            <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-sm">Interest Amount</label>
-                    <Input inputMode="decimal" value={actionAmount} onChange={(e) => setActionAmount(e.target.value)} />
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2">
-                    <Button variant="outline" onClick={() => setInterestQuickOpen(false)}>Cancel</Button>
-                    <Button className="bg-gradient-primary" onClick={async () => {
-                      try {
-                        const amountNum = parseFloat(actionAmount || '0');
-                        if (!(amountNum > 0)) throw new Error('Enter interest amount');
-                        if (!actionBankId) throw new Error('Select bank');
-                        await transactionsApi.postLoanInterest({ loanId: actionLoan!.id, date: new Date().toISOString().slice(0,10), bankAccountId: actionBankId, amountOverride: amountNum });
-                        toast({ title: 'Interest Posted', description: `Interest for ${actionLoan!.reference} posted` });
-                        setInterestQuickOpen(false);
-                      } catch (err: any) {
-                        toast({ title: 'Posting Failed', description: err.message, variant: 'destructive' });
-                      }
-                    }}>Post</Button>
-                  </div>
-                </div>
-              )}
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={repaymentQuickOpen} onOpenChange={setRepaymentQuickOpen}>
-            <DialogContent className="sm:max-w-[520px] p-4">
-              <DialogHeader>
-                <DialogTitle>Loan Repayment</DialogTitle>
-              </DialogHeader>
-              {actionLoan && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-sm">Loan Reference</label>
-                      <Input value={actionLoan.reference} disabled readOnly />
-                    </div>
-                    <div>
-                      <label className="text-sm">Term (months)</label>
-                      <Input value={`${actionLoan.term_months}`} disabled readOnly />
-                    </div>
-                    <div>
-                      <label className="text-sm">Outstanding Balance</label>
-                      <Input value={`R ${actionLoan.outstanding_balance.toFixed(2)}`} disabled readOnly />
-                    </div>
-                    <div>
-                      <label className="text-sm">Bank</label>
-                      <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
-                        <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
-                        <SelectContent>
-                          {banks.map(b => (
-                            <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-sm">Repayment Amount</label>
-                    <Input inputMode="decimal" value={actionAmount} onChange={(e) => setActionAmount(e.target.value)} />
-                  </div>
-                  <div className="flex justify-end gap-2 pt-2">
-                    <Button variant="outline" onClick={() => setRepaymentQuickOpen(false)}>Cancel</Button>
-                    <Button className="bg-gradient-primary" onClick={async () => {
-                      try {
-                        const amountNum = parseFloat(actionAmount || '0');
-                        if (!(amountNum > 0)) throw new Error('Enter repayment amount');
-                        if (!actionBankId) throw new Error('Select bank');
-                        await transactionsApi.postLoanRepayment({ loanId: actionLoan!.id, date: new Date().toISOString().slice(0,10), bankAccountId: actionBankId, amountOverride: amountNum });
-                        toast({ title: 'Repayment Posted', description: `Repayment for ${actionLoan!.reference} posted` });
-                        setRepaymentQuickOpen(false);
-                      } catch (err: any) {
-                        toast({ title: 'Posting Failed', description: err.message, variant: 'destructive' });
-                      }
-                    }}>Post</Button>
-                  </div>
-                </div>
-              )}
-            </DialogContent>
-          </Dialog>
-
-          {/* Add New Loan Drawer */}
+          {/* Add Loan Sheet */}
           <Sheet open={addLoanOpen} onOpenChange={setAddLoanOpen}>
-            <SheetContent className="sm:max-w-[640px] p-4">
-              <div className="space-y-4">
-                <div className="text-lg font-semibold">Add New Loan</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm">Reference</label>
-                    <Input value={loanForm.reference} disabled readOnly placeholder="Auto-generated" />
+            <SheetContent className="sm:max-w-[600px] overflow-y-auto">
+              <SheetHeader>
+                <SheetTitle>Add New Loan</SheetTitle>
+                <SheetDescription>Enter the details of the new loan agreement.</SheetDescription>
+              </SheetHeader>
+              <div className="grid gap-6 py-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Reference</Label>
+                    <Input value={loanForm.reference} disabled readOnly className="bg-muted" />
                   </div>
-                  <div>
-                    <label className="text-sm">Principal Amount</label>
-                    <Input inputMode="decimal" value={loanForm.principal} onChange={(e) => setLoanForm(prev => ({ ...prev, principal: e.target.value }))} placeholder="100000" />
+                  <div className="space-y-2">
+                    <Label>Start Date</Label>
+                    <Input type="date" value={loanForm.startDate} onChange={(e) => setLoanForm(prev => ({ ...prev, startDate: e.target.value }))} />
                   </div>
-                  <div>
-                    <label className="text-sm">Interest Rate (%)</label>
-                    <Input inputMode="decimal" value={loanForm.interestRatePercent} onChange={(e) => setLoanForm(prev => ({ ...prev, interestRatePercent: e.target.value }))} placeholder="12" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Principal Amount (R)</Label>
+                  <Input type="number" value={loanForm.principal} onChange={(e) => setLoanForm(prev => ({ ...prev, principal: e.target.value }))} placeholder="0.00" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Interest Rate (%)</Label>
+                    <Input type="number" value={loanForm.interestRatePercent} onChange={(e) => setLoanForm(prev => ({ ...prev, interestRatePercent: e.target.value }))} placeholder="0.00" />
                   </div>
-                  <div className="grid grid-cols-3 gap-2 items-end col-span-2">
-                    <div className="col-span-2">
-                      <label className="text-sm">Term</label>
-                      <Input inputMode="numeric" value={loanForm.termValue} onChange={(e) => setLoanForm(prev => ({ ...prev, termValue: e.target.value }))} placeholder="36" />
-                    </div>
-                    <div>
-                      <label className="text-sm">Unit</label>
+                  <div className="space-y-2">
+                    <Label>Term Length</Label>
+                    <div className="flex gap-2">
+                      <Input type="number" value={loanForm.termValue} onChange={(e) => setLoanForm(prev => ({ ...prev, termValue: e.target.value }))} placeholder="36" />
                       <Select value={loanForm.termUnit} onValueChange={(v: any) => setLoanForm(prev => ({ ...prev, termUnit: v }))}>
-                        <SelectTrigger><SelectValue placeholder="Unit" /></SelectTrigger>
+                        <SelectTrigger className="w-[100px]"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="months">Months</SelectItem>
                           <SelectItem value="years">Years</SelectItem>
@@ -581,42 +454,42 @@ export default function Loans() {
                       </Select>
                     </div>
                   </div>
-                  <div className="col-span-2">
-                    <label className="text-sm">Loan Classification</label>
-                    <Select value={loanForm.classification} onValueChange={(v: any) => setLoanForm(prev => ({ ...prev, classification: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select classification" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="short">Short-term</SelectItem>
-                        <SelectItem value="long">Long-term</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="text-sm">Loan Account</label>
-                    <Select value={loanForm.loanAccountId} onValueChange={(v: any) => setLoanForm(prev => ({ ...prev, loanAccountId: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select loan ledger" /></SelectTrigger>
-                      <SelectContent>
-                        {loanAccounts.map(acc => (
-                          <SelectItem key={acc.id} value={acc.id}>{acc.account_code} — {acc.account_name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="text-sm">Bank</label>
-                    <Select value={loanForm.bankAccountId} onValueChange={(v: any) => setLoanForm(prev => ({ ...prev, bankAccountId: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
-                      <SelectContent>
-                        {banks.map(b => (
-                          <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
                 </div>
-                <div className="flex justify-end gap-2 pt-2">
+                <div className="space-y-2">
+                  <Label>Classification</Label>
+                  <Select value={loanForm.classification} onValueChange={(v: any) => setLoanForm(prev => ({ ...prev, classification: v }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="short">Short-term (Current Liability)</SelectItem>
+                      <SelectItem value="long">Long-term (Non-current Liability)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Loan Account</Label>
+                  <Select value={loanForm.loanAccountId} onValueChange={(v: any) => setLoanForm(prev => ({ ...prev, loanAccountId: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Select ledger account" /></SelectTrigger>
+                    <SelectContent>
+                      {loanAccounts.map(acc => (
+                        <SelectItem key={acc.id} value={acc.id}>{acc.account_code} — {acc.account_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Bank Account</Label>
+                  <Select value={loanForm.bankAccountId} onValueChange={(v: any) => setLoanForm(prev => ({ ...prev, bankAccountId: v }))}>
+                    <SelectTrigger><SelectValue placeholder="Select bank for deposit" /></SelectTrigger>
+                    <SelectContent>
+                      {banks.map(b => (
+                        <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex justify-end gap-2 pt-4">
                   <Button variant="outline" onClick={() => setAddLoanOpen(false)}>Cancel</Button>
-                  <Button className="bg-gradient-primary" onClick={async () => {
+                  <Button onClick={async () => {
                     try {
                       const principal = parseFloat(loanForm.principal || "0");
                       const ratePct = parseFloat(loanForm.interestRatePercent || "0");
@@ -625,107 +498,227 @@ export default function Loans() {
                       if (!loanForm.loanAccountId) throw new Error("Select loan account");
                       if (!loanForm.bankAccountId) throw new Error("Select bank");
                       if (!(principal > 0)) throw new Error("Enter principal amount");
-                      if (!(ratePct >= 0)) throw new Error("Enter interest rate");
-                      if (!(termVal > 0)) throw new Error("Enter term length");
+                      
                       const termMonths = loanForm.termUnit === 'years' ? termVal * 12 : termVal;
                       const monthlyRate = (ratePct / 100) / 12;
                       const monthlyRepayment = monthlyRate === 0 ? (principal / termMonths) : (principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
-                      const startDate = new Date().toISOString().slice(0, 10);
                       let ref = (loanForm.reference && loanForm.reference.trim() !== "") ? loanForm.reference.trim() : generateUniqueLoanRef();
                       const loanType = loanForm.classification || (termMonths >= 12 ? 'long' : 'short');
-                      {
-                        let errorOccured: any = null;
-                        for (let attempt = 0; attempt < 5; attempt++) {
-                          const { data: inserted, error } = await supabase
-                            .from('loans' as any)
-                            .insert({
-                              company_id: companyId,
-                              reference: ref,
-                              loan_type: loanType,
-                              principal: principal,
-                              interest_rate: ratePct / 100,
-                              start_date: startDate,
-                              term_months: termMonths,
-                              monthly_repayment: monthlyRepayment,
-                              status: 'active',
-                              outstanding_balance: principal
-                            })
-                            .select('id')
-                            .single();
-                          if (!error) { errorOccured = null; break; }
-                          const msg = String(error.message || '').toLowerCase();
-                          if (msg.includes('duplicate key') || msg.includes('unique')) {
-                            ref = generateUniqueLoanRef();
-                            continue;
-                          } else {
-                            errorOccured = error;
-                            break;
-                          }
-                        }
-                        if (errorOccured) throw errorOccured;
-                      }
-                      const { data: createdLoan } = await supabase
-                        .from('loans' as any)
-                        .select('id')
-                        .eq('company_id', companyId)
-                        .eq('reference', ref)
-                        .maybeSingle();
-                      const description = `Loan received ${ref}`;
-                      try {
-                        await transactionsApi.postLoanReceived({
-                          date: startDate,
-                          amount: principal,
-                          reference: ref,
-                          bankAccountId: loanForm.bankAccountId,
-                          loanType: loanType as any,
-                          loanLedgerAccountId: loanForm.loanAccountId,
-                        });
-                        toast({ title: 'Loan Posted', description: 'Loan and transaction recorded successfully' });
-                      } catch (postErr: any) {
-                        toast({ title: 'Posting Failed', description: postErr.message, variant: 'destructive' });
-                      }
+                      
+                      const { error } = await supabase.from('loans' as any).insert({
+                        company_id: companyId, reference: ref, loan_type: loanType, principal: principal, interest_rate: ratePct / 100, start_date: loanForm.startDate, term_months: termMonths, monthly_repayment: monthlyRepayment, status: 'active', outstanding_balance: principal
+                      });
+                      if (error) throw error;
+
+                      await transactionsApi.postLoanReceived({
+                        date: loanForm.startDate, amount: principal, reference: ref, bankAccountId: loanForm.bankAccountId, loanType: loanType as any, loanLedgerAccountId: loanForm.loanAccountId,
+                      });
+                      
+                      toast({ title: 'Success', description: 'Loan recorded successfully' });
                       setAddLoanOpen(false);
                       setTab('list');
                     } catch (e: any) {
-                      const msg = e?.message || 'Failed to add loan';
-                      toast({ title: 'Error', description: msg, variant: 'destructive' });
+                      toast({ title: 'Error', description: e.message, variant: 'destructive' });
                     }
-                  }}>Post</Button>
+                  }}>Create Loan</Button>
                 </div>
               </div>
             </SheetContent>
           </Sheet>
 
-          <TransactionFormEnhanced
-            open={transactionOpen}
-            onOpenChange={setTransactionOpen}
-            onSuccess={() => {
-              setTransactionOpen(false);
-              setTab('list');
-            }}
-            prefill={transactionPrefill}
-          />
+          {/* Director Loan Dialog */}
+          <Dialog open={directorsLoanOpen} onOpenChange={setDirectorsLoanOpen}>
+            <DialogContent className="sm:max-w-[500px]">
+              <DialogHeader>
+                <DialogTitle>Record Director Loan</DialogTitle>
+                <DialogDescription>Record a loan between the company and a director.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="space-y-2">
+                  <Label>Direction</Label>
+                  <Select value={directorLoanDirection} onValueChange={(v: any) => setDirectorLoanDirection(v)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="from_director">Loan to director (Asset)</SelectItem>
+                      <SelectItem value="to_director">Loan from director (Liability)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Date</Label>
+                    <Input type="date" value={directorDate} onChange={e => setDirectorDate(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Amount</Label>
+                    <Input type="number" value={directorPrincipal} onChange={e => setDirectorPrincipal(e.target.value)} placeholder="0.00" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Interest Rate (%)</Label>
+                    <Input type="number" value={directorInterestRate} onChange={e => setDirectorInterestRate(e.target.value)} placeholder="0" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Term (Months)</Label>
+                    <Input type="number" value={directorTermMonths} onChange={e => setDirectorTermMonths(e.target.value)} placeholder="12" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Loan Account (Optional)</Label>
+                  <Select value={directorLoanAccountId} onValueChange={(v: any) => setDirectorLoanAccountId(v)}>
+                    <SelectTrigger><SelectValue placeholder="Auto-select" /></SelectTrigger>
+                    <SelectContent>
+                      {loanAccounts.map(acc => (
+                        <SelectItem key={acc.id} value={acc.id}>{acc.account_code} • {acc.account_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Bank Account</Label>
+                  <Select value={directorBankAccountId} onValueChange={(v: any) => setDirectorBankAccountId(v)}>
+                    <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
+                    <SelectContent>
+                      {banks.map(b => (
+                        <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setDirectorsLoanOpen(false)}>Cancel</Button>
+                <Button onClick={createDirectorsLoan}>Record Loan</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Interest Payment Dialog */}
+          <Dialog open={interestQuickOpen} onOpenChange={setInterestQuickOpen}>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Record Interest Payment</DialogTitle>
+                <DialogDescription>Record an interest payment for {actionLoan?.reference}</DialogDescription>
+              </DialogHeader>
+              {actionLoan && (
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Payment Date</Label>
+                      <Input type="date" value={actionDate} onChange={(e) => setActionDate(e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Amount (R)</Label>
+                      <Input type="number" value={actionAmount} onChange={(e) => setActionAmount(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Bank Account</Label>
+                    <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
+                      <SelectContent>
+                        {banks.map(b => (
+                          <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setInterestQuickOpen(false)}>Cancel</Button>
+                <Button onClick={async () => {
+                  try {
+                    if (!actionBankId) throw new Error('Select bank');
+                    await transactionsApi.postLoanInterest({ loanId: actionLoan!.id, date: actionDate, bankAccountId: actionBankId });
+                    toast({ title: 'Success', description: 'Interest recorded' });
+                    setInterestQuickOpen(false);
+                  } catch (err: any) {
+                    toast({ title: 'Error', description: err.message, variant: 'destructive' });
+                  }
+                }}>Record Payment</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Repayment Dialog */}
+          <Dialog open={repaymentQuickOpen} onOpenChange={setRepaymentQuickOpen}>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Record Repayment</DialogTitle>
+                <DialogDescription>Record a capital repayment for {actionLoan?.reference}</DialogDescription>
+              </DialogHeader>
+              {actionLoan && (
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Payment Date</Label>
+                      <Input type="date" value={actionDate} onChange={(e) => setActionDate(e.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Amount (R)</Label>
+                      <Input type="number" value={actionAmount} onChange={(e) => setActionAmount(e.target.value)} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Bank Account</Label>
+                    <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
+                      <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
+                      <SelectContent>
+                        {banks.map(b => (
+                          <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setRepaymentQuickOpen(false)}>Cancel</Button>
+                <Button onClick={async () => {
+                  try {
+                    const amountNum = parseFloat(actionAmount || '0');
+                    if (!(amountNum > 0)) throw new Error('Enter amount');
+                    if (!actionBankId) throw new Error('Select bank');
+                    await transactionsApi.postLoanRepayment({ loanId: actionLoan!.id, date: actionDate, bankAccountId: actionBankId, amountOverride: amountNum });
+                    toast({ title: 'Success', description: 'Repayment recorded' });
+                    setRepaymentQuickOpen(false);
+                  } catch (err: any) {
+                    toast({ title: 'Error', description: err.message, variant: 'destructive' });
+                  }
+                }}>Record Repayment</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Clear Loans Dialog */}
+          <Dialog open={clearLoansOpen} onOpenChange={setClearLoansOpen}>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle className="text-destructive">Clear All Loans</DialogTitle>
+                <DialogDescription>This action cannot be undone. It will delete all loans and payment history.</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setClearLoansOpen(false)}>Cancel</Button>
+                <Button variant="destructive" onClick={handleClearAllLoans} disabled={isClearingLoans}>
+                  {isClearingLoans ? "Deleting..." : "Delete All Data"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </DashboardLayout>
     </>
   );
 }
 
-function StatCard({ title, value }: { title: string; value: string }) {
-  return (
-    <Card>
-      <CardHeader><CardTitle>{title}</CardTitle></CardHeader>
-      <CardContent><div className="text-2xl font-bold">{value}</div></CardContent>
-    </Card>
-  );
-}
-
 function LoansDashboard({ companyId }: { companyId: string }) {
   const [stats, setStats] = useState({ total: 0, active: 0, completed: 0, interest: 0, outstanding: 0 });
-  const { toast } = useToast();
 
   useEffect(() => {
     const load = async () => {
+      if (!companyId) return;
       const { data: loans } = await supabase.from("loans" as any).select("id, status, outstanding_balance").eq("company_id", companyId);
       const { data: pays } = await supabase.from("loan_payments" as any).select("interest_component");
       const total = (loans || []).length;
@@ -735,19 +728,37 @@ function LoansDashboard({ companyId }: { companyId: string }) {
       const interest = (pays || []).reduce((s: number, p: any) => s + (p.interest_component || 0), 0);
       setStats({ total, active, completed, interest, outstanding });
     };
-    if (companyId) load();
+    load();
   }, [companyId]);
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-between items-center">
-        <div className="text-sm text-muted-foreground">Loan Overview</div>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatCard title="Total Loans" value={`${stats.total}`} />
-        <StatCard title="Active Loans" value={`${stats.active}`} />
-        <StatCard title="Completed Loans" value={`${stats.completed}`} />
-        <StatCard title="Total Interest" value={`R ${stats.interest.toFixed(2)}`} />
-        <StatCard title="Outstanding Balance" value={`R ${stats.outstanding.toFixed(2)}`} />
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard 
+          title="Active Loans" 
+          value={`${stats.active}`} 
+          icon={Wallet} 
+          color="from-blue-500 to-blue-600" 
+          trend={`${stats.total} total loans`}
+        />
+        <MetricCard 
+          title="Outstanding Balance" 
+          value={`R ${stats.outstanding.toLocaleString()}`} 
+          icon={BarChart3} 
+          color="from-purple-500 to-purple-600" 
+        />
+        <MetricCard 
+          title="Interest Paid" 
+          value={`R ${stats.interest.toLocaleString()}`} 
+          icon={Percent} 
+          color="from-orange-500 to-orange-600" 
+        />
+        <MetricCard 
+          title="Loans Closed" 
+          value={`${stats.completed}`} 
+          icon={History} 
+          color="from-emerald-500 to-emerald-600" 
+        />
       </div>
       <DirectorAssetLoansCard companyId={companyId} />
     </div>
@@ -756,6 +767,7 @@ function LoansDashboard({ companyId }: { companyId: string }) {
 
 function DirectorAssetLoansCard({ companyId }: { companyId: string }) {
   const [items, setItems] = useState<Array<{ ref: string; amount: number; date: string }>>([]);
+  
   useEffect(() => {
     const load = async () => {
       if (!companyId) return;
@@ -766,34 +778,43 @@ function DirectorAssetLoansCard({ companyId }: { companyId: string }) {
         .like('reference_number', 'DIR-%')
         .in('status', ['approved','posted']);
       const list = (txs || []) as any[];
-      const ids = list.map(t => t.id);
-      if (ids.length === 0) { setItems([]); return; }
+      if (list.length === 0) { setItems([]); return; }
       const { data: leds } = await supabase
         .from('ledger_entries')
-        .select('transaction_id, account_id, debit, credit')
-        .in('transaction_id', ids);
-      const { data: accts } = await supabase
-        .from('chart_of_accounts')
-        .select('id, account_type, account_name');
+        .select('transaction_id, account_id, debit')
+        .in('transaction_id', list.map(t => t.id));
+      
+      const { data: accts } = await supabase.from('chart_of_accounts').select('id, account_type, account_name');
       const typeById = new Map<string,string>((accts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
       const nameById = new Map<string,string>((accts || []).map((a: any) => [String(a.id), String(a.account_name || '').toLowerCase()]));
+      
       const assetTxIds = new Set<string>();
       (leds || []).forEach((l: any) => {
         const type = typeById.get(String(l.account_id)) || '';
         const name = nameById.get(String(l.account_id)) || '';
         if (name.includes('loan') && type === 'asset' && l.debit > 0) assetTxIds.add(String(l.transaction_id));
       });
+      
       const filtered = list.filter(t => assetTxIds.has(String(t.id))).map(t => ({ ref: String(t.reference_number || ''), amount: Number(t.total_amount || 0), date: String(t.transaction_date || '') }));
       setItems(filtered);
     };
     load();
   }, [companyId]);
+
   return (
-    <Card>
-      <CardHeader><CardTitle>Director Loans (Assets)</CardTitle></CardHeader>
+    <Card className="border shadow-sm">
+      <CardHeader>
+        <CardTitle className="text-lg font-semibold">Director Loans (Assets)</CardTitle>
+        <CardDescription>Loans provided to directors (Company Assets)</CardDescription>
+      </CardHeader>
       <CardContent>
         {items.length === 0 ? (
-          <div className="text-sm text-muted-foreground">No director asset loans</div>
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <div className="rounded-full bg-muted p-3 mb-3">
+              <User className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <p className="text-sm text-muted-foreground">No director asset loans recorded</p>
+          </div>
         ) : (
           <Table>
             <TableHeader>
@@ -804,9 +825,9 @@ function DirectorAssetLoansCard({ companyId }: { companyId: string }) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.slice(0, 7).map((it, idx) => (
+              {items.slice(0, 5).map((it, idx) => (
                 <TableRow key={idx}>
-                  <TableCell>{it.ref}</TableCell>
+                  <TableCell className="font-medium">{it.ref}</TableCell>
                   <TableCell>{it.date}</TableCell>
                   <TableCell className="text-right">R {it.amount.toFixed(2)}</TableCell>
                 </TableRow>
@@ -825,7 +846,6 @@ function LoanList({ companyId, onOpenInterest, onOpenRepayment }: { companyId: s
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<string>("all");
-  const [sortKey, setSortKey] = useState<string>("start_date");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -839,510 +859,334 @@ function LoanList({ companyId, onOpenInterest, onOpenRepayment }: { companyId: s
       setLoading(false);
     }
   }, [companyId, toast]);
+  
   useEffect(() => { if (companyId) load(); }, [companyId, load]);
 
-  const derived = useMemo(() => {
-    const filtered = items.filter((l) => {
+  const filtered = useMemo(() => {
+    return items.filter((l) => {
       if (String(l.reference || '').startsWith('DIR-')) return false;
       const matchesSearch = l.reference.toLowerCase().includes(search.toLowerCase());
       const matchesType = filterType === 'all' || l.loan_type === filterType;
       return matchesSearch && matchesType;
-    }).sort((a, b) => {
-      if (sortKey === 'start_date') return new Date(b.start_date).getTime() - new Date(a.start_date).getTime();
-      if (sortKey === 'principal') return (b.principal || 0) - (a.principal || 0);
-      return 0;
     });
-    return filtered;
-  }, [items, search, filterType, sortKey]);
-  const [pageLoan, setPageLoan] = useState(0);
-  const pageSizeLoan = 7;
-  const totalLoanCount = derived.length;
-  const startLoan = pageLoan * pageSizeLoan;
-  const pagedLoans = derived.slice(startLoan, startLoan + pageSizeLoan);
-  useEffect(() => { setPageLoan(0); }, [search, filterType, sortKey]);
+  }, [items, search, filterType]);
 
   return (
-    <Card>
-      <CardHeader className="flex items-center justify-between">
-        <CardTitle className="flex items-center gap-2"><CreditCard className="h-5 w-5 text-primary" />Loan List</CardTitle>
-        <div className="flex items-center gap-2">
-          <Input placeholder="Search" value={search} onChange={(e) => setSearch(e.target.value)} className="w-48" />
-          <Select value={filterType} onValueChange={(v: any) => setFilterType(v)}>
-            <SelectTrigger className="w-40"><SelectValue placeholder="Type" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="short">Short-term</SelectItem>
-              <SelectItem value="long">Long-term</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={sortKey} onValueChange={(v: any) => setSortKey(v)}>
-            <SelectTrigger className="w-40"><SelectValue placeholder="Sort" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="start_date">Start Date</SelectItem>
-              <SelectItem value="principal">Principal</SelectItem>
-            </SelectContent>
-          </Select>
+    <Card className="border shadow-sm">
+      <CardHeader>
+        <div className="flex flex-col md:flex-row justify-between gap-4">
+          <div className="space-y-1">
+            <CardTitle>Active Loans</CardTitle>
+            <CardDescription>Manage your commercial loans and repayment schedules</CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative w-full md:w-64">
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input placeholder="Search reference..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-8" />
+            </div>
+            <Select value={filterType} onValueChange={setFilterType}>
+              <SelectTrigger className="w-[130px]">
+                <Filter className="w-4 h-4 mr-2 text-muted-foreground" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="short">Short-term</SelectItem>
+                <SelectItem value="long">Long-term</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="py-8 text-center text-muted-foreground">Loading…</div>
-        ) : derived.length === 0 ? (
-          <div className="py-8 text-center text-muted-foreground">No loans</div>
+          <div className="py-8 text-center text-muted-foreground">Loading loans...</div>
+        ) : filtered.length === 0 ? (
+          <div className="py-12 text-center">
+            <div className="rounded-full bg-muted w-12 h-12 flex items-center justify-center mx-auto mb-3">
+              <CreditCard className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium">No loans found</h3>
+            <p className="text-sm text-muted-foreground mt-1">Add a new loan to get started.</p>
+          </div>
         ) : (
-          <>
           <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Reference</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Principal</TableHead>
-              <TableHead>Rate %</TableHead>
-              <TableHead>Start</TableHead>
-              <TableHead>Term (months)</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Outstanding</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pagedLoans.map((l) => {
-              return (
+            <TableHeader>
+              <TableRow>
+                <TableHead>Reference</TableHead>
+                <TableHead>Details</TableHead>
+                <TableHead>Principal</TableHead>
+                <TableHead>Balance</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((l) => (
                 <TableRow key={l.id}>
-                  <TableCell>{l.reference}</TableCell>
-                  <TableCell className="capitalize">{l.loan_type}</TableCell>
-                  <TableCell>R {l.principal.toFixed(2)}</TableCell>
-                  <TableCell>{(l.interest_rate * 100).toFixed(2)}</TableCell>
-                  <TableCell>{new Date(l.start_date).toLocaleDateString()}</TableCell>
-                  <TableCell>{l.term_months}</TableCell>
-                  <TableCell className="capitalize">{l.status}</TableCell>
-                  <TableCell>R {l.outstanding_balance.toFixed(2)}</TableCell>
+                  <TableCell className="font-medium">{l.reference}</TableCell>
                   <TableCell>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => onOpenInterest(l)}>Interest Payment</Button>
-                      <Button className="bg-gradient-primary" size="sm" onClick={() => onOpenRepayment(l)}>Payment</Button>
+                    <div className="text-sm">{new Date(l.start_date).toLocaleDateString()}</div>
+                    <div className="text-xs text-muted-foreground">{(l.interest_rate * 100).toFixed(2)}% • {l.term_months}m</div>
+                  </TableCell>
+                  <TableCell>R {l.principal.toFixed(2)}</TableCell>
+                  <TableCell className="font-mono font-medium">R {l.outstanding_balance.toFixed(2)}</TableCell>
+                  <TableCell>
+                    <Badge variant={l.status === 'active' ? 'default' : 'secondary'} className="capitalize">
+                      {l.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => onOpenInterest(l)}>Interest</Button>
+                      <Button size="sm" onClick={() => onOpenRepayment(l)}>Repay</Button>
                     </div>
                   </TableCell>
                 </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-        <div className="flex items-center justify-between mt-3">
-          <div className="text-sm text-muted-foreground">Page {pageLoan + 1} of {Math.max(1, Math.ceil(totalLoanCount / pageSizeLoan))}</div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" disabled={pageLoan === 0} onClick={() => setPageLoan(p => Math.max(0, p - 1))}>Previous</Button>
-            <Button variant="outline" disabled={(pageLoan + 1) >= Math.ceil(totalLoanCount / pageSizeLoan)} onClick={() => setPageLoan(p => p + 1)}>Next</Button>
-          </div>
-        </div>
-        </>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </CardContent>
     </Card>
   );
 }
 
-// removed inline pager component; pager implemented directly in LoanList
-
 function LoanPayments({ companyId }: { companyId: string }) {
-  const { toast } = useToast();
   const [payments, setPayments] = useState<LoanPayment[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadPayments = useCallback(async () => {
+  useEffect(() => {
+    const load = async () => {
       setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("loan_payments" as any)
-          .select(`
-            *,
-            loans!inner(reference, loan_type)
-          `)
-          .eq("loans.company_id", companyId)
-          .order("payment_date", { ascending: false });
-        
-        if (error) throw error;
-        setPayments((data || []) as any);
-      } catch (e: any) {
-        toast({ title: "Error", description: e.message, variant: "destructive" });
-      } finally {
-        setLoading(false);
-      }
-  }, [companyId, toast]);
-  useEffect(() => { if (companyId) loadPayments(); }, [companyId, loadPayments]);
-  const [pagePayments, setPagePayments] = useState(0);
-  const pageSizePayments = 7;
-  const totalPayments = payments.length;
-  const startPayments = pagePayments * pageSizePayments;
-  const pagedPayments = payments.slice(startPayments, startPayments + pageSizePayments);
-  useEffect(() => { setPagePayments(0); }, [payments.length]);
+      const { data } = await supabase
+        .from("loan_payments" as any)
+        .select(`*, loans!inner(reference, loan_type)`)
+        .eq("loans.company_id", companyId)
+        .order("payment_date", { ascending: false });
+      setPayments((data || []) as any);
+      setLoading(false);
+    };
+    if (companyId) load();
+  }, [companyId]);
 
   return (
-    <Card>
-      <CardHeader><CardTitle>Payment History</CardTitle></CardHeader>
+    <Card className="border shadow-sm">
+      <CardHeader>
+        <CardTitle>Payment History</CardTitle>
+        <CardDescription>Recent loan repayments and interest postings</CardDescription>
+      </CardHeader>
       <CardContent>
         {loading ? (
-          <div className="py-8 text-center text-muted-foreground">Loading payment history...</div>
+          <div className="py-8 text-center">Loading...</div>
         ) : payments.length === 0 ? (
-          <div className="py-8 text-center text-muted-foreground">No payments recorded</div>
+          <div className="py-12 text-center text-muted-foreground">No payment history found</div>
         ) : (
-          <>
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
-                <TableHead>Loan Reference</TableHead>
-                <TableHead>Loan Type</TableHead>
-                <TableHead>Amount</TableHead>
+                <TableHead>Loan Ref</TableHead>
+                <TableHead>Total Amount</TableHead>
                 <TableHead>Principal</TableHead>
                 <TableHead>Interest</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pagedPayments.map((payment) => (
-                <TableRow key={payment.id}>
-                  <TableCell>{new Date(payment.payment_date).toLocaleDateString()}</TableCell>
-                  <TableCell>{(payment as any).loans?.reference || 'N/A'}</TableCell>
-                  <TableCell className="capitalize">{(payment as any).loans?.loan_type || 'N/A'}</TableCell>
-                  <TableCell>R {payment.amount.toFixed(2)}</TableCell>
-                  <TableCell>R {payment.principal_component.toFixed(2)}</TableCell>
-                  <TableCell>R {payment.interest_component.toFixed(2)}</TableCell>
+              {payments.map((p) => (
+                <TableRow key={p.id}>
+                  <TableCell>{new Date(p.payment_date).toLocaleDateString()}</TableCell>
+                  <TableCell>{(p as any).loans?.reference}</TableCell>
+                  <TableCell className="font-medium">R {p.amount.toFixed(2)}</TableCell>
+                  <TableCell className="text-muted-foreground">R {p.principal_component.toFixed(2)}</TableCell>
+                  <TableCell className="text-muted-foreground">R {p.interest_component.toFixed(2)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
-          <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground">Page {pagePayments + 1} of {Math.max(1, Math.ceil(totalPayments / pageSizePayments))}</div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" disabled={pagePayments === 0} onClick={() => setPagePayments(p => Math.max(0, p - 1))}>Previous</Button>
-              <Button variant="outline" disabled={(pagePayments + 1) >= Math.ceil(totalPayments / pageSizePayments)} onClick={() => setPagePayments(p => p + 1)}>Next</Button>
-            </div>
-          </div>
-          </>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function DirectorLoansList({ companyId }: { companyId: string }) {
+  const { toast } = useToast();
+  const [items, setItems] = useState<Loan[]>([]);
+  const [banks, setBanks] = useState<Array<{ id: string; account_name: string }>>([]);
+  const [actionLoan, setActionLoan] = useState<Loan | null>(null);
+  const [interestOpen, setInterestOpen] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(new Date().toISOString().slice(0,10));
+  const [bankId, setBankId] = useState("");
+
+  useEffect(() => {
+    if (companyId) {
+      supabase.from("loans" as any).select("*").eq("company_id", companyId).like("reference", "DIR-%").order("start_date", { ascending: false })
+        .then(({ data }) => setItems((data || []) as any));
+      supabase.from("bank_accounts" as any).select("id, account_name").eq("company_id", companyId)
+        .then(({ data }) => setBanks(((data || []) as any[]).filter(b => b && typeof b.id === 'string')));
+    }
+  }, [companyId]);
+
+  return (
+    <>
+      <Card className="border shadow-sm">
+        <CardHeader>
+          <CardTitle>Director Loans</CardTitle>
+          <CardDescription>Loans associated with company directors</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {items.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">No director loans found</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Principal</TableHead>
+                  <TableHead>Balance</TableHead>
+                  <TableHead>Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell>{l.reference}</TableCell>
+                    <TableCell>R {l.principal.toFixed(2)}</TableCell>
+                    <TableCell>R {l.outstanding_balance.toFixed(2)}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          const bId = banks[0]?.id || '';
+                          if (!bId) { toast({ title: 'No Bank', variant: 'destructive' }); return; }
+                          const rate = Number(l.interest_rate || 0);
+                          const bal = Number(l.outstanding_balance || 0);
+                          const monthly = bal * (rate / 12);
+                          setActionLoan(l); setBankId(bId); setAmount(monthly > 0 ? monthly.toFixed(2) : ''); setDate(new Date().toISOString().slice(0,10)); setInterestOpen(true);
+                        }}>Interest Rec.</Button>
+                        <Button size="sm" onClick={() => {
+                          const bId = banks[0]?.id || '';
+                          if (!bId) { toast({ title: 'No Bank', variant: 'destructive' }); return; }
+                          setActionLoan(l); setBankId(bId); setAmount(''); setDate(new Date().toISOString().slice(0,10)); setPaymentOpen(true);
+                        }}>Payment Rec.</Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Interest Received Dialog */}
+      <Dialog open={interestOpen} onOpenChange={setInterestOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Interest Received</DialogTitle></DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label>Amount</Label>
+              <Input type="number" value={amount} onChange={e => setAmount(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Bank</Label>
+              <Select value={bankId} onValueChange={setBankId}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{banks.map(b => <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={async () => {
+              try {
+                await transactionsApi.postDirectorLoanInterestReceived({ loanId: actionLoan!.id, date, bankAccountId: bankId });
+                toast({ title: 'Success' }); setInterestOpen(false);
+              } catch (e: any) { toast({ title: 'Error', description: e.message }); }
+            }}>Post</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Payment Received Dialog */}
+      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Payment Received</DialogTitle></DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label>Amount</Label>
+              <Input type="number" value={amount} onChange={e => setAmount(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label>Bank</Label>
+              <Select value={bankId} onValueChange={setBankId}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>{banks.map(b => <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={async () => {
+              try {
+                const val = parseFloat(amount);
+                if (!(val > 0)) throw new Error('Invalid amount');
+                await transactionsApi.postDirectorLoanPaymentReceived({ loanId: actionLoan!.id, date, bankAccountId: bankId, amountOverride: val });
+                toast({ title: 'Success' }); setPaymentOpen(false);
+              } catch (e: any) { toast({ title: 'Error', description: e.message }); }
+            }}>Post</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
 function LoanReports({ companyId }: { companyId: string }) {
   const [loans, setLoans] = useState<Loan[]>([]);
   const [payments, setPayments] = useState<LoanPayment[]>([]);
-  const [pageReports, setPageReports] = useState(0);
-  const pageSizeReports = 7;
-  const loadReports = useCallback(async () => {
-      const { data: lns } = await supabase.from("loans" as any).select("*").eq("company_id", companyId);
-      const { data: pays } = await supabase.from("loan_payments" as any).select("*");
-      setLoans((lns || []) as any);
-      setPayments((pays || []) as any);
-  }, [companyId]);
-  useEffect(() => { if (companyId) loadReports(); }, [companyId, loadReports]);
-  useEffect(() => { setPageReports(0); }, [loans.length]);
-  const totals = {
-    active: loans.filter(l => l.status === 'active' && !String(l.reference || '').startsWith('DIR-')).length,
-    completed: loans.filter(l => l.status !== 'active' && !String(l.reference || '').startsWith('DIR-')).length,
-    interest: payments.reduce((s, p) => s + (p.interest_component || 0), 0),
-    exposure: loans.filter(l => !String(l.reference || '').startsWith('DIR-')).reduce((s, l) => s + (l.outstanding_balance || 0), 0),
-  };
-  return (
-    <Card>
-      <CardHeader><CardTitle>Loan Reports</CardTitle></CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-          <StatCard title="Active Loans" value={`${totals.active}`} />
-          <StatCard title="Paid Loans" value={`${totals.completed}`} />
-          <StatCard title="Interest Report" value={`R ${totals.interest.toFixed(2)}`} />
-          <StatCard title="Total Exposure" value={`R ${totals.exposure.toFixed(2)}`} />
-        </div>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Ref</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Outstanding</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {(() => {
-              const display = loans.filter(l => !String(l.reference || '').startsWith('DIR-')).slice(pageReports * pageSizeReports, pageReports * pageSizeReports + pageSizeReports);
-              return display.map(l => (
-              <TableRow key={l.id}>
-                <TableCell>{l.reference}</TableCell>
-                <TableCell className="capitalize">{l.loan_type}</TableCell>
-                <TableCell className="capitalize">{l.status}</TableCell>
-                <TableCell>R {l.outstanding_balance.toFixed(2)}</TableCell>
-              </TableRow>
-            ));
-            })()}
-          </TableBody>
-        </Table>
-        <div className="flex items-center justify-between mt-3">
-          <div className="text-sm text-muted-foreground">Page {pageReports + 1} of {Math.max(1, Math.ceil(loans.filter(l => !String(l.reference || '').startsWith('DIR-')).length / pageSizeReports))}</div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" disabled={pageReports === 0} onClick={() => setPageReports(p => Math.max(0, p - 1))}>Previous</Button>
-            <Button variant="outline" disabled={(pageReports + 1) >= Math.ceil(loans.length / pageSizeReports)} onClick={() => setPageReports(p => p + 1)}>Next</Button>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-function DirectorLoansList({ companyId }: { companyId: string }) {
-  const { toast } = useToast();
-  const [items, setItems] = useState<Loan[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState<string>("start_date");
-  const [banks, setBanks] = useState<Array<{ id: string; account_name: string }>>([]);
-  const [interestReceiveOpen, setInterestReceiveOpen] = useState(false);
-  const [paymentReceiveOpen, setPaymentReceiveOpen] = useState(false);
-  const [actionLoan, setActionLoan] = useState<Loan | null>(null);
-  const [actionBankId, setActionBankId] = useState<string>("");
-  const [actionAmount, setActionAmount] = useState<string>("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const { data, error } = await supabase
-        .from("loans" as any)
-        .select("*")
-        .eq("company_id", companyId)
-        .like("reference", "DIR-%")
-        .order("start_date", { ascending: false });
-      if (error) throw error;
-      setItems((data || []) as any);
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  }, [companyId, toast]);
-  useEffect(() => { if (companyId) load(); }, [companyId, load]);
   useEffect(() => {
-    const loadBanks = async () => {
-      if (!companyId) return;
-      const { data } = await supabase.from("bank_accounts" as any).select("id, account_name").eq("company_id", companyId).order("account_name");
-      setBanks(((data || []) as any[]).filter(b => b && typeof b.id === 'string'));
-    };
-    loadBanks();
+    if (companyId) {
+      supabase.from("loans" as any).select("*").eq("company_id", companyId).then(({ data }) => setLoans((data || []) as any));
+      supabase.from("loan_payments" as any).select("*").then(({ data }) => setPayments((data || []) as any));
+    }
   }, [companyId]);
 
-  const derived = useMemo(() => {
-    const filtered = items.filter((l) => {
-      const matchesSearch = l.reference.toLowerCase().includes(search.toLowerCase());
-      return matchesSearch;
-    }).sort((a, b) => {
-      if (sortKey === 'start_date') return new Date(b.start_date).getTime() - new Date(a.start_date).getTime();
-      if (sortKey === 'principal') return (b.principal || 0) - (a.principal || 0);
-      return 0;
-    });
-    return filtered;
-  }, [items, search, sortKey]);
-  const [pageLoan, setPageLoan] = useState(0);
-  const pageSizeLoan = 7;
-  const totalLoanCount = derived.length;
-  const startLoan = pageLoan * pageSizeLoan;
-  const pagedLoans = derived.slice(startLoan, startLoan + pageSizeLoan);
-  useEffect(() => { setPageLoan(0); }, [search, sortKey]);
+  const totals = {
+    interest: payments.reduce((s, p) => s + (p.interest_component || 0), 0),
+    exposure: loans.reduce((s, l) => s + (l.outstanding_balance || 0), 0),
+  };
 
   return (
-    <Card>
-      <CardHeader className="flex items-center justify-between">
-        <CardTitle className="flex items-center gap-2"><CreditCard className="h-5 w-5 text-primary" />Director Loans</CardTitle>
-        <div className="flex items-center gap-2">
-          <Input placeholder="Search" value={search} onChange={(e) => setSearch(e.target.value)} className="w-48" />
-          <Select value={sortKey} onValueChange={(v: any) => setSortKey(v)}>
-            <SelectTrigger className="w-40"><SelectValue placeholder="Sort" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="start_date">Start Date</SelectItem>
-              <SelectItem value="principal">Principal</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </CardHeader>
-      <CardContent>
-        <div className="text-sm text-muted-foreground mb-3">Only director loans are shown here. They are separated from the general Loan List.</div>
-        {loading ? (
-          <div className="py-8 text-center text-muted-foreground">Loading…</div>
-        ) : derived.length === 0 ? (
-          <div className="py-8 text-center text-muted-foreground">No director loans</div>
-        ) : (
-          <>
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <MetricCard title="Total Interest Paid" value={`R ${totals.interest.toFixed(2)}`} icon={Percent} color="from-orange-500 to-orange-600" />
+        <MetricCard title="Total Exposure" value={`R ${totals.exposure.toFixed(2)}`} icon={TrendingUp} color="from-red-500 to-red-600" />
+      </div>
+      <Card>
+        <CardHeader><CardTitle>Summary Report</CardTitle></CardHeader>
+        <CardContent>
           <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Reference</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Principal</TableHead>
-              <TableHead>Rate %</TableHead>
-              <TableHead>Start</TableHead>
-              <TableHead>Term (months)</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Outstanding</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pagedLoans.map((l) => (
-              <TableRow key={l.id}>
-                <TableCell>{l.reference}</TableCell>
-                <TableCell className="capitalize">{l.loan_type}</TableCell>
-                <TableCell>R {l.principal.toFixed(2)}</TableCell>
-                <TableCell>{(l.interest_rate * 100).toFixed(2)}</TableCell>
-                <TableCell>{new Date(l.start_date).toLocaleDateString()}</TableCell>
-                <TableCell>{l.term_months}</TableCell>
-                <TableCell className="capitalize">{l.status}</TableCell>
-                <TableCell>R {l.outstanding_balance.toFixed(2)}</TableCell>
-                <TableCell>
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={async () => {
-                      const bankId = banks[0]?.id || '';
-                      if (!bankId) { toast({ title: 'Bank Required', description: 'Add a bank first', variant: 'destructive' }); return; }
-                      const rate = Number(l.interest_rate || 0);
-                      const bal = Number(l.outstanding_balance || 0);
-                      const monthlyInterest = bal * (rate / 12);
-                      setActionLoan(l); setActionBankId(bankId); setActionAmount(monthlyInterest > 0 ? monthlyInterest.toFixed(2) : ''); setInterestReceiveOpen(true);
-                    }}>Interest Received</Button>
-                    <Button className="bg-gradient-primary" size="sm" onClick={async () => {
-                      const bankId = banks[0]?.id || '';
-                      if (!bankId) { toast({ title: 'Bank Required', description: 'Add a bank first', variant: 'destructive' }); return; }
-                      const rateDecimal = Number(l.interest_rate || 0);
-                      const termMonths = Number(l.term_months || 0);
-                      const monthlyRate = rateDecimal / 12;
-                      const principalAmount = Number(l.principal || 0);
-                      const fallbackPayment = (monthlyRate === 0 || termMonths <= 0)
-                        ? (termMonths > 0 ? (principalAmount / termMonths) : principalAmount)
-                        : (principalAmount * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
-                      const amount = l.monthly_repayment && l.monthly_repayment > 0 ? l.monthly_repayment : fallbackPayment;
-                      setActionLoan(l); setActionBankId(bankId); setActionAmount(String(Number(amount).toFixed(2))); setPaymentReceiveOpen(true);
-                    }}>Payment Received</Button>
-                  </div>
-                </TableCell>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Reference</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Outstanding</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        <div className="flex items-center justify-between mt-3">
-          <div className="text-sm text-muted-foreground">Page {pageLoan + 1} of {Math.max(1, Math.ceil(totalLoanCount / pageSizeLoan))}</div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" disabled={pageLoan === 0} onClick={() => setPageLoan(p => Math.max(0, p - 1))}>Previous</Button>
-            <Button variant="outline" disabled={(pageLoan + 1) >= Math.ceil(totalLoanCount / pageSizeLoan)} onClick={() => setPageLoan(p => p + 1)}>Next</Button>
-          </div>
-        </div>
-        </>
-        )}
-      </CardContent>
-      <Dialog open={interestReceiveOpen} onOpenChange={setInterestReceiveOpen}>
-        <DialogContent className="sm:max-w-[520px] p-4">
-          <DialogHeader>
-            <DialogTitle>Director Loan Interest Received</DialogTitle>
-          </DialogHeader>
-          {actionLoan && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-sm">Loan Reference</label>
-                  <Input value={actionLoan.reference} disabled readOnly />
-                </div>
-                <div>
-                  <label className="text-sm">Interest Rate (%)</label>
-                  <Input value={(actionLoan.interest_rate * 100).toFixed(2)} disabled readOnly />
-                </div>
-                <div>
-                  <label className="text-sm">Outstanding Balance</label>
-                  <Input value={`R ${actionLoan.outstanding_balance.toFixed(2)}`} disabled readOnly />
-                </div>
-                <div>
-                  <label className="text-sm">Bank</label>
-                  <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
-                    <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
-                    <SelectContent>
-                      {banks.map(b => (
-                        <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div>
-                <label className="text-sm">Interest Amount</label>
-                <Input inputMode="decimal" value={actionAmount} onChange={(e) => setActionAmount(e.target.value)} />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setInterestReceiveOpen(false)}>Cancel</Button>
-                <Button className="bg-gradient-primary" onClick={async () => {
-                  try {
-                    const amountNum = parseFloat(actionAmount || '0');
-                    if (!(amountNum > 0)) throw new Error('Enter interest amount');
-                    if (!actionBankId) throw new Error('Select bank');
-                    await transactionsApi.postDirectorLoanInterestReceived({ loanId: actionLoan!.id, date: new Date().toISOString().slice(0,10), bankAccountId: actionBankId, amountOverride: amountNum });
-                    toast({ title: 'Interest Received', description: `Interest for ${actionLoan!.reference} recorded` });
-                    setInterestReceiveOpen(false);
-                  } catch (err: any) {
-                    toast({ title: 'Posting Failed', description: err.message, variant: 'destructive' });
-                  }
-                }}>Post</Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-      <Dialog open={paymentReceiveOpen} onOpenChange={setPaymentReceiveOpen}>
-        <DialogContent className="sm:max-w-[520px] p-4">
-          <DialogHeader>
-            <DialogTitle>Director Loan Payment Received</DialogTitle>
-          </DialogHeader>
-          {actionLoan && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-sm">Loan Reference</label>
-                  <Input value={actionLoan.reference} disabled readOnly />
-                </div>
-                <div>
-                  <label className="text-sm">Term (months)</label>
-                  <Input value={`${actionLoan.term_months}`} disabled readOnly />
-                </div>
-                <div>
-                  <label className="text-sm">Outstanding Balance</label>
-                  <Input value={`R ${actionLoan.outstanding_balance.toFixed(2)}`} disabled readOnly />
-                </div>
-                <div>
-                  <label className="text-sm">Bank</label>
-                  <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
-                    <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
-                    <SelectContent>
-                      {banks.map(b => (
-                        <SelectItem key={b.id} value={b.id}>{b.account_name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div>
-                <label className="text-sm">Payment Amount</label>
-                <Input inputMode="decimal" value={actionAmount} onChange={(e) => setActionAmount(e.target.value)} />
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button variant="outline" onClick={() => setPaymentReceiveOpen(false)}>Cancel</Button>
-                <Button className="bg-gradient-primary" onClick={async () => {
-                  try {
-                    const amountNum = parseFloat(actionAmount || '0');
-                    if (!(amountNum > 0)) throw new Error('Enter payment amount');
-                    if (!actionBankId) throw new Error('Select bank');
-                    await transactionsApi.postDirectorLoanPaymentReceived({ loanId: actionLoan!.id, date: new Date().toISOString().slice(0,10), bankAccountId: actionBankId, amountOverride: amountNum });
-                    toast({ title: 'Payment Received', description: `Payment for ${actionLoan!.reference} recorded` });
-                    setPaymentReceiveOpen(false);
-                  } catch (err: any) {
-                    toast({ title: 'Posting Failed', description: err.message, variant: 'destructive' });
-                  }
-                }}>Post</Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </Card>
+            </TableHeader>
+            <TableBody>
+              {loans.slice(0, 10).map(l => (
+                <TableRow key={l.id}>
+                  <TableCell>{l.reference}</TableCell>
+                  <TableCell><Badge variant="outline" className="capitalize">{l.status}</Badge></TableCell>
+                  <TableCell className="text-right font-mono">R {l.outstanding_balance.toFixed(2)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

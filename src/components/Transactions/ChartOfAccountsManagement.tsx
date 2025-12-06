@@ -5,12 +5,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit, Trash2, BookOpen, Search, RefreshCw } from "lucide-react";
+import { Plus, Edit, Trash2, BookOpen, Search, RefreshCw, Wallet, CreditCard, PieChart, TrendingUp, TrendingDown, Filter, LayoutGrid, ShieldCheck, ShieldAlert } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
+import { cn } from "@/lib/utils";
 
 interface Account {
   id: string;
@@ -419,73 +420,100 @@ export const ChartOfAccountsManagement = () => {
     Expenses: filteredAccounts.filter(a => a.account_type === "expense").length,
   };
 
+  const getTypeIcon = (type: string) => {
+    switch (type.toLowerCase()) {
+      case 'asset': return Wallet;
+      case 'liability': return CreditCard;
+      case 'equity': return PieChart;
+      case 'revenue': case 'income': return TrendingUp;
+      case 'expense': return TrendingDown;
+      default: return Filter;
+    }
+  };
+
+  const getTypeColor = (type: string) => {
+    switch (type.toLowerCase()) {
+      case 'asset': return "text-emerald-600 bg-emerald-50 border-emerald-200";
+      case 'liability': return "text-rose-600 bg-rose-50 border-rose-200";
+      case 'equity': return "text-blue-600 bg-blue-50 border-blue-200";
+      case 'revenue': case 'income': return "text-indigo-600 bg-indigo-50 border-indigo-200";
+      case 'expense': return "text-amber-600 bg-amber-50 border-amber-200";
+      default: return "text-slate-600 bg-slate-50 border-slate-200";
+    }
+  };
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold">Chart of Accounts</h2>
-          <p className="text-muted-foreground">Manage your accounting codes and mappings</p>
+          <h2 className="text-2xl font-bold tracking-tight">Chart of Accounts</h2>
+          <p className="text-muted-foreground">Manage your accounting structure and codes</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={loadSAChartOfAccounts}>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={loadSAChartOfAccounts} className="h-9">
             <BookOpen className="h-4 w-4 mr-2" />
-            Load SA Chart of Accounts
+            Load SA Template
           </Button>
-          <Button variant="outline" onClick={loadAccounts}>
+          <Button variant="outline" size="sm" onClick={loadAccounts} className="h-9">
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </Button>
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-gradient-primary" onClick={() => {
+              <Button className="bg-gradient-primary h-9" onClick={() => {
                 setEditingAccount(null);
                 setFormData({ account_code: "", account_name: "", account_type: "asset" });
               }}>
                 <Plus className="h-4 w-4 mr-2" />
-                Add Account
+                New Account
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>{editingAccount ? "Edit Account" : "Add New Account"}</DialogTitle>
+                <DialogTitle>{editingAccount ? "Edit Account" : "Create New Account"}</DialogTitle>
+                <DialogDescription>
+                  {editingAccount ? "Modify the details of the existing account." : "Add a new account to your chart of accounts."}
+                </DialogDescription>
               </DialogHeader>
-              <div className="space-y-4">
-            <div>
-              <Label>Account Code *</Label>
-              <Input
-                value={formData.account_code}
-                onChange={(e) => setFormData({ ...formData, account_code: e.target.value })}
-                placeholder="e.g., 1000"
-              />
-            </div>
-            <div>
-              <Label>Account Name *</Label>
-              <Input
-                value={formData.account_name}
-                onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
-                placeholder="e.g., Cash on Hand"
-              />
-            </div>
-            <div>
-              <Label>Account Type *</Label>
-              <Select value={formData.account_type} onValueChange={(val) => setFormData({ ...formData, account_type: val })}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="asset">Asset</SelectItem>
-                  <SelectItem value="liability">Liability</SelectItem>
-                  <SelectItem value="equity">Equity</SelectItem>
-                  <SelectItem value="revenue">Revenue</SelectItem>
-                  <SelectItem value="expense">Expense</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Account Code *</Label>
+                    <Input
+                      value={formData.account_code}
+                      onChange={(e) => setFormData({ ...formData, account_code: e.target.value })}
+                      placeholder="e.g., 1000"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Account Type *</Label>
+                    <Select value={formData.account_type} onValueChange={(val) => setFormData({ ...formData, account_type: val })}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="asset">Asset</SelectItem>
+                        <SelectItem value="liability">Liability</SelectItem>
+                        <SelectItem value="equity">Equity</SelectItem>
+                        <SelectItem value="revenue">Revenue</SelectItem>
+                        <SelectItem value="expense">Expense</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Account Name *</Label>
+                  <Input
+                    value={formData.account_name}
+                    onChange={(e) => setFormData({ ...formData, account_name: e.target.value })}
+                    placeholder="e.g., Cash on Hand"
+                  />
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
                 <Button onClick={handleSubmit} className="bg-gradient-primary">
-                  {editingAccount ? "Update" : "Create"}
+                  {editingAccount ? "Save Changes" : "Create Account"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -493,138 +521,166 @@ export const ChartOfAccountsManagement = () => {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-5">
-        {Object.entries(accountsByType).map(([type, count]) => (
-          <Card key={type}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">{type}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{count}</div>
-            </CardContent>
-          </Card>
-        ))}
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-5">
+        {Object.entries(accountsByType).map(([type, count]) => {
+           const Icon = getTypeIcon(type === 'Assets' ? 'asset' : type === 'Liabilities' ? 'liability' : type === 'Equity' ? 'equity' : type === 'Revenue' ? 'revenue' : 'expense');
+           const colorClass = getTypeColor(type === 'Assets' ? 'asset' : type === 'Liabilities' ? 'liability' : type === 'Equity' ? 'equity' : type === 'Revenue' ? 'revenue' : 'expense');
+           
+           return (
+            <Card key={type} className="overflow-hidden border shadow-sm hover:shadow-md transition-shadow">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div className="space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{type}</p>
+                  <div className="text-2xl font-bold">{count}</div>
+                </div>
+                <div className={cn("p-2 rounded-full border", colorClass.replace('text-', 'bg-opacity-10 text-'))}>
+                  <Icon className={cn("h-5 w-5", colorClass.split(' ')[0])} />
+                </div>
+              </CardContent>
+            </Card>
+           );
+        })}
       </div>
 
-      <Card>
-        <CardContent className="p-6">
-          <div className="flex gap-4 mb-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search by code or name..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select value={filterType} onValueChange={setFilterType}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="asset">Asset</SelectItem>
-                <SelectItem value="liability">Liability</SelectItem>
-                <SelectItem value="equity">Equity</SelectItem>
-                <SelectItem value="revenue">Revenue</SelectItem>
-                <SelectItem value="expense">Expense</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+      <div className="bg-card border rounded-xl p-4 shadow-sm space-y-4">
+        {/* Advanced Filters */}
+        <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'all', label: 'All Accounts', icon: LayoutGrid },
+              { id: 'asset', label: 'Assets', icon: Wallet },
+              { id: 'liability', label: 'Liabilities', icon: CreditCard },
+              { id: 'equity', label: 'Equity', icon: PieChart },
+              { id: 'revenue', label: 'Revenue', icon: TrendingUp },
+              { id: 'expense', label: 'Expenses', icon: TrendingDown },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setFilterType(tab.id)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-2 border select-none",
+                  filterType === tab.id 
+                    ? "bg-primary text-primary-foreground border-primary shadow-md" 
+                    : "bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                )}
+              >
+                 <tab.icon className="h-3.5 w-3.5" />
+                 <span>{tab.label}</span>
+              </button>
+            ))}
+        </div>
 
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
+        <div className="h-px bg-border/50" />
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search account code or name..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 bg-background/50 focus:bg-background transition-colors h-10"
+          />
+        </div>
+      </div>
+
+      <Card className="border-none shadow-md overflow-hidden">
+        <div className="rounded-md border bg-card">
+          <Table>
+            <TableHeader className="bg-muted/50">
+              <TableRow>
+                <TableHead className="w-32 pl-6">Code</TableHead>
+                <TableHead>Account Name</TableHead>
+                <TableHead className="w-32">Type</TableHead>
+                <TableHead className="w-24">Status</TableHead>
+                <TableHead className="w-32 text-right pr-6">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredAccounts.length === 0 ? (
                 <TableRow>
-                  <TableHead className="w-32">Code</TableHead>
-                  <TableHead>Account Name</TableHead>
-                  <TableHead className="w-32">Type</TableHead>
-                  <TableHead className="w-24">Status</TableHead>
-                  <TableHead className="w-32">Actions</TableHead>
+                  <TableCell colSpan={5} className="text-center py-12">
+                    <div className="flex flex-col items-center justify-center space-y-3">
+                      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+                        <Filter className="h-6 w-6 text-muted-foreground" />
+                      </div>
+                      <h3 className="text-lg font-medium">No accounts found</h3>
+                      <p className="text-sm text-muted-foreground max-w-sm mx-auto text-center">
+                        We couldn't find any accounts matching your search. Try adjusting your filters or create a new account.
+                      </p>
+                      {filteredAccounts.length === 0 && accounts.length === 0 && (
+                         <Button variant="outline" onClick={loadSAChartOfAccounts} className="mt-4">
+                           Load Default SA Chart
+                         </Button>
+                      )}
+                    </div>
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredAccounts.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center py-8">
-                      <div className="flex flex-col items-center justify-center space-y-2">
-                        <BookOpen className="h-12 w-12 text-muted-foreground mb-2" />
-                        <h3 className="text-lg font-semibold">No Chart of Accounts Found</h3>
-                        <p className="text-sm text-muted-foreground max-w-md">
-                          You don't have any chart of accounts set up yet. You can either load the predefined South African chart of accounts or create your own custom accounts.
-                        </p>
-                        <div className="flex gap-2 mt-4">
-                          <Button variant="outline" onClick={loadSAChartOfAccounts}>
-                            <BookOpen className="h-4 w-4 mr-2" />
-                            Load SA Chart
-                          </Button>
-                          <Button onClick={() => {
-                            setEditingAccount(null);
-                            setFormData({ account_code: "", account_name: "", account_type: "asset" });
-                            setIsDialogOpen(true);
-                          }}>
-                            <Plus className="h-4 w-4 mr-2" />
-                            Add Custom Account
-                          </Button>
+              ) : (
+                filteredAccounts.map((account) => {
+                  const TypeIcon = getTypeIcon(account.account_type);
+                  const typeColor = getTypeColor(account.account_type);
+                  
+                  return (
+                  <TableRow key={account.id} className="hover:bg-muted/50 transition-colors group">
+                    <TableCell className="font-mono font-medium text-foreground pl-6">{account.account_code}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <div className={cn("p-1.5 rounded-md bg-opacity-10", typeColor.split(' ')[1])}>
+                           <TypeIcon className={cn("h-4 w-4", typeColor.split(' ')[0])} />
                         </div>
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Need help with SA chart of accounts? Contact your creditor or system administrator.
-                        </p>
+                        <span className="font-medium">{account.account_name}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={cn("font-normal capitalize", typeColor)}>
+                        {account.account_type}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={account.is_active ? "default" : "secondary"} className={cn(
+                        "font-normal", 
+                        account.is_active ? "bg-emerald-500 hover:bg-emerald-600" : "bg-slate-200 text-slate-600 hover:bg-slate-300"
+                      )}>
+                        {account.is_active ? "Active" : "Inactive"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right pr-6">
+                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleEdit(account)}
+                        >
+                          <Edit className="h-4 w-4 text-muted-foreground hover:text-primary" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => toggleActive(account)}
+                        >
+                          {account.is_active ? 
+                            <ShieldCheck className="h-4 w-4 text-emerald-600" /> : 
+                            <ShieldAlert className="h-4 w-4 text-amber-600" />
+                          }
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => handleDelete(account.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-rose-500" />
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
-                ) : (
-                  filteredAccounts.map((account) => (
-                    <TableRow key={account.id}>
-                      <TableCell className="font-mono font-semibold">{account.account_code}</TableCell>
-                      <TableCell>{account.account_name}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{account.account_type}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={account.is_active ? "default" : "secondary"}>
-                          {account.is_active ? "Active" : "Inactive"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0"
-                            onClick={() => handleEdit(account)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0"
-                            onClick={() => toggleActive(account)}
-                          >
-                            {account.is_active ? "Deactivate" : "Activate"}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0 text-destructive"
-                            onClick={() => handleDelete(account.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
+                )})
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </Card>
-
-      
     </div>
   );
 };

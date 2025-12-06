@@ -4,8 +4,29 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Hammer } from "lucide-react";
 
 export const TaxComputation = () => {
+  const maintenance = true;
+
+  if (maintenance) {
+    return (
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Tax Computation</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="rounded-full bg-muted w-24 h-24 flex items-center justify-center mb-4">
+              <Hammer className="h-12 w-12 text-primary animate-bounce" />
+            </div>
+            <div className="text-xl font-semibold">Module under maintenance</div>
+            <div className="text-sm text-muted-foreground">We are still building this module</div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
   const [profitBeforeTax, setProfitBeforeTax] = useState<string>("");
   const [nonDeductibleExpenses, setNonDeductibleExpenses] = useState<string>("");
   const [nonTaxableIncome, setNonTaxableIncome] = useState<string>("");

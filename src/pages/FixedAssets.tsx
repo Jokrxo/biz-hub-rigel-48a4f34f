@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Download, Trash2, Package, Search, Info, Menu, Loader2 } from "lucide-react";
+import { Plus, Download, Trash2, Package, Search, Info, Menu, Loader2, Building2, TrendingUp, Calculator } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -438,16 +438,17 @@ export default function FixedAssetsPage() {
     <>
       <SEO title="Fixed Assets Register | Rigel Business" description="Manage fixed assets and depreciation" />
       <DashboardLayout>
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
+        <div className="space-y-8">
+          {/* Professional Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold">Fixed Assets Register</h1>
-              <p className="text-muted-foreground mt-1">Track and manage company fixed assets</p>
+              <h1 className="text-3xl font-bold tracking-tight">Fixed Assets</h1>
+              <p className="text-muted-foreground mt-1">Track acquisition, depreciation, and disposal of company assets</p>
             </div>
             <div className="flex gap-3">
-              <Button className="bg-gradient-primary" onClick={() => setActionsOpen(true)}>
+              <Button className="bg-primary shadow-lg hover:shadow-xl transition-all" onClick={() => setActionsOpen(true)}>
                 <Menu className="h-4 w-4 mr-2" />
-                Actions
+                Asset Actions
               </Button>
               {canEdit && (
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -621,26 +622,37 @@ export default function FixedAssetsPage() {
             </SheetContent>
           </Sheet>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Package className="h-5 w-5 text-primary" />
-                Asset Register
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 md:grid-cols-3 mb-4">
-                <div className="rounded-md border p-4">
-                  <div className="text-sm text-muted-foreground">Opening Book Value</div>
-                  <div className="text-2xl font-bold">R {openingTotal.toLocaleString()}</div>
-                </div>
-                <div className="rounded-md border p-4">
-                  <div className="text-sm text-muted-foreground">During Year Book Value</div>
-                  <div className="text-2xl font-bold">R {duringYearTotal.toLocaleString()}</div>
-                </div>
-                <div className="rounded-md border p-4">
-                  <div className="text-sm text-muted-foreground">Estimated Monthly Depreciation</div>
-                  <div className="text-2xl font-bold">
+          {/* Modern Metrics Grid */}
+          <div className="grid gap-4 md:grid-cols-3">
+             <Card className="border-none shadow-md bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-background">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Opening Book Value</CardTitle>
+                  <Building2 className="h-5 w-5 text-blue-600" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-blue-700">R {openingTotal.toLocaleString()}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Start of period value</p>
+                </CardContent>
+             </Card>
+
+             <Card className="border-none shadow-md bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-background">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">During Year Value</CardTitle>
+                  <TrendingUp className="h-5 w-5 text-emerald-600" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-emerald-700">R {duringYearTotal.toLocaleString()}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Acquisitions this year</p>
+                </CardContent>
+             </Card>
+
+             <Card className="border-none shadow-md bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-background">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Est. Monthly Depr.</CardTitle>
+                  <Calculator className="h-5 w-5 text-amber-600" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold text-amber-700">
                     {(() => {
                       const total = assets
                         .filter(a => String(a.status||'active').toLowerCase() !== 'disposed')
@@ -651,16 +663,51 @@ export default function FixedAssetsPage() {
                       return `R ${Number(total).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
                     })()}
                   </div>
-                </div>
-                <div className="rounded-md border p-4">
-                  <div className="text-sm text-muted-foreground">Filter</div>
-                  <div className="flex gap-2 mt-2">
-                    <Button variant={assetFilter==='all' ? 'default' : 'outline'} size="sm" onClick={() => setAssetFilter('all')}>All</Button>
-                    <Button variant={assetFilter==='opening' ? 'default' : 'outline'} size="sm" onClick={() => setAssetFilter('opening')}>Opening</Button>
-                    <Button variant={assetFilter==='during' ? 'default' : 'outline'} size="sm" onClick={() => setAssetFilter('during')}>During Year</Button>
-                  </div>
-                </div>
-              </div>
+                  <p className="text-xs text-muted-foreground mt-1">Projected expense</p>
+                </CardContent>
+             </Card>
+          </div>
+
+          {/* Main Asset Register Table */}
+          <Card className="border-none shadow-md">
+            <CardHeader className="border-b bg-muted/10 pb-4">
+               <div className="flex items-center justify-between">
+                 <div className="space-y-1">
+                   <CardTitle className="flex items-center gap-2">
+                     <Package className="h-5 w-5 text-primary" />
+                     Asset Register
+                   </CardTitle>
+                   <p className="text-sm text-muted-foreground">Detailed list of all fixed assets</p>
+                 </div>
+                 <div className="flex bg-muted/50 p-1 rounded-lg gap-1">
+                    <Button 
+                      variant={assetFilter==='all' ? 'secondary' : 'ghost'} 
+                      size="sm" 
+                      onClick={() => setAssetFilter('all')}
+                      className="h-8 text-xs"
+                    >
+                      All Assets
+                    </Button>
+                    <Button 
+                      variant={assetFilter==='opening' ? 'secondary' : 'ghost'} 
+                      size="sm" 
+                      onClick={() => setAssetFilter('opening')}
+                      className="h-8 text-xs"
+                    >
+                      Opening
+                    </Button>
+                    <Button 
+                      variant={assetFilter==='during' ? 'secondary' : 'ghost'} 
+                      size="sm" 
+                      onClick={() => setAssetFilter('during')}
+                      className="h-8 text-xs"
+                    >
+                      During Year
+                    </Button>
+                 </div>
+               </div>
+            </CardHeader>
+            <CardContent className="p-0">
               {loading ? (
                 <div className="text-center py-8 text-muted-foreground">Loading...</div>
               ) : assets.length === 0 ? (
@@ -687,19 +734,19 @@ export default function FixedAssetsPage() {
                       const start = page * pageSize;
                       const paged = filtered.slice(start, start + pageSize);
                       return paged.map((asset) => (
-                      <TableRow key={asset.id}>
+                      <TableRow key={asset.id} className="hover:bg-muted/50 transition-colors">
                         <TableCell className="font-medium">{asset.description}</TableCell>
                         <TableCell>{new Date(asset.purchase_date).toLocaleDateString()}</TableCell>
                         <TableCell className="text-right">R {asset.cost.toLocaleString()}</TableCell>
                         <TableCell className="text-right">R {asset.accumulated_depreciation.toLocaleString()}</TableCell>
                         <TableCell className="text-right font-semibold">R {calculateNetBookValue(asset).toLocaleString()}</TableCell>
                         <TableCell>
-                          <span className={`px-2 py-1 rounded text-xs ${isOpeningAsset(asset) ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300' : 'bg-primary/10 text-primary'}`}>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${isOpeningAsset(asset) ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'}`}>
                             {isOpeningAsset(asset) ? 'Opening' : 'During Year'}
                           </span>
                         </TableCell>
                         <TableCell>
-                          <span className={`px-2 py-1 rounded text-xs ${asset.status === 'active' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${asset.status === 'active' ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'}`}>
                             {asset.status}
                           </span>
                         </TableCell>
@@ -708,6 +755,7 @@ export default function FixedAssetsPage() {
                             <Button 
                               size="sm" 
                               variant="outline" 
+                              className="h-7 text-xs"
                               onClick={() => {
                                 setSelectedAsset(asset);
                                 const byName = assetAccounts.find(a => a.account_name.toLowerCase().includes((asset.description || '').toLowerCase()));
@@ -728,13 +776,13 @@ export default function FixedAssetsPage() {
                     })()}
                   </TableBody>
                 </Table>
-                <div className="flex items-center justify-between mt-3">
+                <div className="flex items-center justify-between p-4 border-t">
                   <div className="text-sm text-muted-foreground">
                     Page {page + 1} of {Math.max(1, Math.ceil((assets.filter(a => assetFilter === 'all' ? true : assetFilter === 'opening' ? isOpeningAsset(a) : !isOpeningAsset(a)).length) / pageSize))}
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-                    <Button variant="outline" disabled={(page + 1) >= Math.ceil((assets.filter(a => assetFilter === 'all' ? true : assetFilter === 'opening' ? isOpeningAsset(a) : !isOpeningAsset(a)).length) / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+                    <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+                    <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil((assets.filter(a => assetFilter === 'all' ? true : assetFilter === 'opening' ? isOpeningAsset(a) : !isOpeningAsset(a)).length) / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
                   </div>
                 </div>
                 </>

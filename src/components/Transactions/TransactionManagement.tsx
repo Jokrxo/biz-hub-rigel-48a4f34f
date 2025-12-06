@@ -1,15 +1,16 @@
 import React, { useEffect, useMemo, useState, Suspense, lazy } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
- 
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle, MoreHorizontal, Loader2 } from "lucide-react";
+import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle, MoreHorizontal, Loader2, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownLeft, Copy, FileText, Paperclip, Eye, SlidersHorizontal, ShoppingCart, FileSpreadsheet } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -60,6 +61,8 @@ export const TransactionManagement = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all");
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [items, setItems] = useState<Transaction[]>([]);
   const [open, setOpen] = useState(false);
@@ -92,6 +95,21 @@ export const TransactionManagement = () => {
   const [banks, setBanks] = useState<any[]>([]);
   const [allocAccountSearch, setAllocAccountSearch] = useState<string>("");
   const [allocSettlementSearch, setAllocSettlementSearch] = useState<string>("");
+
+  // Enhanced Features State
+  const [viewDetailsOpen, setViewDetailsOpen] = useState(false);
+  const [viewDetailsData, setViewDetailsData] = useState<any>(null);
+  
+  const [attachmentsOpen, setAttachmentsOpen] = useState(false);
+  const [attachmentsData, setAttachmentsData] = useState<any>(null);
+
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+
+  // Edit Warning State
+  const [editWarningOpen, setEditWarningOpen] = useState(false);
+  const [pendingEditData, setPendingEditData] = useState<any>(null);
 
   const load = React.useCallback(async () => {
     try {
@@ -162,6 +180,14 @@ export const TransactionManagement = () => {
           basePageQuery = basePageQuery.lt("total_amount", 0);
         }
       }
+      if (dateFrom) {
+        baseCountQuery = baseCountQuery.gte("transaction_date", dateFrom);
+        basePageQuery = basePageQuery.gte("transaction_date", dateFrom);
+      }
+      if (dateTo) {
+        baseCountQuery = baseCountQuery.lte("transaction_date", dateTo);
+        basePageQuery = basePageQuery.lte("transaction_date", dateTo);
+      }
       if (sourceTab !== "all") {
         const s = sourceTab.toLowerCase();
         if (s === "invoice") {
@@ -193,10 +219,10 @@ export const TransactionManagement = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, searchTerm, filterType, filterStatus, sourceTab, toast]);
+  }, [page, pageSize, searchTerm, filterType, filterStatus, sourceTab, dateFrom, dateTo, toast]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(0); }, [searchTerm, filterType, filterStatus, sourceTab, pageSize]);
+  useEffect(() => { setPage(0); }, [searchTerm, filterType, filterStatus, sourceTab, dateFrom, dateTo, pageSize]);
 
   useEffect(() => {
     try {
@@ -452,7 +478,7 @@ export const TransactionManagement = () => {
       })(),
       reference: t.reference_number || "—",
       statusKey: t.status, // raw DB status
-      statusLabel: t.status === 'approved' ? 'Approved' : t.status === 'pending' ? 'Pending' : t.status.charAt(0).toUpperCase() + t.status.slice(1),
+      statusLabel: t.status === 'approved' ? 'Approved' : t.status === 'pending' ? 'Pending' : t.status === 'unposted' ? 'Unposted' : t.status === 'rejected' ? 'Rejected' : t.status.charAt(0).toUpperCase() + t.status.slice(1),
       source: (() => {
         const ref = String(t.reference_number || "").toUpperCase();
         const desc = String(t.description || "").toLowerCase();
@@ -813,7 +839,16 @@ export const TransactionManagement = () => {
     }
   };
 
-  const deleteTransaction = async (id: string) => {
+  const initiateDelete = (id: string) => {
+    setDeleteId(id);
+    setDeleteConfirmText("");
+    setDeleteConfirmOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteId) return;
+    const id = deleteId;
+    
     try {
       // Remove entries and ledger postings first
       await supabase.from("transaction_entries").delete().eq("transaction_id", id);
@@ -838,6 +873,9 @@ export const TransactionManagement = () => {
       load();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setDeleteConfirmOpen(false);
+      setDeleteId(null);
     }
   };
 
@@ -861,11 +899,7 @@ export const TransactionManagement = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <Button className="bg-gradient-primary hover:opacity-90" onClick={() => { setEditData(null); setNewFlowOpen(true); }}>
-          <Plus className="h-4 w-4 mr-2" />
-          New Transaction
-        </Button>
-        
+
         <Suspense fallback={null}>
           <TransactionFormLazy
             open={open}
@@ -1489,89 +1523,189 @@ export const TransactionManagement = () => {
         </Dialog>
       </div>
 
-      <div className="flex justify-between items-center">
-        <Tabs defaultValue="all" onValueChange={(v) => setSourceTab(v as any)}>
-          <TabsList>
-            <TabsTrigger value="all">All</TabsTrigger>
-            <TabsTrigger value="invoice">Invoices</TabsTrigger>
-            <TabsTrigger value="csv">CSV</TabsTrigger>
-            <TabsTrigger value="bank">Bank</TabsTrigger>
-            <TabsTrigger value="purchase">Purchase</TabsTrigger>
-            <TabsTrigger value="manual">Manual</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
-
-      {/* Summary cards removed for a cleaner, list-focused layout */}
-
-      <div className="p-4 rounded-md border">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="relative flex-1 min-w-64">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Search transactions..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="pl-10" />
+      <div className="space-y-4">
+        {/* Advanced Control Panel */}
+        <div className="bg-card border rounded-xl p-4 shadow-sm space-y-4">
+          {/* Source Filters (Pills) */}
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: 'all', label: 'All Transactions', icon: Filter },
+              { id: 'invoice', label: 'Invoices', icon: FileText },
+              { id: 'bank', label: 'Bank', icon: Wallet },
+              { id: 'csv', label: 'CSV Import', icon: FileSpreadsheet },
+              { id: 'purchase', label: 'Purchases', icon: ShoppingCart },
+              { id: 'manual', label: 'Manual', icon: Edit },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setSourceTab(tab.id as any)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-2 border select-none",
+                  sourceTab === tab.id 
+                    ? "bg-primary text-primary-foreground border-primary shadow-md" 
+                    : "bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                )}
+              >
+                 <tab.icon className="h-3.5 w-3.5" />
+                 <span>{tab.label}</span>
+              </button>
+            ))}
           </div>
-          <Select value={filterType} onValueChange={setFilterType}>
-            <SelectTrigger className="w-40"><SelectValue placeholder="Type" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              <SelectItem value="income">Income</SelectItem>
-              <SelectItem value="expense">Expense</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={filterStatus} onValueChange={setFilterStatus}>
-            <SelectTrigger className="w-40"><SelectValue placeholder="Status" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="unposted">Unposted</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="rejected">Rejected</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" className="gap-2" onClick={handleExport}><Download className="h-4 w-4" />Export</Button>
+
+          <div className="h-px bg-border/50" />
+
+          {/* Filters Toolbar */}
+          <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
+              <div className="relative w-full lg:w-64">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input 
+                  placeholder="Search description or ref..." 
+                  value={searchTerm} 
+                  onChange={(e) => setSearchTerm(e.target.value)} 
+                  className="pl-9 bg-background/50 focus:bg-background transition-colors h-9" 
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2 items-center w-full lg:w-auto">
+                 <Select value={filterType} onValueChange={setFilterType}>
+                    <SelectTrigger className="w-[110px] h-9 text-xs"><SelectValue placeholder="Type" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Types</SelectItem>
+                      <SelectItem value="income">Income</SelectItem>
+                      <SelectItem value="expense">Expense</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={filterStatus} onValueChange={setFilterStatus}>
+                    <SelectTrigger className="w-[110px] h-9 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Status</SelectItem>
+                      <SelectItem value="unposted">Unposted</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <div className="flex items-center gap-2 bg-muted/30 p-1 rounded-md border h-9">
+                     <Calendar className="h-3.5 w-3.5 text-muted-foreground ml-2" />
+                     <Input 
+                       type="date" 
+                       value={dateFrom} 
+                       onChange={(e) => setDateFrom(e.target.value)} 
+                       className="w-auto h-7 border-none bg-transparent shadow-none focus-visible:ring-0 px-1 text-xs"
+                     />
+                     <span className="text-muted-foreground text-xs">-</span>
+                     <Input 
+                       type="date" 
+                       value={dateTo} 
+                       onChange={(e) => setDateTo(e.target.value)} 
+                       className="w-auto h-7 border-none bg-transparent shadow-none focus-visible:ring-0 px-1 text-xs"
+                     />
+                     {(dateFrom || dateTo) && (
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 rounded-full hover:bg-muted" onClick={() => { setDateFrom(''); setDateTo(''); }}>
+                           <XCircle className="h-3 w-3" />
+                        </Button>
+                     )}
+                  </div>
+              </div>
+              
+              <div className="flex items-center gap-2 ml-auto lg:ml-0">
+                 <Button variant="outline" className="gap-2 h-9" onClick={handleExport}>
+                   <Download className="h-3.5 w-3.5" />
+                   Export
+                 </Button>
+                 <Button className="bg-gradient-primary hover:opacity-90 gap-2 h-9" onClick={() => { setEditData(null); setNewFlowOpen(true); }}>
+                   <Plus className="h-4 w-4" />
+                   New Transaction
+                 </Button>
+               </div>
+          </div>
         </div>
       </div>
 
-      <div className="space-y-2">
-        <div className="flex items-center gap-2">
-          <Receipt className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">Transactions ({totalCount})</h2>
-        </div>
-        <div className="rounded-md border">
+      <Card className="border-none shadow-md">
+        <CardHeader className="px-6 py-4 border-b bg-muted/10">
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <CardTitle>Recent Transactions</CardTitle>
+              <CardDescription>
+                Manage and review your financial records. You have {totalCount} total transactions.
+              </CardDescription>
+            </div>
+            <Badge variant="secondary" className="text-xs font-normal">
+              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
           <Table>
-              <TableHeader>
+              <TableHeader className="bg-muted/5">
                 <TableRow>
-                  <TableHead className="w-32"><Button variant="ghost" className="gap-1 p-0 h-auto font-medium">Date <ArrowUpDown className="h-3 w-3" /></Button></TableHead>
+                  <TableHead className="w-32 pl-6"><Button variant="ghost" className="gap-1 p-0 h-auto font-medium hover:bg-transparent hover:text-primary">Date <ArrowUpDown className="h-3 w-3" /></Button></TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="w-32">Bank</TableHead>
-                  <TableHead className="w-20">Type</TableHead>
+                  <TableHead className="w-24">Type</TableHead>
                   <TableHead className="w-32">Category</TableHead>
                   <TableHead className="text-right w-32">Amount</TableHead>
                   <TableHead className="text-right w-24">VAT</TableHead>
                   <TableHead className="w-24">Status</TableHead>
-                  <TableHead className="w-40">Actions</TableHead>
+                  <TableHead className="w-20 text-right pr-6">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {derived.filtered.map((transaction) => (
-                  <TableRow key={transaction.id} className="hover:bg-muted/50">
-                    <TableCell className="font-medium"><div className="flex items-center gap-2"><Calendar className="h-4 w-4 text-muted-foreground" />{transaction.date}</div></TableCell>
-                    <TableCell><div><div className="font-medium">{transaction.description}</div><div className="text-sm text-muted-foreground">{transaction.reference}</div></div></TableCell>
+                {derived.filtered.length === 0 ? (
+                   <TableRow>
+                     <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
+                       No transactions found.
+                     </TableCell>
+                   </TableRow>
+                ) : derived.filtered.map((transaction) => (
+                  <TableRow key={transaction.id} className="hover:bg-muted/40 transition-colors">
+                    <TableCell className="font-medium pl-6"><div className="flex items-center gap-2"><Calendar className="h-3.5 w-3.5 text-muted-foreground" />{transaction.date}</div></TableCell>
+                    <TableCell>
+                      <div className="flex flex-col">
+                        <span className="font-medium text-sm text-foreground/90">{transaction.description}</span>
+                        <span className="text-xs text-muted-foreground">{transaction.reference}</span>
+                      </div>
+                    </TableCell>
                     <TableCell className="text-xs text-muted-foreground">{transaction.bank}</TableCell>
-                    <TableCell><Badge variant={transaction.type === "Income" ? "default" : "secondary"} className={transaction.type === "Income" ? "bg-primary" : ""}>{transaction.type}</Badge></TableCell>
-                    <TableCell className="text-sm">{transaction.category}</TableCell>
-                    <TableCell className="text-right font-mono"><span className={transaction.type === "Income" ? "text-primary" : "text-muted-foreground"}>R {transaction.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></TableCell>
-                    <TableCell className="text-right font-mono text-sm">R {transaction.vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
-                    <TableCell><Badge variant={(transaction as any).statusKey === "approved" ? "default" : "outline"} className={(transaction as any).statusKey === "approved" ? "bg-primary" : ""}>{(transaction as any).statusLabel}</Badge></TableCell>
-                      <TableCell>
+                    <TableCell>
+                       <Badge variant="outline" className={cn(
+                          "font-normal",
+                          transaction.type === "Income" ? "border-emerald-200 text-emerald-700 bg-emerald-50" : "border-rose-200 text-rose-700 bg-rose-50"
+                       )}>
+                          {transaction.type}
+                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{transaction.category}</TableCell>
+                    <TableCell className="text-right font-mono font-medium">
+                      <span className={transaction.type === "Income" ? "text-emerald-600" : "text-rose-600"}>
+                        {transaction.type === "Income" ? "+" : "-"} R {transaction.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs text-muted-foreground">
+                      {transaction.vatAmount > 0 ? `R ${transaction.vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : "-"}
+                    </TableCell>
+                    <TableCell>
+                       <div className="flex items-center gap-2">
+                          <div className={cn("h-2 w-2 rounded-full", 
+                             (transaction as any).statusKey === "approved" ? "bg-emerald-500" : 
+                             (transaction as any).statusKey === "pending" ? "bg-amber-500" : 
+                             (transaction as any).statusKey === "rejected" ? "bg-rose-500" : "bg-slate-300"
+                          )} />
+                          <span className="text-sm capitalize">{(transaction as any).statusLabel}</span>
+                       </div>
+                    </TableCell>
+                    <TableCell className="text-right pr-6">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-8 w-8 p-0">
+                            <Button variant="ghost" className="h-8 w-8 p-0 opacity-70 hover:opacity-100">
                               <span className="sr-only">Open menu</span>
-                              <MoreHorizontal className="h-4 w-4" />
+                              <SlidersHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
+                          <DropdownMenuContent align="end" className="w-[160px]">
                             {(transaction.statusKey === "pending" || transaction.statusKey === "unposted") && (
                               <>
                 <DropdownMenuItem onClick={() => {
@@ -1601,32 +1735,54 @@ export const TransactionManagement = () => {
                                     </>
                                   ) : (
                                     <>
-                                      <CheckCircle className="mr-2 h-4 w-4" />
+                                      <CheckCircle className="mr-2 h-4 w-4 text-emerald-500" />
                                       <span>Approve</span>
                                     </>
                                   )}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => setTransactionStatus(transaction.id, 'rejected')}>
-                                  <XCircle className="mr-2 h-4 w-4" />
+                                  <XCircle className="mr-2 h-4 w-4 text-rose-500" />
                                   <span>Reject</span>
                                 </DropdownMenuItem>
                               </>
                             )}
                             {transaction.statusKey === "approved" && (
                               <DropdownMenuItem onClick={() => setTransactionStatus(transaction.id, 'pending')}>
-                                <XCircle className="mr-2 h-4 w-4" />
+                                <XCircle className="mr-2 h-4 w-4 text-amber-500" />
                                 <span>Unapprove</span>
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuItem onClick={() => { 
                               const full = items.find(i => i.id === transaction.id);
-                              setEditData(full || transaction);
-                              setOpen(true); 
+                              setPendingEditData(full || transaction);
+                              setEditWarningOpen(true);
                             }}>
                               <Edit className="mr-2 h-4 w-4" />
                               <span>Edit</span>
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => deleteTransaction(transaction.id)}>
+                            <DropdownMenuItem onClick={() => {
+                               toast({ title: "Not implemented", description: "Duplicate feature coming soon" });
+                            }}>
+                              <Copy className="mr-2 h-4 w-4" />
+                              <span>Duplicate</span>
+                            </DropdownMenuItem>
+                             <DropdownMenuItem onClick={() => {
+                               const full = items.find(i => i.id === transaction.id);
+                               setViewDetailsData(full || transaction);
+                               setViewDetailsOpen(true);
+                            }}>
+                              <FileText className="mr-2 h-4 w-4" />
+                              <span>View Details</span>
+                            </DropdownMenuItem>
+                             <DropdownMenuItem onClick={() => {
+                               const full = items.find(i => i.id === transaction.id);
+                               setAttachmentsData(full || transaction);
+                               setAttachmentsOpen(true);
+                            }}>
+                              <Paperclip className="mr-2 h-4 w-4" />
+                              <span>Attachments</span>
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => initiateDelete(transaction.id)} className="text-rose-500 focus:text-rose-500">
                               <Trash2 className="mr-2 h-4 w-4" />
                               <span>Delete</span>
                             </DropdownMenuItem>
@@ -1637,25 +1793,188 @@ export const TransactionManagement = () => {
                 ))}
               </TableBody>
           </Table>
-        </div>
-        <div className="flex items-center justify-between mt-3">
+        </CardContent>
+        <div className="flex items-center justify-between p-4 border-t">
           <div className="text-sm text-muted-foreground">
-            Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {items.length} of {totalCount}
+             Showing {items.length} of {totalCount} entries
           </div>
           <div className="flex items-center gap-2">
             <Select value={String(pageSize)} onValueChange={(v) => { setPage(0); setPageSize(parseInt(v)); }}>
-              <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-[70px] h-8"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="10">10</SelectItem>
                 <SelectItem value="25">25</SelectItem>
                 <SelectItem value="50">50</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-            <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+            <div className="flex items-center gap-1">
+               <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+               <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+            </div>
           </div>
         </div>
-      </div>
+      </Card>
+
+      {/* Edit Warning Dialog */}
+      <Dialog open={editWarningOpen} onOpenChange={setEditWarningOpen}>
+        <DialogContent className="sm:max-w-[425px] text-center">
+           <DialogHeader className="flex flex-col items-center gap-4">
+             <img src="/Modern Rigel Business Logo Design.png" alt="Rigel Logo" className="h-16 w-auto object-contain" />
+             <DialogTitle className="text-xl">Expert Mode Warning</DialogTitle>
+             <DialogDescription className="text-base pt-2">
+               Editing a transaction requires accounting knowledge. You will need to manually adjust debit and credit entries.
+               <br/><br/>
+               Incorrect changes may affect your trial balance. Proceed with caution.
+             </DialogDescription>
+           </DialogHeader>
+           <DialogFooter className="flex sm:justify-center gap-2 mt-4 w-full">
+             <Button variant="outline" onClick={() => setEditWarningOpen(false)} className="w-full sm:w-auto">Cancel</Button>
+             <Button onClick={() => {
+               setEditData(pendingEditData);
+               setEditWarningOpen(false);
+               setOpen(true);
+             }} className="w-full sm:w-auto bg-primary">
+               Continue to Edit
+             </Button>
+           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Details Dialog */}
+      <Dialog open={viewDetailsOpen} onOpenChange={setViewDetailsOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Transaction Details</DialogTitle>
+          </DialogHeader>
+          {viewDetailsData && (
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-muted-foreground">Date</Label>
+                  <div className="font-medium">{viewDetailsData.transaction_date || viewDetailsData.date}</div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Reference</Label>
+                  <div className="font-medium">{viewDetailsData.reference_number || viewDetailsData.reference || '—'}</div>
+                </div>
+                <div className="col-span-2">
+                  <Label className="text-muted-foreground">Description</Label>
+                  <div className="font-medium">{viewDetailsData.description}</div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Amount</Label>
+                  <div className="font-medium">R {Number(viewDetailsData.total_amount || viewDetailsData.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Type</Label>
+                  <Badge variant="outline">{viewDetailsData.transaction_type || viewDetailsData.type || 'Transaction'}</Badge>
+                </div>
+                <div>
+                  <Label className="text-muted-foreground">Status</Label>
+                  <Badge variant={viewDetailsData.status === 'approved' ? 'default' : 'secondary'}>
+                    {viewDetailsData.status || 'Pending'}
+                  </Badge>
+                </div>
+                <div>
+                   <Label className="text-muted-foreground">Bank Account</Label>
+                   <div className="font-medium">{(viewDetailsData.bank_account?.bank_name || viewDetailsData.bank || '—')}</div>
+                </div>
+              </div>
+
+              {viewDetailsData.entries && viewDetailsData.entries.length > 0 && (
+                <div className="mt-4">
+                  <Label className="mb-2 block text-muted-foreground">Journal Entries</Label>
+                  <div className="border rounded-md overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/50">
+                          <TableHead>Account</TableHead>
+                          <TableHead className="text-right">Debit</TableHead>
+                          <TableHead className="text-right">Credit</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {viewDetailsData.entries.map((e: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell>{e.chart_of_accounts?.account_name || 'Unknown Account'}</TableCell>
+                            <TableCell className="text-right">{Number(e.debit) > 0 ? `R ${Number(e.debit).toFixed(2)}` : '-'}</TableCell>
+                            <TableCell className="text-right">{Number(e.credit) > 0 ? `R ${Number(e.credit).toFixed(2)}` : '-'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={() => setViewDetailsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Attachments Dialog */}
+      <Dialog open={attachmentsOpen} onOpenChange={setAttachmentsOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Attachments</DialogTitle>
+            <DialogDescription>Manage files associated with this transaction</DialogDescription>
+          </DialogHeader>
+          <div className="py-8 text-center border-2 border-dashed rounded-lg bg-muted/10">
+             <Paperclip className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
+             <p className="text-sm text-muted-foreground mb-2">No attachments found for this transaction.</p>
+             <Button variant="outline" onClick={() => toast({ title: "Upload", description: "File upload not yet connected to storage." })}>
+               <Plus className="h-4 w-4 mr-2" />
+               Add Attachment
+             </Button>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setAttachmentsOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle className="text-rose-600 flex items-center gap-2">
+              <XCircle className="h-5 w-5" />
+              Delete Transaction
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              This action cannot be undone. Deleting a transaction will remove all associated ledger entries and may affect your financial reports.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+             <div className="p-3 bg-rose-50 border border-rose-100 rounded-md text-rose-800 text-sm font-medium">
+               Warning: This will cause unreliable reports if the transaction has already been reconciled or reported.
+             </div>
+             <div className="space-y-2">
+               <Label>To confirm, type: <span className="font-mono font-bold select-all">Are you sure that this will cause unreliable report?</span></Label>
+               <Input 
+                 value={deleteConfirmText} 
+                 onChange={(e) => setDeleteConfirmText(e.target.value)} 
+                 placeholder="Type the confirmation phrase"
+                 className="border-rose-200 focus-visible:ring-rose-500"
+               />
+             </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
+            <Button 
+              variant="destructive" 
+              onClick={confirmDelete}
+              disabled={deleteConfirmText !== "Are you sure that this will cause unreliable report?"}
+            >
+              Delete Permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Plus, Building2, TrendingUp, TrendingDown, Menu } from "lucide-react";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { CSVImport } from "./CSVImport";
 import { ConnectBank } from "./ConnectBank";
 import { BankReconciliation } from "./BankReconciliation";
@@ -318,92 +318,133 @@ export const BankManagement = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Bank Management</h1>
-          <p className="text-muted-foreground mt-1">Manage bank accounts, import statements, and reconcile transactions</p>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">Bank Management</h1>
+          <p className="text-muted-foreground mt-1">Manage accounts, reconcile transactions, and track cash flow.</p>
         </div>
-        <div className="flex gap-3">
-          <Button className="bg-gradient-primary" onClick={() => setActionsOpen(true)}>
-            <Menu className="h-4 w-4 mr-2" />
-            Actions
-          </Button>
+        <div className="flex items-center gap-2">
+          <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
+             <SheetTrigger asChild>
+               <Button variant="outline" className="h-10 gap-2">
+                 <Menu className="h-4 w-4" />
+                 <span>Quick Actions</span>
+               </Button>
+             </SheetTrigger>
+            <SheetContent className="sm:max-w-[400px]">
+              <div className="space-y-6 py-6">
+                <div>
+                   <h3 className="font-semibold text-lg">Quick Actions</h3>
+                   <p className="text-sm text-muted-foreground">Manage your banking data efficiently.</p>
+                </div>
+                <div className="grid gap-3">
+                  <div className="grid gap-2">
+                    <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Data Import</Label>
+                    <div className="w-full">
+                      <CSVImport bankAccounts={banks} onImportComplete={loadBanks} />
+                    </div>
+                    <div className="w-full">
+                      <ConnectBank />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-gradient-primary hover:opacity-90">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Bank Account
+              <Button className="h-10 gap-2 bg-primary hover:bg-primary/90 shadow-sm">
+                <Plus className="h-4 w-4" />
+                Add Account
               </Button>
             </DialogTrigger>
-            <DialogContent>
+            <DialogContent className="sm:max-w-[500px]">
               <DialogHeader>
                 <DialogTitle>Add Bank Account</DialogTitle>
+                <p className="text-sm text-muted-foreground">Enter your bank account details to track transactions.</p>
               </DialogHeader>
-            <div className="grid gap-4">
-              <div>
-                <Label>Account Name *</Label>
+            <div className="grid gap-6 py-4">
+              <div className="grid gap-2">
+                <Label htmlFor="account_name">Account Name *</Label>
                 <Input
+                  id="account_name"
                   value={form.account_name}
                   onChange={(e) => setForm({ ...form, account_name: e.target.value })}
                   placeholder="e.g. Business Cheque Account"
+                  className="h-9"
                 />
               </div>
-              <div>
-                <Label>Bank *</Label>
-                <Select
-                  value={form.bank_name}
-                  onValueChange={(val) => {
-                    const selected = bankOptions.find(b => b.value === val);
-                    setForm({ ...form, bank_name: val });
-                    setBranchCode(selected?.branchCode || "");
-                    // Clear account number when changing bank selection
-                    if (!val) setForm(prev => ({ ...prev, account_number: "" }));
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select your bank" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {bankOptions.map((b) => (
-                      <SelectItem key={b.value} value={b.value}>
-                        {b.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {form.bank_name && (
-                <div>
-                  <Label>Branch Code</Label>
-                  <Input value={branchCode} readOnly placeholder="Auto-filled branch code" />
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label>Bank *</Label>
+                  <Select
+                    value={form.bank_name}
+                    onValueChange={(val) => {
+                      const selected = bankOptions.find(b => b.value === val);
+                      setForm({ ...form, bank_name: val });
+                      setBranchCode(selected?.branchCode || "");
+                      if (!val) setForm(prev => ({ ...prev, account_number: "" }));
+                    }}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Select bank" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bankOptions.map((b) => (
+                        <SelectItem key={b.value} value={b.value}>
+                          {b.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-              )}
-              <div>
-                <Label>Account Number *</Label>
+                
+                {form.bank_name && (
+                  <div className="grid gap-2">
+                    <Label>Branch Code</Label>
+                    <Input value={branchCode} readOnly className="bg-muted h-9" />
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-2">
+                <Label htmlFor="account_number">Account Number *</Label>
                 <Input
+                  id="account_number"
                   value={form.account_number}
                   onChange={(e) => setForm({ ...form, account_number: e.target.value })}
                   placeholder="e.g. 62123456789"
                   disabled={!form.bank_name}
+                  className="font-mono h-9"
                 />
               </div>
-              <div>
-                <Label>Opening Balance</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  value={form.opening_balance}
-                  onChange={(e) => setForm({ ...form, opening_balance: e.target.value })}
-                  placeholder="0.00"
-                />
-              </div>
-              <div>
-                <Label>Opening Balance Date</Label>
-                <Input
-                  type="date"
-                  value={form.opening_balance_date}
-                  onChange={(e) => setForm({ ...form, opening_balance_date: e.target.value })}
-                />
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-2">
+                  <Label>Opening Balance</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2.5 text-muted-foreground text-xs">R</span>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={form.opening_balance}
+                      onChange={(e) => setForm({ ...form, opening_balance: e.target.value })}
+                      placeholder="0.00"
+                      className="pl-7 h-9"
+                    />
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label>Opening Date</Label>
+                  <Input
+                    type="date"
+                    value={form.opening_balance_date}
+                    onChange={(e) => setForm({ ...form, opening_balance_date: e.target.value })}
+                    className="h-9"
+                  />
+                </div>
               </div>
             </div>
             <DialogFooter>
@@ -415,63 +456,53 @@ export const BankManagement = () => {
         </div>
       </div>
 
-      <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
-        <SheetContent className="sm:max-w-[520px]">
-          <div className="space-y-4">
-            <div className="text-lg font-semibold">Quick Actions</div>
-            <div className="text-sm text-muted-foreground">Manage bank accounts and statements</div>
-            <div className="grid gap-3">
-              <Button className="w-full" onClick={() => { setActionsOpen(false); setOpen(true); }}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Bank Account
-              </Button>
-              <div className="w-full">
-                <CSVImport bankAccounts={banks} onImportComplete={loadBanks} />
-              </div>
-              <div className="w-full">
-                <ConnectBank />
-              </div>
-            </div>
+      <div className="grid gap-4 md:grid-cols-3 mb-8">
+        <Card className="border-none shadow-md bg-gradient-to-br from-primary/10 via-primary/5 to-background relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4 opacity-10">
+            <Building2 className="w-24 h-24 text-primary" />
           </div>
-        </SheetContent>
-      </Sheet>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="card-professional">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Total Bank Balance</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">
+            <div className="text-3xl font-bold text-primary">
               R {totalBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">{banks.length} account(s)</p>
+            <p className="text-xs text-muted-foreground mt-1 font-medium">{banks.length} Active Account{banks.length !== 1 ? 's' : ''}</p>
           </CardContent>
         </Card>
 
-        <Card className="card-professional">
+        <Card className="border-none shadow-md bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-background">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">This Month</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Monthly Inflows</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              <div className="text-2xl font-bold">R {inflows.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-emerald-500/20 rounded-full">
+                <TrendingUp className="h-5 w-5 text-emerald-600" />
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-emerald-700">R {inflows.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+                <p className="text-xs text-muted-foreground">Income & Receipts</p>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Inflows</p>
           </CardContent>
         </Card>
 
-        <Card className="card-professional">
+        <Card className="border-none shadow-md bg-gradient-to-br from-rose-500/10 via-rose-500/5 to-background">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">This Month</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Monthly Outflows</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-2">
-              <TrendingDown className="h-4 w-4 text-destructive" />
-              <div className="text-2xl font-bold">R {outflows.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+             <div className="flex items-center gap-3">
+              <div className="p-2 bg-rose-500/20 rounded-full">
+                <TrendingDown className="h-5 w-5 text-rose-600" />
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-rose-700">R {outflows.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+                <p className="text-xs text-muted-foreground">Expenses & Payments</p>
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Outflows</p>
           </CardContent>
         </Card>
       </div>
@@ -483,46 +514,66 @@ export const BankManagement = () => {
         </TabsList>
 
         <TabsContent value="accounts" className="space-y-4">
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
+          <Card className="border-none shadow-md">
+            <CardHeader className="border-b bg-muted/10 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg">
                 <Building2 className="h-5 w-5 text-primary" />
-                Bank Accounts
+                Connected Accounts
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-0">
               {loading ? (
-                <div className="text-center py-8">Loading...</div>
+                <div className="flex flex-col items-center justify-center py-12">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+                  <p className="mt-4 text-sm text-muted-foreground">Loading accounts...</p>
+                </div>
               ) : banks.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  No bank accounts yet. Add your first bank account to get started.
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <div className="rounded-full bg-muted p-4">
+                    <Building2 className="h-8 w-8 text-muted-foreground" />
+                  </div>
+                  <h3 className="mt-4 text-lg font-semibold">No Bank Accounts</h3>
+                  <p className="mb-4 max-w-sm text-sm text-muted-foreground">
+                    Connect a bank account to start tracking your business finances and reconciling transactions.
+                  </p>
+                  <Button onClick={() => setOpen(true)}>Add First Account</Button>
                 </div>
               ) : (
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="bg-muted/5">
                     <TableRow>
-                      <TableHead>Account Name</TableHead>
-                      <TableHead>Bank</TableHead>
-                      <TableHead>Account Number</TableHead>
+                      <TableHead className="w-[300px] pl-6">Account Details</TableHead>
+                      <TableHead>Bank Name</TableHead>
                       <TableHead className="text-right">Opening Balance</TableHead>
-                      <TableHead className="text-right">Current Balance</TableHead>
-                      <TableHead>Actions</TableHead>
+                      <TableHead className="text-right pr-6">Current Balance</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {banks.map((bank) => (
-                      <TableRow key={bank.id}>
-                        <TableCell className="font-medium">{bank.account_name}</TableCell>
-                        <TableCell>{bank.bank_name}</TableCell>
-                        <TableCell className="font-mono">{bank.account_number}</TableCell>
-                        <TableCell className="text-right font-mono">
-                          R {bank.opening_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-bold text-primary">
-                          R {bank.current_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                      <TableRow key={bank.id} className="group hover:bg-muted/40 transition-colors">
+                        <TableCell className="pl-6">
+                          <div className="flex items-center gap-3">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">
+                              {bank.bank_name.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div>
+                              <div className="font-medium text-foreground">{bank.account_name}</div>
+                              <div className="text-xs text-muted-foreground font-mono">{bank.account_number}</div>
+                            </div>
+                          </div>
                         </TableCell>
                         <TableCell>
-                          {/* Actions can be added here */}
+                          <div className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80">
+                            {bank.bank_name}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          R {bank.opening_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          <span className={`font-mono font-bold ${bank.current_balance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            R {bank.current_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                          </span>
                         </TableCell>
                       </TableRow>
                     ))}

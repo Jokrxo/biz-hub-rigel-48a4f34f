@@ -4,10 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Settings2, Save } from "lucide-react";
+import { Settings2, Save, Palette, Globe, CalendarClock, Bell, Database, Monitor, FileText } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { hasSupabaseEnv } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
 
 export const GeneralSettings = () => {
@@ -88,17 +87,17 @@ export const GeneralSettings = () => {
           .select('*')
           .eq('company_id', profile.company_id)
           .maybeSingle();
-      if (data) {
-        next = {
-          theme: (data as any).theme || 'light',
-          dateFormat: (data as any).date_format || 'DD/MM/YYYY',
-          fiscalYearStart: String((data as any).fiscal_year_start || 1),
-          enableNotifications: !!(data as any).enable_notifications,
-          enableAutoBackup: !!(data as any).enable_auto_backup,
-          language: (data as any).language || 'en',
-          invoiceTemplate: (JSON.parse(localStorage.getItem('appSettings') || '{}')?.invoiceTemplate) || 'template1',
-        };
-      }
+        if (data) {
+          next = {
+            theme: (data as any).theme || 'light',
+            dateFormat: (data as any).date_format || 'DD/MM/YYYY',
+            fiscalYearStart: String((data as any).fiscal_year_start || 1),
+            enableNotifications: !!(data as any).enable_notifications,
+            enableAutoBackup: !!(data as any).enable_auto_backup,
+            language: (data as any).language || 'en',
+            invoiceTemplate: (JSON.parse(localStorage.getItem('appSettings') || '{}')?.invoiceTemplate) || 'template1',
+          };
+        }
       } else if (savedLocal) {
         next = JSON.parse(savedLocal);
       }
@@ -108,106 +107,159 @@ export const GeneralSettings = () => {
   }, [settings, user?.id]);
   useEffect(() => { init(); }, [init]);
 
-  const [supUrl, setSupUrl] = useState("");
-  const [supKey, setSupKey] = useState("");
-  const saveSupabaseConfig = () => {
-    try {
-      localStorage.setItem('supabase_url', supUrl);
-      localStorage.setItem('supabase_anon_key', supKey);
-      toast({ title: 'Saved', description: 'Supabase configured. Reloading…' });
-      setTimeout(() => { window.location.reload(); }, 500);
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message || 'Failed to configure Supabase', variant: 'destructive' });
-    }
-  };
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Settings2 className="h-5 w-5 text-primary" />
-          General Settings
-        </CardTitle>
-        <CardDescription>Configure application preferences and defaults</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="space-y-4">
-          <div>
-            <Label>Theme</Label>
-            <Select value={settings.theme} onValueChange={(val) => setSettings({ ...settings, theme: val })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="light">Light</SelectItem>
-                <SelectItem value="dark">Dark</SelectItem>
-                <SelectItem value="system">System</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label>Date Format</Label>
-            <Select value={settings.dateFormat} onValueChange={(val) => setSettings({ ...settings, dateFormat: val })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="DD/MM/YYYY">DD/MM/YYYY</SelectItem>
-                <SelectItem value="MM/DD/YYYY">MM/DD/YYYY</SelectItem>
-                <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label>Invoice Template</Label>
-            <Select value={settings.invoiceTemplate} onValueChange={(val) => setSettings({ ...settings, invoiceTemplate: val })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="template1">Template 1 (Classic)</SelectItem>
-                <SelectItem value="template2">Template 2 (Modern)</SelectItem>
-                <SelectItem value="template3" disabled>Template 3 (Advanced • Locked)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label>Language</Label>
-            <Select value={settings.language} onValueChange={(val) => setSettings({ ...settings, language: val })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="en">English</SelectItem>
-                <SelectItem value="af">Afrikaans</SelectItem>
-                <SelectItem value="zu">Zulu</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label>Fiscal Year Start Month</Label>
-            <Select value={settings.fiscalYearStart} onValueChange={(val) => setSettings({ ...settings, fiscalYearStart: val })}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {Array.from({ length: 12 }, (_, i) => (
-                  <SelectItem key={i + 1} value={String(i + 1)}>
-                    {new Date(2000, i, 1).toLocaleString('default', { month: 'long' })}
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Appearance & Localization */}
+        <Card className="card-professional h-full">
+          <CardHeader>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <Palette className="h-5 w-5 text-primary" />
+              </div>
+              <CardTitle>Appearance & Locale</CardTitle>
+            </div>
+            <CardDescription>Customize visual preferences and regional formats</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-2">
+              <Label>Interface Theme</Label>
+              <Select value={settings.theme} onValueChange={(val) => setSettings({ ...settings, theme: val })}>
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="light">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-slate-200 border" />
+                      Light Mode
+                    </div>
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+                  <SelectItem value="dark">
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 rounded-full bg-slate-900 border" />
+                      Dark Mode
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="system">
+                    <div className="flex items-center gap-2">
+                      <Monitor className="h-4 w-4" />
+                      System Default
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-          <div className="flex items-center justify-between border-t pt-4">
-            <div>
-              <Label>Enable Notifications</Label>
-              <p className="text-sm text-muted-foreground">Receive system notifications</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Language</Label>
+                <Select value={settings.language} onValueChange={(val) => setSettings({ ...settings, language: val })}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="en">English</SelectItem>
+                    <SelectItem value="af">Afrikaans</SelectItem>
+                    <SelectItem value="zu">Zulu</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Date Format</Label>
+                <Select value={settings.dateFormat} onValueChange={(val) => setSettings({ ...settings, dateFormat: val })}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="DD/MM/YYYY">DD/MM/YYYY</SelectItem>
+                    <SelectItem value="MM/DD/YYYY">MM/DD/YYYY</SelectItem>
+                    <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* System & Financial */}
+        <Card className="card-professional h-full">
+          <CardHeader>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <CalendarClock className="h-5 w-5 text-blue-600" />
+              </div>
+              <CardTitle>System & Financial</CardTitle>
+            </div>
+            <CardDescription>Fiscal periods and document templates</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-2">
+              <Label>Fiscal Year Start</Label>
+              <Select value={settings.fiscalYearStart} onValueChange={(val) => setSettings({ ...settings, fiscalYearStart: val })}>
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 12 }, (_, i) => (
+                    <SelectItem key={i + 1} value={String(i + 1)}>
+                      {new Date(2000, i, 1).toLocaleString('default', { month: 'long' })}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Invoice Template</Label>
+              <Select value={settings.invoiceTemplate} onValueChange={(val) => setSettings({ ...settings, invoiceTemplate: val })}>
+                <SelectTrigger className="h-11">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="template1">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" /> Classic (Template 1)
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="template2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-primary" /> Modern (Template 2)
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="template3" disabled>
+                    <div className="flex items-center gap-2 opacity-50">
+                      <FileText className="h-4 w-4" /> Advanced (Locked)
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Notifications & Data */}
+      <Card className="card-professional">
+        <CardHeader>
+          <div className="flex items-center gap-2 mb-1">
+            <div className="p-2 bg-purple-100 rounded-lg">
+              <Settings2 className="h-5 w-5 text-purple-600" />
+            </div>
+            <CardTitle>Automation & Alerts</CardTitle>
+          </div>
+          <CardDescription>Manage automated system behaviors</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-0 divide-y">
+          <div className="flex items-center justify-between py-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-muted rounded-full">
+                <Bell className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div>
+                <Label className="text-base font-medium">Enable Notifications</Label>
+                <p className="text-sm text-muted-foreground">Receive in-app alerts for critical updates and messages</p>
+              </div>
             </div>
             <Switch
               checked={settings.enableNotifications}
@@ -215,23 +267,30 @@ export const GeneralSettings = () => {
             />
           </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Enable Auto Backup</Label>
-              <p className="text-sm text-muted-foreground">Automatic daily database backup</p>
+          <div className="flex items-center justify-between py-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-muted rounded-full">
+                <Database className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div>
+                <Label className="text-base font-medium">Auto-Backup</Label>
+                <p className="text-sm text-muted-foreground">Automatically backup database daily at midnight</p>
+              </div>
             </div>
             <Switch
               checked={settings.enableAutoBackup}
               onCheckedChange={(checked) => setSettings({ ...settings, enableAutoBackup: checked })}
             />
           </div>
-        </div>
+        </CardContent>
+      </Card>
 
-        <Button onClick={handleSave} className="w-full bg-gradient-primary">
+      <div className="flex justify-end pt-4">
+        <Button onClick={handleSave} size="lg" className="bg-gradient-primary shadow-lg hover:shadow-xl transition-all px-8">
           <Save className="h-4 w-4 mr-2" />
-          Save General Settings
+          Save Changes
         </Button>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };

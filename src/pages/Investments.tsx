@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -9,13 +9,56 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Badge } from "@/components/ui/badge";
 import { transactionsApi } from "@/lib/transactions-api";
+import { 
+  TrendingUp, 
+  PieChart as PieChartIcon, 
+  Briefcase, 
+  DollarSign, 
+  Menu, 
+  Plus, 
+  ArrowUpRight, 
+  ArrowDownLeft, 
+  History, 
+  FileText, 
+  Wallet, 
+  Search, 
+  Filter,
+  LayoutDashboard,
+  ArrowRightLeft,
+  Landmark
+} from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 
 type InvestmentAccount = { id: string; name: string; currency: string; broker_name?: string };
 type Position = { id: string; account_id: string; symbol: string; instrument_type: string; quantity: number; avg_cost: number; current_price?: number; market_value?: number; unrealized_gain?: number };
 type InvestmentTx = { id: string; account_id: string; type: string; trade_date: string; symbol: string; quantity?: number; price?: number; total_amount: number; currency?: string; fx_rate?: number; fees?: number; notes?: string };
+
+// --- Metric Card Component ---
+function MetricCard({ title, value, icon: Icon, color, trend }: { title: string; value: string; icon: any; color: string; trend?: string }) {
+  return (
+    <Card className="border-none shadow-md overflow-hidden relative">
+      <div className={`absolute inset-0 bg-gradient-to-br ${color} opacity-10`} />
+      <CardContent className="p-6 relative">
+        <div className="flex justify-between items-start">
+          <div className="space-y-2">
+            <p className="text-sm font-medium text-muted-foreground">{title}</p>
+            <h3 className="text-2xl font-bold tracking-tight">{value}</h3>
+            {trend && <p className="text-xs text-muted-foreground">{trend}</p>}
+          </div>
+          <div className={`p-3 rounded-xl bg-gradient-to-br ${color} text-white shadow-lg`}>
+            <Icon className="h-5 w-5" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Investments() {
   const { toast } = useToast();
@@ -26,11 +69,16 @@ export default function Investments() {
   const [transactions, setTransactions] = useState<InvestmentTx[]>([]);
   const [loading, setLoading] = useState(true);
   const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; account_name: string }>>([]);
+  
+  // Dialog States
   const [buyOpen, setBuyOpen] = useState(false);
   const [sellOpen, setSellOpen] = useState(false);
   const [divOpen, setDivOpen] = useState(false);
   const [intOpen, setIntOpen] = useState(false);
   const [fdOpen, setFdOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  
+  // Form States
   const [actionAccountId, setActionAccountId] = useState<string>("");
   const [actionBankId, setActionBankId] = useState<string>("");
   const [symbol, setSymbol] = useState<string>("");
@@ -40,6 +88,10 @@ export default function Investments() {
   const [rate, setRate] = useState<string>("");
   const [termMonths, setTermMonths] = useState<string>("12");
   const [startDate, setStartDate] = useState<string>(new Date().toISOString().slice(0,10));
+  
+  // Search & Filter
+  const [search, setSearch] = useState("");
+  const [txFilter, setTxFilter] = useState("all");
 
   useEffect(() => {
     const init = async () => {
@@ -90,7 +142,6 @@ export default function Investments() {
     const fdPositions = (positions || []).filter(p => String(p.instrument_type).toLowerCase() === 'fixed_deposit');
     fdPositions.forEach(p => {
       const principal = Number(p.avg_cost || 0);
-      // find initial buy tx for this account & symbol
       const tx = (transactions || []).find(t => t.account_id === p.account_id && String(t.type).toLowerCase() === 'buy' && String(t.symbol || '').includes('FD-'));
       let rate = 0; let termMonths = 0; const startIso = tx ? String(tx.trade_date) : startDate;
       const note = (tx as any)?.notes || '';
@@ -117,7 +168,6 @@ export default function Investments() {
       const d = new Date(end.getFullYear(), end.getMonth() - i, 1);
       const dIso = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0,10);
       let total = 0;
-      // FD accrual: principal + accrued interest up to d
       Object.values(fdMetaByAccount).forEach(m => {
         if (!m.rate || !m.principal) return;
         const start = new Date(m.startDate || dIso);
@@ -126,7 +176,6 @@ export default function Investments() {
         const accrued = m.principal * m.rate * (cappedMonths / 12);
         total += m.principal + accrued;
       });
-      // Add other positions static market value as baseline
       (positions || []).forEach(p => {
         if (String(p.instrument_type).toLowerCase() !== 'fixed_deposit') {
           const mv = Number(p.market_value ?? (p.quantity || 0) * (p.current_price || p.avg_cost || 0));
@@ -138,155 +187,304 @@ export default function Investments() {
     return series;
   }, [positions, fdMetaByAccount]);
 
+  const metrics = useMemo(() => {
+    const totalValue = (positions || []).reduce((sum, p) => sum + Number(p.market_value ?? (p.quantity || 0) * (p.current_price || p.avg_cost || 0)), 0);
+    const totalUnrealized = (positions || []).reduce((sum, p) => sum + Number(p.unrealized_gain || 0), 0);
+    const year = new Date().getFullYear();
+    const dividendsYTD = (transactions || []).filter(t => String(t.type).toLowerCase() === 'dividend' && new Date(t.trade_date).getFullYear() === year).reduce((s, t) => s + Number(t.total_amount || 0), 0);
+    const interestYTD = (transactions || []).filter(t => String(t.type).toLowerCase() === 'interest' && new Date(t.trade_date).getFullYear() === year).reduce((s, t) => s + Number(t.total_amount || 0), 0);
+    
+    return { totalValue, totalUnrealized, dividendsYTD, interestYTD };
+  }, [positions, transactions]);
+
   const COLORS = ["#3B82F6", "#22C55E", "#F59E0B", "#EF4444", "#8B5CF6", "#06B6D4", "#84CC16", "#EC4899", "#F43F5E", "#10B981"];
+
+  const filteredPositions = useMemo(() => {
+    return positions.filter(p => 
+      p.symbol.toLowerCase().includes(search.toLowerCase()) || 
+      (p.instrument_type || '').toLowerCase().includes(search.toLowerCase())
+    );
+  }, [positions, search]);
+
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(t => {
+      const matchesSearch = t.symbol?.toLowerCase().includes(search.toLowerCase()) || t.type.toLowerCase().includes(search.toLowerCase());
+      const matchesFilter = txFilter === 'all' || t.type.toLowerCase() === txFilter;
+      return matchesSearch && matchesFilter;
+    });
+  }, [transactions, search, txFilter]);
 
   return (
     <>
       <SEO title="Investments | Rigel Business" description="Manage company investments" />
       <DashboardLayout>
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold">Investments</h1>
-              <p className="text-muted-foreground mt-1">Overview, Positions, Transactions, Performance, Reports</p>
+              <h1 className="text-3xl font-bold tracking-tight">Investments</h1>
+              <p className="text-muted-foreground">Manage portfolio, track performance, and record distributions</p>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => setBuyOpen(true)}>Record Buy</Button>
-              <Button variant="outline" onClick={() => setSellOpen(true)}>Record Sell</Button>
-              <Button variant="outline" onClick={() => setDivOpen(true)}>Dividend</Button>
-              <Button variant="outline" onClick={() => setIntOpen(true)}>Interest</Button>
-              <Button className="bg-gradient-primary" onClick={() => setFdOpen(true)}>New Fixed Deposit</Button>
+              <Button onClick={() => setActionsOpen(true)} className="shadow-md bg-gradient-primary">
+                <Menu className="h-4 w-4 mr-2" />
+                Quick Actions
+              </Button>
             </div>
           </div>
 
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList>
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="positions">Positions</TabsTrigger>
-              <TabsTrigger value="transactions">Transactions</TabsTrigger>
-              <TabsTrigger value="performance">Performance</TabsTrigger>
-              <TabsTrigger value="reports">Reports</TabsTrigger>
-            </TabsList>
+          {/* Metric Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricCard 
+              title="Total Portfolio Value" 
+              value={`R ${metrics.totalValue.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={Briefcase} 
+              color="from-blue-500 to-blue-600" 
+            />
+            <MetricCard 
+              title="Unrealized Gain" 
+              value={`R ${metrics.totalUnrealized.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={TrendingUp} 
+              color="from-emerald-500 to-emerald-600" 
+              trend={metrics.totalValue > 0 ? `${((metrics.totalUnrealized / metrics.totalValue) * 100).toFixed(1)}% Return` : undefined}
+            />
+            <MetricCard 
+              title="Dividends (YTD)" 
+              value={`R ${metrics.dividendsYTD.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={PieChartIcon} 
+              color="from-purple-500 to-purple-600" 
+            />
+            <MetricCard 
+              title="Interest (YTD)" 
+              value={`R ${metrics.interestYTD.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={DollarSign} 
+              color="from-orange-500 to-orange-600" 
+            />
+          </div>
 
-            <TabsContent value="overview">
-              <Card>
-                <CardHeader><CardTitle>Allocation</CardTitle></CardHeader>
-                <CardContent>
-                  {allocation.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">No positions</div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height={260}>
-                      <PieChart>
-                        <Pie data={allocation} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
-                          {allocation.map((entry, index) => (
-                            <Cell key={`alloc-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
-                        <Legend />
-                      </PieChart>
+          {/* Main Tabs */}
+          <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+            <div className="border-b pb-px overflow-x-auto">
+              <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0 rounded-none">
+                <TabsTrigger value="overview" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <LayoutDashboard className="h-4 w-4" />
+                  Overview
+                </TabsTrigger>
+                <TabsTrigger value="positions" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <Wallet className="h-4 w-4" />
+                  Positions
+                </TabsTrigger>
+                <TabsTrigger value="transactions" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <History className="h-4 w-4" />
+                  Transactions
+                </TabsTrigger>
+                <TabsTrigger value="performance" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4" />
+                  Performance
+                </TabsTrigger>
+                <TabsTrigger value="reports" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  Reports
+                </TabsTrigger>
+              </TabsList>
+            </div>
+
+            <TabsContent value="overview" className="space-y-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Asset Allocation</CardTitle>
+                    <CardDescription>Distribution by instrument type</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    {allocation.length === 0 ? (
+                      <div className="flex items-center justify-center h-[300px] text-muted-foreground">No assets allocated</div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height={300}>
+                        <PieChart>
+                          <Pie data={allocation} dataKey="value" nameKey="name" innerRadius={80} outerRadius={120} paddingAngle={2}>
+                            {allocation.map((entry, index) => (
+                              <Cell key={`alloc-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} 
+                            formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Value']} 
+                          />
+                          <Legend verticalAlign="bottom" height={36} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    )}
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Portfolio Trend</CardTitle>
+                    <CardDescription>Value over last 12 months</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                     <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={performanceSeries}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                        <XAxis dataKey="date" tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, {month:'short'})} stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                        <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(val) => `R${(val/1000).toFixed(0)}k`} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} 
+                          formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Portfolio Value']} 
+                          labelFormatter={(l) => new Date(l).toLocaleDateString()}
+                        />
+                        <Line type="monotone" dataKey="value" stroke="#3B82F6" strokeWidth={3} dot={false} activeDot={{ r: 6 }} />
+                      </LineChart>
                     </ResponsiveContainer>
-                  )}
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </div>
             </TabsContent>
 
             <TabsContent value="positions">
               <Card>
-                <CardHeader><CardTitle>Positions</CardTitle></CardHeader>
+                <CardHeader>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <CardTitle>Portfolio Positions</CardTitle>
+                      <CardDescription>Current holdings and valuations</CardDescription>
+                    </div>
+                    <div className="relative w-64">
+                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input placeholder="Search positions..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8" />
+                    </div>
+                  </div>
+                </CardHeader>
                 <CardContent>
-                  {positions.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">No positions</div>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Account</TableHead>
-                          <TableHead>Symbol</TableHead>
-                          <TableHead>Type</TableHead>
-                          <TableHead className="text-right">Quantity</TableHead>
-                          <TableHead className="text-right">Avg Cost</TableHead>
-                          <TableHead className="text-right">Market Value</TableHead>
-                          <TableHead className="text-right">Unrealized</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {positions.map(p => (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Symbol</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Account</TableHead>
+                        <TableHead className="text-right">Quantity</TableHead>
+                        <TableHead className="text-right">Avg Cost</TableHead>
+                        <TableHead className="text-right">Current Price</TableHead>
+                        <TableHead className="text-right">Market Value</TableHead>
+                        <TableHead className="text-right">Unrealized</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredPositions.length === 0 ? (
+                         <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No positions found</TableCell></TableRow>
+                      ) : (
+                        filteredPositions.map(p => (
                           <TableRow key={p.id}>
-                            <TableCell>{accounts.find(a => a.id === p.account_id)?.name || p.account_id}</TableCell>
-                            <TableCell>{p.symbol}</TableCell>
-                            <TableCell className="capitalize">{p.instrument_type}</TableCell>
+                            <TableCell className="font-medium">{p.symbol}</TableCell>
+                            <TableCell><Badge variant="outline" className="capitalize">{p.instrument_type.replace('_', ' ')}</Badge></TableCell>
+                            <TableCell className="text-muted-foreground">{accounts.find(a => a.id === p.account_id)?.name}</TableCell>
                             <TableCell className="text-right">{Number(p.quantity || 0).toLocaleString('en-ZA')}</TableCell>
                             <TableCell className="text-right">R {Number(p.avg_cost || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
-                            <TableCell className="text-right">R {Number(p.market_value ?? (p.quantity || 0) * (p.current_price || p.avg_cost || 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
-                            <TableCell className="text-right">R {Number(p.unrealized_gain || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                            <TableCell className="text-right font-mono">R {Number(p.current_price || p.avg_cost || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                            <TableCell className="text-right font-bold">R {Number(p.market_value ?? (p.quantity || 0) * (p.current_price || p.avg_cost || 0)).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                            <TableCell className={`text-right ${Number(p.unrealized_gain || 0) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              R {Number(p.unrealized_gain || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                            </TableCell>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
                 </CardContent>
               </Card>
             </TabsContent>
 
             <TabsContent value="transactions">
               <Card>
-                <CardHeader><CardTitle>Transactions</CardTitle></CardHeader>
+                <CardHeader>
+                   <div className="flex flex-col md:flex-row justify-between gap-4">
+                    <div>
+                      <CardTitle>Transaction History</CardTitle>
+                      <CardDescription>Record of buys, sells, and distributions</CardDescription>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-full md:w-64">
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                        <Input placeholder="Search transactions..." value={search} onChange={e => setSearch(e.target.value)} className="pl-8" />
+                      </div>
+                      <Select value={txFilter} onValueChange={setTxFilter}>
+                        <SelectTrigger className="w-[130px]">
+                          <Filter className="w-4 h-4 mr-2 text-muted-foreground" />
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Types</SelectItem>
+                          <SelectItem value="buy">Buy</SelectItem>
+                          <SelectItem value="sell">Sell</SelectItem>
+                          <SelectItem value="dividend">Dividend</SelectItem>
+                          <SelectItem value="interest">Interest</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </CardHeader>
                 <CardContent>
-                  {transactions.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">No transactions</div>
-                  ) : (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Date</TableHead>
-                          <TableHead>Type</TableHead>
-                          <TableHead>Symbol</TableHead>
-                          <TableHead className="text-right">Quantity</TableHead>
-                          <TableHead className="text-right">Price</TableHead>
-                          <TableHead className="text-right">Total</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {transactions.map(t => (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead>Symbol</TableHead>
+                        <TableHead className="text-right">Quantity</TableHead>
+                        <TableHead className="text-right">Price</TableHead>
+                        <TableHead className="text-right">Total Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredTransactions.length === 0 ? (
+                        <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No transactions found</TableCell></TableRow>
+                      ) : (
+                        filteredTransactions.map(t => (
                           <TableRow key={t.id}>
                             <TableCell>{new Date(t.trade_date).toLocaleDateString()}</TableCell>
-                            <TableCell className="capitalize">{t.type}</TableCell>
+                            <TableCell>
+                              <Badge variant={t.type === 'buy' ? 'default' : t.type === 'sell' ? 'destructive' : 'secondary'} className="capitalize">
+                                {t.type}
+                              </Badge>
+                            </TableCell>
                             <TableCell>{t.symbol || '-'}</TableCell>
-                            <TableCell className="text-right">{Number(t.quantity || 0).toLocaleString('en-ZA')}</TableCell>
-                            <TableCell className="text-right">R {Number(t.price || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
-                            <TableCell className="text-right">R {Number(t.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                            <TableCell className="text-right">{t.quantity ? Number(t.quantity).toLocaleString('en-ZA') : '-'}</TableCell>
+                            <TableCell className="text-right font-mono">{t.price ? `R ${Number(t.price).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : '-'}</TableCell>
+                            <TableCell className="text-right font-mono font-medium">R {Number(t.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  )}
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
                 </CardContent>
               </Card>
             </TabsContent>
 
             <TabsContent value="performance">
               <Card>
-                <CardHeader><CardTitle>Performance</CardTitle></CardHeader>
+                <CardHeader><CardTitle>Detailed Performance</CardTitle></CardHeader>
                 <CardContent>
-                  {performanceSeries.length === 0 ? (
-                    <div className="text-sm text-muted-foreground">No performance data</div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height={260}>
+                   <ResponsiveContainer width="100%" height={400}>
                       <LineChart data={performanceSeries}>
-                        <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, 'Portfolio Value']} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                        <XAxis dataKey="date" tickFormatter={(val) => new Date(val).toLocaleDateString()} stroke="hsl(var(--muted-foreground))" />
+                        <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(val) => `R${(val/1000).toFixed(0)}k`} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: 'hsl(var(--popover))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} 
+                          formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Portfolio Value']} 
+                          labelFormatter={(l) => new Date(l).toLocaleDateString()}
+                        />
                         <Legend />
-                        <Line type="monotone" dataKey="value" stroke="#3B82F6" strokeWidth={2} dot={false} />
+                        <Line type="monotone" dataKey="value" name="Portfolio Value" stroke="#8B5CF6" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
                       </LineChart>
                     </ResponsiveContainer>
-                  )}
                 </CardContent>
               </Card>
             </TabsContent>
 
             <TabsContent value="reports">
-              <Card>
-                <CardHeader><CardTitle>Reports</CardTitle></CardHeader>
+               <Card>
+                <CardHeader><CardTitle>Income Reports</CardTitle></CardHeader>
                 <CardContent>
                   {(() => {
                     const now = new Date();
@@ -303,22 +501,33 @@ export default function Investments() {
                       return s + accrued;
                     }, 0);
                     return (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                          <div>
-                            <p className="text-sm text-muted-foreground">Dividends (YTD)</p>
-                            <p className="text-2xl font-bold">R {dividendsYTD.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-muted-foreground">Interest (YTD)</p>
-                            <p className="text-2xl font-bold">R {interestYTD.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
-                          </div>
-                          <div>
-                            <p className="text-sm text-muted-foreground">FD Interest Accrued (Total)</p>
-                            <p className="text-2xl font-bold">R {fdAccruedTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
-                          </div>
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          <Card className="bg-muted/20 border-dashed">
+                            <CardContent className="p-6 text-center">
+                              <p className="text-sm text-muted-foreground mb-1">Dividends (YTD)</p>
+                              <p className="text-2xl font-bold text-purple-600">R {dividendsYTD.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
+                            </CardContent>
+                          </Card>
+                          <Card className="bg-muted/20 border-dashed">
+                            <CardContent className="p-6 text-center">
+                              <p className="text-sm text-muted-foreground mb-1">Interest (YTD)</p>
+                              <p className="text-2xl font-bold text-orange-600">R {interestYTD.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
+                            </CardContent>
+                          </Card>
+                          <Card className="bg-muted/20 border-dashed">
+                            <CardContent className="p-6 text-center">
+                              <p className="text-sm text-muted-foreground mb-1">Accrued Interest (FD)</p>
+                              <p className="text-2xl font-bold text-emerald-600">R {fdAccruedTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</p>
+                            </CardContent>
+                          </Card>
                         </div>
-                        <div className="flex justify-end">
+                        <Separator />
+                        <div className="flex items-center justify-between">
+                          <div>
+                             <h4 className="text-sm font-semibold">Data Export</h4>
+                             <p className="text-sm text-muted-foreground">Download your transaction history as CSV</p>
+                          </div>
                           <Button variant="outline" onClick={() => {
                             const rows = (transactions || []).map(t => ({ date: t.trade_date, type: t.type, symbol: t.symbol || '', amount: t.total_amount }));
                             const header = 'Date,Type,Symbol,Amount\n';
@@ -326,7 +535,10 @@ export default function Investments() {
                             const blob = new Blob([header + body], { type: 'text/csv;charset=utf-8;' });
                             const url = URL.createObjectURL(blob);
                             const a = document.createElement('a'); a.href = url; a.download = 'investment-transactions.csv'; a.click(); URL.revokeObjectURL(url);
-                          }}>Export CSV</Button>
+                          }}>
+                            <FileText className="h-4 w-4 mr-2" />
+                            Export CSV
+                          </Button>
                         </div>
                       </div>
                     );
@@ -335,12 +547,57 @@ export default function Investments() {
               </Card>
             </TabsContent>
           </Tabs>
+
+          {/* Quick Actions Sheet */}
+          <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
+            <SheetContent className="sm:max-w-[400px]">
+              <SheetHeader>
+                <SheetTitle>Quick Actions</SheetTitle>
+                <SheetDescription>Record investment activities</SheetDescription>
+              </SheetHeader>
+              <div className="grid gap-4 py-6">
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Trades</h4>
+                  <Button className="w-full justify-start" onClick={() => { setActionsOpen(false); setBuyOpen(true); }}>
+                    <ArrowDownLeft className="h-4 w-4 mr-2 text-emerald-500" />
+                    Record Buy
+                  </Button>
+                  <Button className="w-full justify-start" onClick={() => { setActionsOpen(false); setSellOpen(true); }}>
+                    <ArrowUpRight className="h-4 w-4 mr-2 text-red-500" />
+                    Record Sell
+                  </Button>
+                </div>
+                <Separator />
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Income</h4>
+                  <Button className="w-full justify-start" variant="outline" onClick={() => { setActionsOpen(false); setDivOpen(true); }}>
+                    <PieChartIcon className="h-4 w-4 mr-2" />
+                    Record Dividend
+                  </Button>
+                  <Button className="w-full justify-start" variant="outline" onClick={() => { setActionsOpen(false); setIntOpen(true); }}>
+                    <DollarSign className="h-4 w-4 mr-2" />
+                    Record Interest
+                  </Button>
+                </div>
+                <Separator />
+                <div className="space-y-2">
+                  <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Fixed Deposits</h4>
+                  <Button className="w-full justify-start" variant="outline" onClick={() => { setActionsOpen(false); setFdOpen(true); }}>
+                    <Landmark className="h-4 w-4 mr-2" />
+                    New Fixed Deposit
+                  </Button>
+                </div>
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          {/* Buy Dialog */}
           <Dialog open={buyOpen} onOpenChange={setBuyOpen}>
-            <DialogContent className="sm:max-w-[560px] p-4">
-              <DialogHeader><DialogTitle>Record Buy</DialogTitle></DialogHeader>
-              <div className="space-y-3">
+            <DialogContent className="sm:max-w-[500px]">
+              <DialogHeader><DialogTitle>Record Buy Order</DialogTitle></DialogHeader>
+              <div className="space-y-4 py-2">
                 <div>
-                  <label className="text-sm">Investment Account</label>
+                  <Label>Investment Account</Label>
                   <Select value={actionAccountId} onValueChange={(v: any) => setActionAccountId(v)}>
                     <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
                     <SelectContent>
@@ -348,13 +605,13 @@ export default function Investments() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm">Symbol</label>
-                    <Input value={symbol} onChange={e => setSymbol(e.target.value)} />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Symbol</Label>
+                    <Input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g. AAPL" />
                   </div>
-                  <div>
-                    <label className="text-sm">Bank</label>
+                  <div className="space-y-2">
+                    <Label>Bank Source</Label>
                     <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
                       <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
                       <SelectContent>
@@ -364,22 +621,22 @@ export default function Investments() {
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-sm">Quantity</label>
+                  <div className="space-y-2">
+                    <Label>Quantity</Label>
                     <Input inputMode="decimal" value={quantity} onChange={e => setQuantity(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Price</label>
+                  <div className="space-y-2">
+                    <Label>Price</Label>
                     <Input inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Date</label>
+                  <div className="space-y-2">
+                    <Label>Date</Label>
                     <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
                   </div>
                 </div>
-                <div className="flex justify-end gap-2">
+                <DialogFooter className="pt-4">
                   <Button variant="outline" onClick={() => setBuyOpen(false)}>Cancel</Button>
-                  <Button className="bg-gradient-primary" onClick={async () => {
+                  <Button onClick={async () => {
                     try {
                       await transactionsApi.postInvestmentBuy({ accountId: actionAccountId, symbol, quantity: parseFloat(quantity||'0'), price: parseFloat(price||'0'), date: startDate, bankAccountId: actionBankId });
                       toast({ title: 'Recorded', description: 'Investment buy posted' });
@@ -387,18 +644,19 @@ export default function Investments() {
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
                     }
-                  }}>Post</Button>
-                </div>
+                  }}>Record Buy</Button>
+                </DialogFooter>
               </div>
             </DialogContent>
           </Dialog>
 
+          {/* Sell Dialog */}
           <Dialog open={sellOpen} onOpenChange={setSellOpen}>
-            <DialogContent className="sm:max-w-[560px] p-4">
-              <DialogHeader><DialogTitle>Record Sell</DialogTitle></DialogHeader>
-              <div className="space-y-3">
+            <DialogContent className="sm:max-w-[500px]">
+              <DialogHeader><DialogTitle>Record Sell Order</DialogTitle></DialogHeader>
+              <div className="space-y-4 py-2">
                 <div>
-                  <label className="text-sm">Investment Account</label>
+                  <Label>Investment Account</Label>
                   <Select value={actionAccountId} onValueChange={(v: any) => setActionAccountId(v)}>
                     <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
                     <SelectContent>
@@ -406,13 +664,13 @@ export default function Investments() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm">Symbol</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Symbol</Label>
                     <Input value={symbol} onChange={e => setSymbol(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Bank</label>
+                  <div className="space-y-2">
+                    <Label>Bank Destination</Label>
                     <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
                       <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
                       <SelectContent>
@@ -422,22 +680,22 @@ export default function Investments() {
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-sm">Quantity</label>
+                  <div className="space-y-2">
+                    <Label>Quantity</Label>
                     <Input inputMode="decimal" value={quantity} onChange={e => setQuantity(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Price</label>
+                  <div className="space-y-2">
+                    <Label>Price</Label>
                     <Input inputMode="decimal" value={price} onChange={e => setPrice(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Date</label>
+                  <div className="space-y-2">
+                    <Label>Date</Label>
                     <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
                   </div>
                 </div>
-                <div className="flex justify-end gap-2">
+                <DialogFooter className="pt-4">
                   <Button variant="outline" onClick={() => setSellOpen(false)}>Cancel</Button>
-                  <Button className="bg-gradient-primary" onClick={async () => {
+                  <Button variant="destructive" onClick={async () => {
                     try {
                       await transactionsApi.postInvestmentSell({ accountId: actionAccountId, symbol, quantity: parseFloat(quantity||'0'), price: parseFloat(price||'0'), date: startDate, bankAccountId: actionBankId });
                       toast({ title: 'Recorded', description: 'Investment sell posted' });
@@ -445,19 +703,20 @@ export default function Investments() {
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
                     }
-                  }}>Post</Button>
-                </div>
+                  }}>Record Sell</Button>
+                </DialogFooter>
               </div>
             </DialogContent>
           </Dialog>
 
+          {/* Dividend Dialog */}
           <Dialog open={divOpen} onOpenChange={setDivOpen}>
-            <DialogContent className="sm:max-w-[560px] p-4">
+            <DialogContent className="sm:max-w-[500px]">
               <DialogHeader><DialogTitle>Record Dividend</DialogTitle></DialogHeader>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm">Investment Account</label>
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Investment Account</Label>
                     <Select value={actionAccountId} onValueChange={(v: any) => setActionAccountId(v)}>
                       <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
                       <SelectContent>
@@ -465,8 +724,8 @@ export default function Investments() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <label className="text-sm">Bank</label>
+                  <div className="space-y-2">
+                    <Label>Bank Destination</Label>
                     <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
                       <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
                       <SelectContent>
@@ -475,21 +734,21 @@ export default function Investments() {
                     </Select>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-sm">Amount</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Amount</Label>
                     <Input inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Symbol (optional)</label>
-                    <Input value={symbol} onChange={e => setSymbol(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-sm">Date</label>
+                  <div className="space-y-2">
+                    <Label>Date</Label>
                     <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
                   </div>
                 </div>
-                <div className="flex justify-end gap-2">
+                <div className="space-y-2">
+                  <Label>Symbol (Optional)</Label>
+                  <Input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g. AAPL" />
+                </div>
+                <DialogFooter className="pt-4">
                   <Button variant="outline" onClick={() => setDivOpen(false)}>Cancel</Button>
                   <Button className="bg-gradient-primary" onClick={async () => {
                     try {
@@ -499,19 +758,20 @@ export default function Investments() {
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
                     }
-                  }}>Post</Button>
-                </div>
+                  }}>Record Dividend</Button>
+                </DialogFooter>
               </div>
             </DialogContent>
           </Dialog>
 
+          {/* Interest Dialog */}
           <Dialog open={intOpen} onOpenChange={(o) => { setIntOpen(o); if (o && actionAccountId) { const auto = fdMonthlyInterest(actionAccountId); if (auto > 0) setAmount(String(auto.toFixed(2))); } }}>
-            <DialogContent className="sm:max-w-[560px] p-4">
+            <DialogContent className="sm:max-w-[500px]">
               <DialogHeader><DialogTitle>Record Interest</DialogTitle></DialogHeader>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm">Investment Account</label>
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Investment Account</Label>
                     <Select value={actionAccountId} onValueChange={(v: any) => setActionAccountId(v)}>
                       <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
                       <SelectContent>
@@ -519,8 +779,8 @@ export default function Investments() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <label className="text-sm">Bank</label>
+                  <div className="space-y-2">
+                    <Label>Bank Destination</Label>
                     <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
                       <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
                       <SelectContent>
@@ -529,17 +789,17 @@ export default function Investments() {
                     </Select>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm">Amount</label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Amount</Label>
                     <Input inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Date</label>
+                  <div className="space-y-2">
+                    <Label>Date</Label>
                     <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
                   </div>
                 </div>
-                <div className="flex justify-end gap-2">
+                <DialogFooter className="pt-4">
                   <Button variant="outline" onClick={() => setIntOpen(false)}>Cancel</Button>
                   <Button className="bg-gradient-primary" onClick={async () => {
                     try {
@@ -551,23 +811,24 @@ export default function Investments() {
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
                     }
-                  }}>Post</Button>
-                </div>
+                  }}>Record Interest</Button>
+                </DialogFooter>
               </div>
             </DialogContent>
           </Dialog>
 
+          {/* FD Dialog */}
           <Dialog open={fdOpen} onOpenChange={setFdOpen}>
-            <DialogContent className="sm:max-w-[600px] p-4">
+            <DialogContent className="sm:max-w-[600px]">
               <DialogHeader><DialogTitle>New Fixed Deposit</DialogTitle></DialogHeader>
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm">Account Name</label>
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Account/Deposit Name</Label>
                     <Input value={symbol} onChange={e => setSymbol(e.target.value)} placeholder="e.g., FD - 6 Months" />
                   </div>
-                  <div>
-                    <label className="text-sm">Bank</label>
+                  <div className="space-y-2">
+                    <Label>Bank Source</Label>
                     <Select value={actionBankId} onValueChange={(v: any) => setActionBankId(v)}>
                       <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
                       <SelectContent>
@@ -577,39 +838,37 @@ export default function Investments() {
                   </div>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-sm">Amount</label>
+                  <div className="space-y-2">
+                    <Label>Amount</Label>
                     <Input inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Interest Rate (%)</label>
+                  <div className="space-y-2">
+                    <Label>Interest Rate (%)</Label>
                     <Input inputMode="decimal" value={rate} onChange={e => setRate(e.target.value)} />
                   </div>
-                  <div>
-                    <label className="text-sm">Term (months)</label>
+                  <div className="space-y-2">
+                    <Label>Term (months)</Label>
                     <Input inputMode="numeric" value={termMonths} onChange={e => setTermMonths(e.target.value)} />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-sm">Start Date</label>
-                    <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-                  </div>
+                <div className="space-y-2">
+                  <Label>Start Date</Label>
+                  <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
                 </div>
-                <div className="flex justify-end gap-2">
+                <DialogFooter className="pt-4">
                   <Button variant="outline" onClick={() => setFdOpen(false)}>Cancel</Button>
                   <Button className="bg-gradient-primary" onClick={async () => {
                     try {
                       const amt = parseFloat(amount||'0');
                       const r = parseFloat(rate||'0')/100;
                       await transactionsApi.postFixedDepositOpen({ name: symbol || `Fixed Deposit`, amount: amt, rate: r, termMonths: parseInt(termMonths||'0', 10), date: startDate, bankAccountId: actionBankId });
-                      toast({ title: 'Fixed Deposit Created', description: 'FD posted and recorded' });
+                      toast({ title: 'Success', description: 'Fixed Deposit created' });
                       setFdOpen(false); loadAll();
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
                     }
-                  }}>Create</Button>
-                </div>
+                  }}>Create Deposit</Button>
+                </DialogFooter>
               </div>
             </DialogContent>
           </Dialog>

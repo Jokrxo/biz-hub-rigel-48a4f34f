@@ -1,15 +1,24 @@
-import { useState, useEffect, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Building2, Plus, Mail, Phone, FileText } from "lucide-react";
+import { Building2, Plus, Mail, Phone, FileText, Search, MoreHorizontal, Edit, Trash2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
+import { SupplierStatement } from "@/components/Purchase/SupplierStatement";
 
 interface Supplier {
   id: string;
@@ -27,6 +36,7 @@ export const SupplierManagement = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [formData, setFormData] = useState({
     name: "",
@@ -59,10 +69,21 @@ export const SupplierManagement = () => {
       setLoading(false);
     }
   }, [user?.id, toast]);
+
   useEffect(() => {
     loadSuppliers();
   }, [loadSuppliers]);
 
+  const filteredSuppliers = useMemo(() => {
+    if (!searchTerm) return suppliers;
+    const lower = searchTerm.toLowerCase();
+    return suppliers.filter(s => 
+      s.name.toLowerCase().includes(lower) || 
+      (s.email && s.email.toLowerCase().includes(lower)) ||
+      (s.phone && s.phone.includes(lower)) ||
+      (s.tax_number && s.tax_number.includes(lower))
+    );
+  }, [suppliers, searchTerm]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +108,11 @@ export const SupplierManagement = () => {
 
       const { error, data: inserted } = await supabase.from("suppliers").insert({
         company_id: profile!.company_id,
-        ...formData,
+        name: formData.name,
+        email: formData.email || null,
+        phone: formData.phone || null,
+        address: formData.address || null,
+        tax_number: formData.tax_number || null,
       }).select('id').single();
 
       if (error) throw error;
@@ -148,28 +173,31 @@ export const SupplierManagement = () => {
     }
   };
 
+  const deleteSupplier = async (id: string) => {
+    if (!confirm("Are you sure? This will fail if the supplier has linked transactions.")) return;
+    try {
+      const { error } = await supabase.from('suppliers').delete().eq('id', id);
+      if (error) throw error;
+      toast({ title: "Success", description: "Supplier deleted" });
+      loadSuppliers();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
   const canEdit = isAdmin || isAccountant;
-  const [page, setPage] = useState(0);
-  const [pageSize] = useState(7);
-  const totalCount = suppliers.length;
-  const start = page * pageSize;
-  const pagedSuppliers = suppliers.slice(start, start + pageSize);
-  useEffect(() => { setPage(0); }, [suppliers.length]);
   const [statementOpen, setStatementOpen] = useState<boolean>(false);
   const [statementSupplier, setStatementSupplier] = useState<Supplier | null>(null);
 
   return (
-    <Card className="mt-6">
+    <Card className="card-professional">
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5 text-primary" />
-            Suppliers
-          </CardTitle>
+        <div className="flex items-center justify-between gap-4">
+          <CardTitle>Suppliers</CardTitle>
           {canEdit && (
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
-                <Button className="bg-gradient-primary" size="sm">
+                <Button className="bg-gradient-primary shadow-elegant hover:shadow-lg transition-all">
                   <Plus className="h-4 w-4 mr-2" />
                   Add Supplier
                 </Button>
@@ -213,33 +241,33 @@ export const SupplierManagement = () => {
                       placeholder="Physical address"
                     />
                   </div>
-                <div>
-                  <Label>Tax Number</Label>
-                  <Input
-                    value={formData.tax_number}
-                    onChange={(e) => setFormData({ ...formData, tax_number: e.target.value })}
-                    placeholder="Tax registration number"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label>Opening Balance</Label>
+                    <Label>Tax Number</Label>
                     <Input
-                      type="number"
-                      value={formData.opening_balance}
-                      onChange={(e) => setFormData({ ...formData, opening_balance: e.target.value })}
-                      placeholder="0.00"
+                      value={formData.tax_number}
+                      onChange={(e) => setFormData({ ...formData, tax_number: e.target.value })}
+                      placeholder="Tax registration number"
                     />
                   </div>
-                  <div>
-                    <Label>Opening Balance Date</Label>
-                    <Input
-                      type="date"
-                      value={formData.opening_balance_date}
-                      onChange={(e) => setFormData({ ...formData, opening_balance_date: e.target.value })}
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label>Opening Balance</Label>
+                      <Input
+                        type="number"
+                        value={formData.opening_balance}
+                        onChange={(e) => setFormData({ ...formData, opening_balance: e.target.value })}
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <Label>Opening Balance Date</Label>
+                      <Input
+                        type="date"
+                        value={formData.opening_balance_date}
+                        onChange={(e) => setFormData({ ...formData, opening_balance_date: e.target.value })}
+                      />
+                    </div>
                   </div>
-                </div>
                   <Button type="submit" className="w-full bg-gradient-primary">
                     Add Supplier
                   </Button>
@@ -250,70 +278,100 @@ export const SupplierManagement = () => {
         </div>
       </CardHeader>
       <CardContent>
-        {loading ? (
-          <div className="text-center py-8 text-muted-foreground">Loading...</div>
-        ) : suppliers.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">No suppliers added yet</div>
-        ) : (
-          <>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Supplier Name</TableHead>
-                <TableHead>Contact</TableHead>
-                <TableHead>Tax Number</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pagedSuppliers.map((supplier) => (
-                <TableRow key={supplier.id}>
-                  <TableCell className="font-medium">{supplier.name}</TableCell>
-                  <TableCell>
-                    <div className="space-y-1">
-                      {supplier.email && (
-                        <div className="flex items-center gap-1 text-sm">
-                          <Mail className="h-3 w-3" />
-                          {supplier.email}
-                        </div>
-                      )}
-                      {supplier.phone && (
-                        <div className="flex items-center gap-1 text-sm">
-                          <Phone className="h-3 w-3" />
-                          {supplier.phone}
-                        </div>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground">{supplier.tax_number || "-"}</TableCell>
-                  <TableCell className="text-right">
-                    <Button size="sm" variant="outline" onClick={() => { setStatementSupplier(supplier); setStatementOpen(true); }}>
-                      <FileText className="h-3 w-3 mr-1" /> Statement
-                    </Button>
-                  </TableCell>
+        <div className="relative max-w-sm mb-6">
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search suppliers..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-8"
+          />
+        </div>
+
+        <div className="rounded-md border">
+          {loading ? (
+            <div className="text-center py-8 text-muted-foreground">Loading...</div>
+          ) : suppliers.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Building2 className="h-12 w-12 mx-auto mb-4 opacity-20" />
+              <p>No suppliers found</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Supplier Name</TableHead>
+                  <TableHead>Contact</TableHead>
+                  <TableHead>Tax Number</TableHead>
+                  <TableHead className="w-[50px]"></TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground">
-              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedSuppliers.length} of {totalCount}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-              <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
-            </div>
-          </div>
-          </>
-        )}
+              </TableHeader>
+              <TableBody>
+                {filteredSuppliers.map((supplier) => (
+                  <TableRow key={supplier.id}>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-xs">
+                          {supplier.name.substring(0, 2).toUpperCase()}
+                        </div>
+                        {supplier.name}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        {supplier.email && (
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <Mail className="h-3 w-3" />
+                            {supplier.email}
+                          </div>
+                        )}
+                        {supplier.phone && (
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <Phone className="h-3 w-3" />
+                            {supplier.phone}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{supplier.tax_number || "-"}</TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" className="h-8 w-8 p-0">
+                            <span className="sr-only">Open menu</span>
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => { setStatementSupplier(supplier); setStatementOpen(true); }}>
+                            <FileText className="mr-2 h-4 w-4" /> View Statement
+                          </DropdownMenuItem>
+                          {canEdit && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => deleteSupplier(supplier.id)} className="text-destructive">
+                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+
+        <SupplierStatement
+          supplierId={statementSupplier?.id || ""}
+          supplierName={statementSupplier?.name || ""}
+          open={statementOpen}
+          onOpenChange={(v) => { setStatementOpen(v); if (!v) setStatementSupplier(null); }}
+        />
       </CardContent>
-      <SupplierStatement
-        supplierId={statementSupplier?.id || ""}
-        supplierName={statementSupplier?.name || ""}
-        open={statementOpen}
-        onOpenChange={(v) => { setStatementOpen(v); if (!v) setStatementSupplier(null); }}
-      />
     </Card>
   );
 };
-import { SupplierStatement } from "@/components/Purchase/SupplierStatement";

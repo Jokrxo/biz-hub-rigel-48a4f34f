@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Download, FileText, ArrowRight, Mail, Info } from "lucide-react";
+import { Plus, Download, FileText, ArrowRight, Mail, Info, LayoutDashboard, TrendingUp, CheckCircle2, XCircle, AlertCircle, Clock, Users, Filter } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { buildQuotePDF, type QuoteForPDF, type QuoteItemForPDF, type CompanyForPDF } from '@/lib/quote-export';
 import { addLogoToPDF, fetchLogoDataUrl } from '@/lib/invoice-export';
@@ -17,6 +17,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet";
+import { MetricCard } from "@/components/ui/MetricCard";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
 
 interface Quote {
   id: string;
@@ -29,6 +33,8 @@ interface Quote {
   status: string;
 }
 
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
+
 export default function QuotesPage() {
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,7 +46,9 @@ export default function QuotesPage() {
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const navigate = useNavigate();
   const [page, setPage] = useState(0);
-  const [pageSize] = useState(7);
+  const [pageSize] = useState(10);
+  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
+  const [tab, setTab] = useState("all");
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -58,32 +66,25 @@ export default function QuotesPage() {
   const [endDate, setEndDate] = useState<string>("");
 
   const fetchCompanyForPDF = async (): Promise<CompanyForPDF> => {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('companies')
       .select('name,email,phone,address,tax_number,vat_number,logo_url')
       .limit(1)
       .maybeSingle();
-    if (error || !data) {
-      return { name: 'Company' } as CompanyForPDF;
-    }
     return {
-      name: (data as any).name,
-      email: (data as any).email,
-      phone: (data as any).phone,
-      address: (data as any).address,
-      tax_number: (data as any).tax_number ?? null,
-      vat_number: (data as any).vat_number ?? null,
-      logo_url: (data as any).logo_url ?? null,
+      name: (data as any)?.name || 'Company',
+      email: (data as any)?.email,
+      phone: (data as any)?.phone,
+      address: (data as any)?.address,
+      tax_number: (data as any)?.tax_number ?? null,
+      vat_number: (data as any)?.vat_number ?? null,
+      logo_url: (data as any)?.logo_url ?? null,
     } as CompanyForPDF;
   };
 
   const fetchQuoteItemsForPDF = async (quoteId: string): Promise<QuoteItemForPDF[]> => {
-    const { data, error } = await supabase
-      .from('quote_items')
-      .select('description,quantity,unit_price,tax_rate')
-      .eq('quote_id', quoteId);
-    if (error || !data) return [];
-    return data as any;
+    const { data } = await supabase.from('quote_items').select('description,quantity,unit_price,tax_rate').eq('quote_id', quoteId);
+    return (data || []) as any;
   };
 
   const mapQuoteForPDF = (q: any): QuoteForPDF => ({
@@ -212,8 +213,6 @@ export default function QuotesPage() {
     }
   }, [user?.id]);
 
-  
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin && !isAccountant) {
@@ -306,144 +305,258 @@ export default function QuotesPage() {
   };
 
   const canEdit = isAdmin || isAccountant;
+  
   const filteredQuotes = useMemo(() => {
     return quotes.filter((q) => {
       const qd = new Date(q.quote_date).getTime();
       const afterStart = startDate ? qd >= new Date(startDate).getTime() : true;
       const beforeEnd = endDate ? qd <= new Date(endDate).getTime() : true;
-      return afterStart && beforeEnd;
+      
+      let matchesTab = true;
+      if (tab === 'draft') matchesTab = q.status === 'draft';
+      else if (tab === 'accepted') matchesTab = q.status === 'accepted' || q.status === 'converted';
+      else if (tab === 'sent') matchesTab = q.status === 'sent';
+      else if (tab === 'expired') matchesTab = q.status === 'expired';
+
+      return afterStart && beforeEnd && matchesTab;
     });
-  }, [quotes, startDate, endDate]);
+  }, [quotes, startDate, endDate, tab]);
 
   const totalCount = filteredQuotes.length;
   const start = page * pageSize;
   const pagedQuotes = filteredQuotes.slice(start, start + pageSize);
 
-  useEffect(() => { setPage(0); }, [startDate, endDate]);
+  useEffect(() => { setPage(0); }, [startDate, endDate, tab]);
+
+  // Metrics
+  const metrics = {
+    total: quotes.reduce((acc, q) => acc + Number(q.total_amount || 0), 0),
+    count: quotes.length,
+    accepted: quotes.filter(q => q.status === 'accepted' || q.status === 'converted').length,
+    draft: quotes.filter(q => q.status === 'draft').length,
+  };
+
+  const statusData = [
+    { name: 'Draft', value: quotes.filter(q => q.status === 'draft').length },
+    { name: 'Sent', value: quotes.filter(q => q.status === 'sent').length },
+    { name: 'Accepted', value: quotes.filter(q => q.status === 'accepted' || q.status === 'converted').length },
+    { name: 'Expired', value: quotes.filter(q => q.status === 'expired').length },
+  ].filter(i => i.value > 0);
 
   return (
     <>
       <SEO title="Sales Quotes | Rigel Business" description="View and download quotes; create quotes in Sales module" />
       <DashboardLayout>
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          {/* Header */}
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold">Sales Quotes</h1>
-              <p className="text-muted-foreground mt-1">View and download quotes. To create quotes, use Sales → Quotes.</p>
+              <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">Quotes Management</h1>
+              <p className="text-muted-foreground mt-1">Manage customer quotes, track conversions, and follow up</p>
             </div>
-            <div className="flex gap-3">
-              <Button variant="outline" disabled={quotes.length === 0} onClick={() => toast({ title: 'Use per-quote Download below' })}>
-                <Download className="h-4 w-4 mr-2" />
-                Export
-              </Button>
-              <Button variant="outline" onClick={() => navigate('/sales?tab=quotes')}>
-                <ArrowRight className="h-4 w-4 mr-2" />
-                Go to Sales Quotes
-              </Button>
-              <Button onClick={() => setTutorialOpen(true)} variant="outline">
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setTutorialOpen(true)}>
                 <Info className="h-4 w-4 mr-2" />
-                Help & Tutorial
+                Help
               </Button>
+              <Sheet open={isQuickActionsOpen} onOpenChange={setIsQuickActionsOpen}>
+                <SheetTrigger asChild>
+                  <Button className="bg-gradient-primary shadow-lg hover:shadow-xl transition-all">
+                    <Plus className="h-4 w-4 mr-2" /> Quick Actions
+                  </Button>
+                </SheetTrigger>
+                <SheetContent>
+                  <SheetHeader>
+                    <SheetTitle>Quote Actions</SheetTitle>
+                    <SheetDescription>Quickly manage your sales pipeline</SheetDescription>
+                  </SheetHeader>
+                  <div className="grid gap-4 py-4">
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { navigate('/sales?tab=quotes'); setIsQuickActionsOpen(false); }}>
+                      <FileText className="h-5 w-5 mr-3 text-purple-500" />
+                      Create Quote
+                    </Button>
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { navigate('/customers'); setIsQuickActionsOpen(false); }}>
+                      <Users className="h-5 w-5 mr-3 text-green-500" />
+                      Add Customer
+                    </Button>
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { navigate('/sales'); setIsQuickActionsOpen(false); }}>
+                      <ArrowRight className="h-5 w-5 mr-3 text-blue-500" />
+                      Go to Sales
+                    </Button>
+                  </div>
+                </SheetContent>
+              </Sheet>
             </div>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5 text-primary" />
-                All Quotes
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <div className="text-center py-8 text-muted-foreground">Loading...</div>
-              ) : quotes.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">No quotes yet. To create quotes, use Sales → Quotes.</div>
-              ) : (
-                <>
-                  <div className="flex items-end gap-3 mb-4">
+          {/* Metrics */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <MetricCard 
+              title="Total Value" 
+              value={`R ${metrics.total.toLocaleString('en-ZA')}`} 
+              icon={<FileText className="h-4 w-4" />}
+              gradient="bg-purple-500/10"
+              className="border-l-4 border-l-purple-500"
+            />
+            <MetricCard 
+              title="Total Quotes" 
+              value={metrics.count.toString()} 
+              icon={<LayoutDashboard className="h-4 w-4" />}
+              gradient="bg-blue-500/10"
+              className="border-l-4 border-l-blue-500"
+            />
+            <MetricCard 
+              title="Accepted" 
+              value={metrics.accepted.toString()} 
+              icon={<CheckCircle2 className="h-4 w-4" />}
+              gradient="bg-green-500/10"
+              className="border-l-4 border-l-green-500"
+            />
+            <MetricCard 
+              title="Drafts" 
+              value={metrics.draft.toString()} 
+              icon={<Clock className="h-4 w-4" />}
+              gradient="bg-orange-500/10"
+              className="border-l-4 border-l-orange-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <Card className="lg:col-span-2">
+               <CardHeader>
+                <CardTitle>Quotes Overview</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-end gap-3 mb-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <Label>From</Label>
-                        <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                        <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-9" />
                       </div>
                       <div>
                         <Label>To</Label>
-                        <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+                        <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-9" />
                       </div>
                     </div>
-                    <Button variant="outline" onClick={() => { setStartDate(""); setEndDate(""); }}>Clear</Button>
+                    <Button variant="outline" size="sm" onClick={() => { setStartDate(""); setEndDate(""); }}>Clear</Button>
                   </div>
-                  {filteredQuotes.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">No quotes in selected range</div>
-                  ) : (
-                    <>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Quote #</TableHead>
-                          <TableHead>Customer</TableHead>
-                          <TableHead>Date</TableHead>
-                          <TableHead>Expiry</TableHead>
-                          <TableHead className="text-right">Amount</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pagedQuotes.map((quote) => (
-                          <TableRow key={quote.id}>
-                            <TableCell className="font-medium">{quote.quote_number}</TableCell>
-                            <TableCell>{quote.customer_name}</TableCell>
-                        <TableCell>{formatDate(quote.quote_date, dateFormat)}</TableCell>
-                        <TableCell>{quote.expiry_date ? formatDate(quote.expiry_date, dateFormat) : "-"}</TableCell>
-                            <TableCell className="text-right font-semibold">R {quote.total_amount.toLocaleString()}</TableCell>
-                            <TableCell>
-                              <span className={`px-2 py-1 rounded text-xs ${
-                                quote.status === 'converted' ? 'bg-primary/10 text-primary' :
-                                quote.status === 'accepted' ? 'bg-accent/10 text-accent' :
-                                'bg-muted text-muted-foreground'
-                              }`}>
-                                {quote.status}
-                              </span>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-2">
-                                {quote.status !== 'converted' && canEdit && (
-                                  <Button size="sm" variant="default" onClick={() => convertToInvoice(quote)} className="bg-gradient-primary">
-                                    <ArrowRight className="h-3 w-3 mr-1" />
-                                    Invoice
-                                  </Button>
-                                )}
-                                <Button size="sm" variant="outline" onClick={() => handleDownloadQuote(quote)}>
-                                  <Download className="h-3 w-3" />
-                                </Button>
-                                <Button size="sm" variant="outline" onClick={() => openSendDialog(quote)} disabled={!quote.customer_email}>
-                                  <Mail className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </TableCell>
+                  
+                  <Tabs value={tab} onValueChange={setTab} className="w-full">
+                    <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent gap-6">
+                      <TabsTrigger value="all" className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 pb-2 bg-transparent">All Quotes</TabsTrigger>
+                      <TabsTrigger value="draft" className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 pb-2 bg-transparent">Drafts</TabsTrigger>
+                      <TabsTrigger value="sent" className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 pb-2 bg-transparent">Sent</TabsTrigger>
+                      <TabsTrigger value="accepted" className="data-[state=active]:border-b-2 data-[state=active]:border-primary data-[state=active]:shadow-none rounded-none px-0 pb-2 bg-transparent">Accepted</TabsTrigger>
+                    </TabsList>
+
+                    <TabsContent value={tab} className="mt-4">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/50 hover:bg-muted/50">
+                            <TableHead>Quote #</TableHead>
+                            <TableHead>Customer</TableHead>
+                            <TableHead>Date</TableHead>
+                            <TableHead>Expiry</TableHead>
+                            <TableHead className="text-right">Amount</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Actions</TableHead>
                           </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {loading ? (
+                            <TableRow>
+                              <TableCell colSpan={7} className="h-24 text-center">Loading...</TableCell>
+                            </TableRow>
+                          ) : pagedQuotes.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">No quotes found.</TableCell>
+                            </TableRow>
+                          ) : (
+                            pagedQuotes.map((quote) => (
+                              <TableRow key={quote.id} className="hover:bg-muted/50">
+                                <TableCell className="font-medium text-primary">{quote.quote_number}</TableCell>
+                                <TableCell>{quote.customer_name}</TableCell>
+                                <TableCell>{formatDate(quote.quote_date, dateFormat)}</TableCell>
+                                <TableCell>{quote.expiry_date ? formatDate(quote.expiry_date, dateFormat) : "-"}</TableCell>
+                                <TableCell className="text-right font-semibold">R {quote.total_amount.toLocaleString()}</TableCell>
+                                <TableCell>
+                                  <span className={`px-2 py-1 rounded-full text-[10px] font-medium uppercase tracking-wide ${
+                                    quote.status === 'converted' || quote.status === 'accepted' ? 'bg-green-100 text-green-700' :
+                                    quote.status === 'sent' ? 'bg-blue-100 text-blue-700' :
+                                    quote.status === 'expired' ? 'bg-red-100 text-red-700' :
+                                    'bg-gray-100 text-gray-700'
+                                  }`}>
+                                    {quote.status}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex justify-end gap-2">
+                                    {quote.status !== 'converted' && canEdit && (
+                                      <Button size="icon" variant="ghost" onClick={() => convertToInvoice(quote)} className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50" title="Convert to Invoice">
+                                        <ArrowRight className="h-4 w-4" />
+                                      </Button>
+                                    )}
+                                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleDownloadQuote(quote)} title="Download PDF">
+                                      <Download className="h-4 w-4" />
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => openSendDialog(quote)} disabled={!quote.customer_email} title="Email Quote">
+                                      <Mail className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                      {pagedQuotes.length > 0 && (
+                        <div className="flex items-center justify-between mt-4 border-t pt-4">
+                          <div className="text-xs text-muted-foreground">
+                            Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedQuotes.length} of {totalCount}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+                            <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+                          </div>
+                        </div>
+                      )}
+                    </TabsContent>
+                  </Tabs>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Status Distribution</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[300px] w-full flex justify-center">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={statusData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={80}
+                        paddingAngle={5}
+                        dataKey="value"
+                      >
+                        {statusData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
-                      </TableBody>
-                    </Table>
-                    <div className="flex items-center justify-between mt-3">
-                      <div className="text-sm text-muted-foreground">
-                        Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedQuotes.length} of {totalCount}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-                        <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
-                      </div>
-                    </div>
-                    </>
-                  )}
-                </>
-              )}
-            </CardContent>
-          </Card>
+                      </Pie>
+                      <Tooltip />
+                      <Legend verticalAlign="bottom" height={36} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </DashboardLayout>
+
       <Dialog open={sendDialogOpen} onOpenChange={setSendDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -459,6 +572,7 @@ export default function QuotesPage() {
           </div>
         </DialogContent>
       </Dialog>
+      
       <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
         <DialogContent className="sm:max-w-[640px] p-4">
           <DialogHeader>
@@ -466,15 +580,18 @@ export default function QuotesPage() {
           </DialogHeader>
           <div className="space-y-3 text-sm">
             <p>This module is for viewing and downloading quotes.</p>
-            <p>To add or edit quotes, go to the Sales module and use the Quotes tab.</p>
+            <ul className="list-disc list-inside space-y-1">
+              <li>Use the tabs to filter by status (Draft, Sent, Accepted).</li>
+              <li>Convert quotes to invoices with a single click (Green Arrow).</li>
+              <li>Download PDFs or email quotes directly to customers.</li>
+              <li>To create new quotes, use the "Quick Actions" menu.</li>
+            </ul>
           </div>
           <div className="pt-4">
             <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
-            <Button variant="outline" className="ml-2" onClick={() => navigate('/sales?tab=quotes')}>Go to Sales Quotes</Button>
           </div>
         </DialogContent>
       </Dialog>
     </>
   );
 }
-import React from "react";

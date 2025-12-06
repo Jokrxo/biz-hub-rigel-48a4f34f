@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, Legend } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, Legend, LineChart, Line, CartesianGrid } from "recharts";
+import { MetricCard } from "@/components/ui/MetricCard";
+import { AlertCircle, Clock, DollarSign, TrendingUp, TrendingDown, FileText, Users, PieChart as PieChartIcon, Briefcase } from "lucide-react";
 
 type SourceScope = "all" | "bills" | "purchase_orders";
 type StatusScope = "sent_overdue" | "include_draft";
@@ -17,6 +19,8 @@ interface PayableRow {
   date: string;
   due_date: string | null;
   outstanding: number;
+  total_amount: number;
+  status: string;
   source: SourceScope;
 }
 
@@ -88,6 +92,8 @@ export const APDashboard = () => {
             date: b.bill_date,
             due_date: b.due_date,
             outstanding: Number(b.total_amount || 0),
+            total_amount: Number(b.total_amount || 0),
+            status: b.status,
             source: "bills",
           });
         });
@@ -139,6 +145,8 @@ export const APDashboard = () => {
             date: p.po_date,
             due_date: null,
             outstanding,
+            total_amount: Number(p.total_amount || 0),
+            status: p.status,
             source: "purchase_orders",
           });
         });
@@ -200,6 +208,41 @@ export const APDashboard = () => {
       buckets.set(key, curr);
     });
     return Array.from(buckets.values()).map(b => ({ name: b.name, value: b.value, pct: (b.value / total) * 100 }));
+  }, [rows]);
+
+  const trendData = useMemo(() => {
+    const data = new Map<string, number>();
+    // Last 6 months
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const key = d.toLocaleString('default', { month: 'short', year: 'numeric' });
+      data.set(key, 0);
+    }
+    
+    rows.forEach(row => {
+      const d = new Date(row.date);
+      const key = d.toLocaleString('default', { month: 'short', year: 'numeric' });
+      if (data.has(key)) {
+        data.set(key, (data.get(key) || 0) + row.total_amount);
+      }
+    });
+
+    return Array.from(data.entries()).map(([name, value]) => ({ name, value }));
+  }, [rows]);
+
+  const statusData = useMemo(() => {
+    const counts: Record<string, number> = { Paid: 0, Pending: 0, Overdue: 0, Draft: 0, Sent: 0 };
+    rows.forEach(row => {
+      if (row.status === 'paid') counts.Paid++;
+      else if (row.status === 'draft') counts.Draft++;
+      else if (row.status === 'sent') counts.Sent++;
+      else if (row.status === 'overdue' || (row.due_date && new Date(row.due_date) < new Date())) counts.Overdue++;
+      else counts.Pending++;
+    });
+    return Object.entries(counts)
+      .filter(([_, value]) => value > 0)
+      .map(([name, value]) => ({ name, value }));
   }, [rows]);
 
   const agingSummary = useMemo(() => {
@@ -283,22 +326,224 @@ export const APDashboard = () => {
         <Card className="shadow-md"><CardHeader><CardTitle>No purchases match your filters</CardTitle></CardHeader><CardContent><p className="text-sm text-muted-foreground">Adjust source or widen the date range. End date is fixed to today.</p></CardContent></Card>
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-4">
-            <Card className="shadow-md bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Unpaid purchases amount</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-primary">R {kpis.unpaidTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
-            <Card className="shadow-md bg-gradient-to-br from-rose-50 to-white dark:from-rose-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue amount</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-destructive">R {kpis.overdueTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
-            <Card className="shadow-md bg-gradient-to-br from-amber-50 to-white dark:from-amber-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 1–30 days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-600">R {kpis.overdueUnder30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
-            <Card className="shadow-md bg-gradient-to-br from-slate-50 to-white dark:from-slate-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 31+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-amber-700">R {kpis.overdue30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
-            <Card className="shadow-md bg-gradient-to-br from-slate-50 to-white dark:from-slate-950 dark:to-slate-900"><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Overdue 90+ days</CardTitle></CardHeader><CardContent><div className="text-2xl font-bold text-slate-700 dark:text-slate-200">R {kpis.overdue90Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div></CardContent></Card>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <MetricCard 
+              title="Unpaid Total" 
+              value={`R ${kpis.unpaidTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={<DollarSign className="h-4 w-4" />}
+              gradient="bg-indigo-500/10"
+              className="border-l-4 border-l-indigo-500"
+            />
+            <MetricCard 
+              title="Overdue Total" 
+              value={`R ${kpis.overdueTotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={<AlertCircle className="h-4 w-4" />}
+              gradient="bg-rose-500/10"
+              className="border-l-4 border-l-rose-500"
+            />
+            <MetricCard 
+              title="Overdue 1–30" 
+              value={`R ${kpis.overdueUnder30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={<Clock className="h-4 w-4" />}
+              gradient="bg-amber-500/10"
+              className="border-l-4 border-l-amber-500"
+            />
+            <MetricCard 
+              title="Overdue 31+" 
+              value={`R ${kpis.overdue30Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={<TrendingDown className="h-4 w-4" />}
+              gradient="bg-amber-600/10"
+              className="border-l-4 border-l-amber-600"
+            />
+            <MetricCard 
+              title="Overdue 90+" 
+              value={`R ${kpis.overdue90Total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`} 
+              icon={<TrendingUp className="h-4 w-4" />}
+              gradient="bg-slate-500/10"
+              className="border-l-4 border-l-slate-500"
+            />
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <Card className="shadow-md"><CardHeader><CardTitle>Unpaid purchases amount (Top 10 Suppliers)</CardTitle></CardHeader><CardContent style={{ height: 320 }}><ResponsiveContainer width="100%" height="100%"><BarChart data={top10Data} layout="vertical"><XAxis type="number" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} /><YAxis type="category" dataKey="name" width={150} /><Tooltip formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, "Amount"]} /><Bar dataKey="amount" fill="#6366f1" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></CardContent></Card>
-            <Card className="shadow-md"><CardHeader><CardTitle>Unpaid purchases percentage by supplier</CardTitle></CardHeader><CardContent style={{ height: 320 }}><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={donutData} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100}>{donutData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><Tooltip formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} /><Legend /></PieChart></ResponsiveContainer></CardContent></Card>
+            <Card className="shadow-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <TrendingUp className="h-4 w-4 text-primary" />
+                  Purchase Trend (Last 6 Months)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={trendData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" fontSize={12} tickLine={false} axisLine={false} />
+                    <YAxis 
+                      fontSize={12} 
+                      tickLine={false} 
+                      axisLine={false} 
+                      tickFormatter={(value) => `R${value/1000}k`} 
+                    />
+                    <Tooltip 
+                      formatter={(value: number) => [`R ${value.toLocaleString('en-ZA')}`, 'Amount']}
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="value" 
+                      stroke="#3b82f6" 
+                      strokeWidth={3} 
+                      dot={{ r: 4, fill: "#3b82f6" }} 
+                      activeDot={{ r: 6 }} 
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <FileText className="h-4 w-4 text-primary" />
+                  Purchase Status Distribution
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[320px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={statusData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={80}
+                      paddingAngle={5}
+                      dataKey="value"
+                    >
+                      {statusData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                    <Legend verticalAlign="bottom" height={36} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
           </div>
 
-          <Card className="shadow-md"><CardHeader><CardTitle>AP Aging Summary</CardTitle></CardHeader><CardContent><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="text-left"><th className="p-2">Supplier</th><th className="p-2">Current</th><th className="p-2">1-30</th><th className="p-2">31-60</th><th className="p-2">61-90</th><th className="p-2">91+</th><th className="p-2">Amount due</th></tr></thead><tbody>{agingSummary.map((row: any) => (<tr key={row.supplier_id} className="border-t"><td className="p-2">{row.name}</td><td className="p-2">R {row.current.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td><td className="p-2">R {row.d1_30.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td><td className="p-2">R {row.d31_60.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td><td className="p-2">R {row.d61_90.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td><td className="p-2">R {row.d91p.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td><td className="p-2 font-semibold">R {row.due.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td></tr>))}</tbody></table></div></CardContent></Card>
+          <div className="grid gap-6 md:grid-cols-2">
+            <Card className="shadow-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Briefcase className="h-4 w-4 text-primary" />
+                  Unpaid Purchases Amount (Top 10 Suppliers)
+                </CardTitle>
+              </CardHeader>
+              <CardContent style={{ height: 320 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={top10Data} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" hide />
+                    <YAxis dataKey="name" type="category" width={100} fontSize={11} />
+                    <Tooltip formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, "Amount"]} />
+                    <Bar dataKey="amount" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={20} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+            <Card className="shadow-md">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <PieChartIcon className="h-4 w-4 text-primary" />
+                  Unpaid Purchases % by Supplier
+                </CardTitle>
+              </CardHeader>
+              <CardContent style={{ height: 320 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie 
+                      data={donutData} 
+                      dataKey="value" 
+                      nameKey="name" 
+                      innerRadius={60} 
+                      outerRadius={80} 
+                      paddingAngle={2}
+                    >
+                      {donutData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
+                    <Legend verticalAlign="bottom" height={36} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </div>
 
-          <Card className="shadow-md"><CardHeader><CardTitle>Unpaid purchases</CardTitle></CardHeader><CardContent><div className="overflow-x-auto"><table className="min-w-full text-sm"><thead><tr className="text-left"><th className="p-2">Supplier</th><th className="p-2">Document No.</th><th className="p-2">Date</th><th className="p-2">Due Date</th><th className="p-2">Outstanding</th></tr></thead><tbody>{rows.map(inv => (<tr key={inv.id} className="border-t"><td className="p-2">{inv.supplier_name}</td><td className="p-2">{inv.doc_no}</td><td className="p-2">{inv.date}</td><td className="p-2">{inv.due_date || '-'}</td><td className="p-2 font-mono">R {inv.outstanding.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td></tr>))}</tbody></table></div></CardContent></Card>
+          <Card className="shadow-md">
+            <CardHeader><CardTitle>AP Aging Summary</CardTitle></CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left bg-muted/50">
+                      <th className="p-3 font-medium">Supplier</th>
+                      <th className="p-3 font-medium">Current</th>
+                      <th className="p-3 font-medium">1-30 Days</th>
+                      <th className="p-3 font-medium">31-60 Days</th>
+                      <th className="p-3 font-medium">61-90 Days</th>
+                      <th className="p-3 font-medium">91+ Days</th>
+                      <th className="p-3 font-medium text-right">Amount Due</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {agingSummary.map((row: any, i: number) => (
+                      <tr key={row.supplier_id} className={`border-t hover:bg-muted/50 transition-colors ${i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                        <td className="p-3 font-medium">{row.name}</td>
+                        <td className="p-3">R {row.current.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-3">R {row.d1_30.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-3">R {row.d31_60.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-3">R {row.d61_90.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-3">R {row.d91p.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                        <td className="p-3 font-bold text-right text-primary">R {row.due.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-md">
+            <CardHeader><CardTitle>Unpaid Purchases</CardTitle></CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left bg-muted/50">
+                      <th className="p-3 font-medium">Supplier</th>
+                      <th className="p-3 font-medium">Document No.</th>
+                      <th className="p-3 font-medium">Date</th>
+                      <th className="p-3 font-medium">Due Date</th>
+                      <th className="p-3 font-medium text-right">Outstanding</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((inv, i) => (
+                      <tr key={inv.id} className={`border-t hover:bg-muted/50 transition-colors ${i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}`}>
+                        <td className="p-3 font-medium">{inv.supplier_name}</td>
+                        <td className="p-3 text-primary">{inv.doc_no}</td>
+                        <td className="p-3">{inv.date}</td>
+                        <td className="p-3">{inv.due_date || '-'}</td>
+                        <td className="p-3 font-mono font-semibold text-right">R {inv.outstanding.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
         </>
       )}
     </div>

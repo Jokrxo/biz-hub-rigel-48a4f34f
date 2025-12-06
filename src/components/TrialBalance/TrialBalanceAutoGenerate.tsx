@@ -4,33 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Download, FileSpreadsheet, FileText, RefreshCw, Loader2, Calendar } from "lucide-react";
+import { Download, FileSpreadsheet, FileText, RefreshCw, Loader2, Calendar, ArrowUpRight, ArrowDownLeft, Scale, Filter } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { exportToExcel, exportToPDF } from "@/lib/export-utils";
-
-// Function to calculate total inventory value from products
-const calculateTotalInventoryValue = async (companyId: string) => {
-  try {
-    const { data: products } = await supabase
-      .from('items')
-      .select('cost_price, quantity_on_hand')
-      .eq('company_id', companyId)
-      .eq('item_type', 'product')
-      .gt('quantity_on_hand', 0);
-    
-    const totalValue = (products || []).reduce((sum, product) => {
-      const cost = Number(product.cost_price || 0);
-      const qty = Number(product.quantity_on_hand || 0);
-      return sum + (cost * qty);
-    }, 0);
-    
-    return totalValue;
-  } catch (error) {
-    console.error('Error calculating inventory value:', error);
-    return 0;
-  }
-};
 
 interface TrialBalanceEntry {
   account_code: string;
@@ -45,6 +22,7 @@ export const TrialBalanceAutoGenerate = () => {
   const { toast } = useToast();
   
   // Date filter state
+  const [periodType, setPeriodType] = useState<'monthly' | 'annual'>('monthly');
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
@@ -62,9 +40,15 @@ export const TrialBalanceAutoGenerate = () => {
 
       if (!profile) return;
 
-      // Calculate date range for selected month/year
-      const startDate = new Date(selectedYear, selectedMonth - 1, 1);
-      const endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
+      // Calculate end-of-period cutoff
+      let endDate: Date;
+      if (periodType === 'monthly') {
+        // End of the selected month
+        endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
+      } else {
+        // End of the selected year
+        endDate = new Date(selectedYear, 11, 31, 23, 59, 59);
+      }
 
       // Fetch all active accounts
       const { data: accounts, error: accountsError } = await supabase
@@ -76,7 +60,7 @@ export const TrialBalanceAutoGenerate = () => {
 
       if (accountsError) throw accountsError;
 
-      // Fetch transaction entries
+      // Fetch transaction entries up to end of selected period
       const { data: txEntries, error: txError } = await supabase
         .from("transaction_entries")
         .select(`
@@ -89,17 +73,15 @@ export const TrialBalanceAutoGenerate = () => {
           )
         `)
         .eq("transactions.company_id", profile.company_id)
-        .gte("transactions.transaction_date", startDate.toISOString())
         .lte("transactions.transaction_date", endDate.toISOString());
 
       if (txError) throw txError;
 
-      // Fetch ledger entries
+      // Fetch ledger entries up to end of selected period
       const { data: ledgerEntries, error: ledgerError } = await supabase
         .from("ledger_entries")
         .select('transaction_id, account_id, debit, credit, entry_date')
         .eq("company_id", profile.company_id)
-        .gte("entry_date", startDate.toISOString())
         .lte("entry_date", endDate.toISOString());
 
       if (ledgerError) throw ledgerError;
@@ -107,9 +89,6 @@ export const TrialBalanceAutoGenerate = () => {
       // Calculate balances for each account
       const trialBalanceData: TrialBalanceEntry[] = [];
       
-      // Calculate total inventory value from products
-      const totalInventoryValue = await calculateTotalInventoryValue(profile.company_id);
-
       const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
       const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
 
@@ -133,12 +112,6 @@ export const TrialBalanceAutoGenerate = () => {
             totalCredit += entry.credit || 0;
           }
         });
-
-        // Special handling for inventory account - use actual product values (only account 1300)
-        if (account.account_code === '1300') {
-          totalDebit = totalInventoryValue;
-          totalCredit = 0;
-        }
 
         // Only include accounts with non-zero balances
         const isInventoryName = (account.account_name || '').toLowerCase().includes('inventory');
@@ -176,7 +149,7 @@ export const TrialBalanceAutoGenerate = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedMonth, selectedYear, toast]);
+  }, [selectedMonth, selectedYear, periodType, toast]);
 
   useEffect(() => {
     generateTrialBalance();
@@ -206,7 +179,7 @@ export const TrialBalanceAutoGenerate = () => {
       period_end: null
     }));
     
-    exportToExcel(exportData, `trial_balance_${new Date().toISOString().split('T')[0]}`);
+    exportToExcel(exportData, `trial_balance_${periodType}_${selectedYear}${periodType === 'monthly' ? '_' + selectedMonth : ''}`);
     toast({ title: "Success", description: "Trial balance exported to Excel" });
   };
 
@@ -225,50 +198,50 @@ export const TrialBalanceAutoGenerate = () => {
       period_end: null
     }));
     
-    exportToPDF(exportData, `trial_balance_${new Date().toISOString().split('T')[0]}`);
+    exportToPDF(exportData, `trial_balance_${periodType}_${selectedYear}${periodType === 'monthly' ? '_' + selectedMonth : ''}`);
     toast({ title: "Success", description: "Trial balance exported to PDF" });
   };
 
   const totals = getTotals();
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold">Trial Balance</h1>
-          <p className="text-muted-foreground">Auto-generated from transaction entries</p>
+          <h1 className="text-3xl font-bold tracking-tight">Trial Balance</h1>
+          <p className="text-muted-foreground mt-1">Comprehensive view of all account balances</p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(parseInt(value))}>
-              <SelectTrigger className="w-32">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 bg-muted/50 p-1 rounded-lg border">
+            <Select value={periodType} onValueChange={(val: 'monthly' | 'annual') => setPeriodType(val)}>
+              <SelectTrigger className="w-[110px] h-8 border-none bg-transparent focus:ring-0">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="1">January</SelectItem>
-                <SelectItem value="2">February</SelectItem>
-                <SelectItem value="3">March</SelectItem>
-                <SelectItem value="4">April</SelectItem>
-                <SelectItem value="5">May</SelectItem>
-                <SelectItem value="6">June</SelectItem>
-                <SelectItem value="7">July</SelectItem>
-                <SelectItem value="8">August</SelectItem>
-                <SelectItem value="9">September</SelectItem>
-                <SelectItem value="10">October</SelectItem>
-                <SelectItem value="11">November</SelectItem>
-                <SelectItem value="12">December</SelectItem>
+                <SelectItem value="monthly">Monthly</SelectItem>
+                <SelectItem value="annual">Annual</SelectItem>
               </SelectContent>
             </Select>
+
+            <div className="h-4 w-px bg-border" />
+
+            {periodType === 'monthly' && (
+              <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(parseInt(value))}>
+                <SelectTrigger className="w-[110px] h-8 border-none bg-transparent focus:ring-0">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                    <SelectItem key={m} value={m.toString()}>
+                      {new Date(0, m - 1).toLocaleString('default', { month: 'long' })}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            
             <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
-              <SelectTrigger className="w-24">
+              <SelectTrigger className="w-[80px] h-8 border-none bg-transparent focus:ring-0">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -278,96 +251,129 @@ export const TrialBalanceAutoGenerate = () => {
               </SelectContent>
             </Select>
           </div>
-          <Badge variant="outline" className="gap-2">
-            <Calendar className="h-4 w-4" />
-            {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })}
-          </Badge>
+          
           <div className="flex gap-2">
-            <Button variant="outline" onClick={generateTrialBalance}>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
+            <Button variant="outline" size="icon" onClick={generateTrialBalance} title="Refresh">
+              <RefreshCw className="h-4 w-4" />
             </Button>
             <Button variant="outline" onClick={handleExportExcel} disabled={entries.length === 0}>
               <FileSpreadsheet className="h-4 w-4 mr-2" />
-              Export Excel
+              Excel
             </Button>
             <Button variant="outline" onClick={handleExportPDF} disabled={entries.length === 0}>
               <FileText className="h-4 w-4 mr-2" />
-              Export PDF
+              PDF
             </Button>
           </div>
         </div>
       </div>
 
-      {/* Balance Status */}
-      <Card>
-        <CardContent className="p-6">
-          <div className="grid grid-cols-3 gap-6">
-            <div>
-              <p className="text-sm text-muted-foreground">Total Debits</p>
-              <p className="text-2xl font-bold">R {totals.totalDebits.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</p>
+      {/* Balance Status Cards */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card className="border-none shadow-md bg-gradient-to-br from-primary/10 via-primary/5 to-background">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Debits</CardTitle>
+            <ArrowDownLeft className="h-5 w-5 text-primary" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-primary">R {totals.totalDebits.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</div>
+            <p className="text-xs text-muted-foreground mt-1">Total assets & expenses</p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-none shadow-md bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-background">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Credits</CardTitle>
+            <ArrowUpRight className="h-5 w-5 text-blue-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-700">R {totals.totalCredits.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</div>
+            <p className="text-xs text-muted-foreground mt-1">Total liabilities, equity & income</p>
+          </CardContent>
+        </Card>
+
+        <Card className={`border-none shadow-md bg-gradient-to-br ${totals.isBalanced ? 'from-emerald-500/10 via-emerald-500/5' : 'from-red-500/10 via-red-500/5'} to-background`}>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Balance Status</CardTitle>
+            <Scale className={`h-5 w-5 ${totals.isBalanced ? 'text-emerald-600' : 'text-red-600'}`} />
+          </CardHeader>
+          <CardContent>
+            <div className={`text-2xl font-bold ${totals.isBalanced ? 'text-emerald-700' : 'text-red-700'}`}>
+              {totals.isBalanced ? "Balanced" : "Unbalanced"}
             </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Total Credits</p>
-              <p className="text-2xl font-bold">R {totals.totalCredits.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</p>
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Status</p>
-              <div className="flex items-center gap-2 mt-1">
-                <Badge variant={totals.isBalanced ? "default" : "destructive"}>
-                  {totals.isBalanced ? "Balanced" : "Not Balanced"}
-                </Badge>
-                {!totals.isBalanced && (
-                  <span className="text-sm text-muted-foreground">
-                    Diff: R {totals.difference.toFixed(2)}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+            <p className="text-xs text-muted-foreground mt-1">
+              {totals.isBalanced ? "Debits match Credits" : `Difference: R ${totals.difference.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}`}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Trial Balance Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Trial Balance Entries</CardTitle>
+      <Card className="border-none shadow-md">
+        <CardHeader className="border-b bg-muted/10 pb-4">
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2">
+              <Filter className="h-5 w-5 text-primary" />
+              Ledger Entries
+            </CardTitle>
+            <Badge variant="secondary" className="font-normal">
+              {entries.length} Accounts
+            </Badge>
+          </div>
         </CardHeader>
-        <CardContent>
-          {entries.length === 0 ? (
-            <div className="text-center py-12">
-              <FileText className="h-12 w-12 mx-auto opacity-50 mb-4" />
-              <p className="text-muted-foreground">No transactions found. Create transactions to generate trial balance.</p>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+              <p className="text-muted-foreground">Calculating balances...</p>
+            </div>
+          ) : entries.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <div className="bg-muted/50 p-4 rounded-full mb-4">
+                <FileText className="h-10 w-10 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-medium">No Data Found</h3>
+              <p className="text-muted-foreground max-w-sm mt-2">
+                No transaction data found for the selected period. Try adjusting your filters or adding new transactions.
+              </p>
             </div>
           ) : (
             <Table>
-              <TableHeader>
+              <TableHeader className="bg-muted/5">
                 <TableRow>
-                  <TableHead>Account Code</TableHead>
+                  <TableHead className="w-[150px]">Account Code</TableHead>
                   <TableHead>Account Name</TableHead>
-                  <TableHead className="text-right">Debit</TableHead>
-                  <TableHead className="text-right">Credit</TableHead>
+                  <TableHead className="text-right w-[200px]">Debit</TableHead>
+                  <TableHead className="text-right w-[200px]">Credit</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {entries.map((entry) => (
-                  <TableRow key={entry.account_code}>
-                    <TableCell className="font-mono">{entry.account_code}</TableCell>
-                    <TableCell>{entry.account_name}</TableCell>
+                  <TableRow key={entry.account_code} className="hover:bg-muted/50 transition-colors">
+                    <TableCell className="font-mono font-medium text-muted-foreground">{entry.account_code}</TableCell>
+                    <TableCell className="font-medium">{entry.account_name}</TableCell>
                     <TableCell className="text-right font-mono">
-                      {entry.debit > 0 ? `R ${entry.debit.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}` : "-"}
+                      {entry.debit > 0 ? (
+                        <span className="text-primary">R {entry.debit.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</span>
+                      ) : (
+                        <span className="text-muted-foreground/30">-</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right font-mono">
-                      {entry.credit > 0 ? `R ${entry.credit.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}` : "-"}
+                      {entry.credit > 0 ? (
+                        <span className="text-blue-600">R {entry.credit.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}</span>
+                      ) : (
+                        <span className="text-muted-foreground/30">-</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
-                <TableRow className="font-bold border-t-2">
-                  <TableCell colSpan={2}>TOTALS</TableCell>
-                  <TableCell className="text-right font-mono">
+                <TableRow className="bg-muted/20 border-t-2 border-muted">
+                  <TableCell colSpan={2} className="font-bold text-right pr-8 text-lg">TOTALS</TableCell>
+                  <TableCell className="text-right font-mono font-bold text-lg border-t-2 border-primary/20">
                     R {totals.totalDebits.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}
                   </TableCell>
-                  <TableCell className="text-right font-mono">
+                  <TableCell className="text-right font-mono font-bold text-lg border-t-2 border-blue-500/20">
                     R {totals.totalCredits.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}
                   </TableCell>
                 </TableRow>

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Search, FileText } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 
 export const PurchaseTransactions = () => {
@@ -11,7 +11,7 @@ export const PurchaseTransactions = () => {
   const [search, setSearch] = useState("");
   const [rows, setRows] = useState<Array<{ id: string; date: string; description: string; reference: string; amount: number; status: string }>>([]);
   const [page, setPage] = useState(0);
-  const [pageSize] = useState(7);
+  const [pageSize] = useState(10);
 
   useEffect(() => {
     const load = async () => {
@@ -64,65 +64,74 @@ export const PurchaseTransactions = () => {
   useEffect(() => { setPage(0); }, [search]);
 
   return (
-    <Card className="card-professional">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">Purchase Transactions</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="relative w-80">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search description or reference" className="pl-10" />
-          </div>
-          <Button variant="outline" onClick={() => setSearch("")}>Clear</Button>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="relative flex-1 max-w-sm w-full">
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search transactions..."
+            className="pl-8"
+          />
         </div>
+      </div>
 
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
+      <div className="rounded-md border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date</TableHead>
+              <TableHead>Description</TableHead>
+              <TableHead>Reference</TableHead>
+              <TableHead className="text-right">Amount</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <TableRow><TableCell colSpan={5} className="text-center py-8">Loading...</TableCell></TableRow>
+            ) : filtered.length === 0 ? (
               <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Reference</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead>Status</TableHead>
+                <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
+                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-20" />
+                  <p>No purchase transactions found</p>
+                </TableCell>
               </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
-                <TableRow><TableCell colSpan={5}>Loading…</TableCell></TableRow>
-              ) : filtered.length === 0 ? (
-                <TableRow><TableCell colSpan={5}>No purchase transactions found</TableCell></TableRow>
-              ) : pagedRows.map(r => (
-                <TableRow key={r.id}>
-                  <TableCell>{r.date}</TableCell>
-                  <TableCell className="font-medium">{r.description}</TableCell>
-                  <TableCell>{r.reference || "–"}</TableCell>
-                  <TableCell className="text-right">R {r.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
-                  <TableCell>
-                    <span className={`px-2 py-1 rounded text-xs ${
-                      r.status === 'approved' ? 'bg-primary/10 text-primary' :
-                      r.status === 'pending' ? 'bg-accent/10 text-accent' :
-                      'bg-muted text-muted-foreground'
-                    }`}>
-                      {r.status}
-                    </span>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <div className="flex items-center justify-between mt-3">
+            ) : pagedRows.map(r => (
+              <TableRow key={r.id}>
+                <TableCell>{r.date}</TableCell>
+                <TableCell className="font-medium">{r.description}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">{r.reference || "–"}</TableCell>
+                <TableCell className="text-right font-medium">R {r.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</TableCell>
+                <TableCell>
+                  <Badge variant={
+                    r.status === 'approved' ? 'secondary' :
+                    r.status === 'posted' ? 'default' :
+                    'outline'
+                  } className={
+                    r.status === 'approved' ? 'bg-green-100 text-green-700 hover:bg-green-100 border-green-200' :
+                    r.status === 'posted' ? 'bg-blue-100 text-blue-700 hover:bg-blue-100 border-blue-200' : ''
+                  }>
+                    {r.status}
+                  </Badge>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {filtered.length > 0 && (
+          <div className="flex items-center justify-between p-4 border-t">
             <div className="text-sm text-muted-foreground">
               Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))} • Showing {pagedRows.length} of {totalCount}
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-              <Button variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+              <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+              <Button size="sm" variant="outline" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
             </div>
           </div>
-        </div>
-      </CardContent>
-    </Card>
+        )}
+      </div>
+    </div>
   );
 };

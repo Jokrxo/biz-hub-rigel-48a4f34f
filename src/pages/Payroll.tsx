@@ -14,7 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
 import React, { useEffect, useMemo, useState, useCallback, FormEvent } from "react";
-import { Users, FileText, Calculator, Plus, Check, BarChart, Info, ArrowRight, Trash2 } from "lucide-react";
+import { Users, FileText, Calculator, Plus, Check, BarChart, Info, ArrowRight, Trash2, Wallet, ArrowUpRight, ArrowDownLeft, TrendingUp, TrendingDown, MoreHorizontal, LayoutDashboard, Landmark } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
@@ -25,6 +25,8 @@ import { addLogoToPDF, fetchLogoDataUrl } from "@/lib/invoice-export";
 import { getCompanyTaxSettings } from "@/lib/payroll/services/taxService";
 import * as XLSX from "xlsx";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet";
+import { MetricCard } from "@/components/ui/MetricCard";
 
 type Employee = { id: string; first_name: string; last_name: string; email: string | null; id_number: string | null; start_date: string | null; salary_type: string | null; bank_name: string | null; bank_branch_code: string | null; bank_account_number: string | null; bank_account_type: string | null; active: boolean };
 type PayItem = { id: string; code: string; name: string; type: "earning" | "deduction" | "employer"; taxable: boolean };
@@ -164,9 +166,8 @@ export default function Payroll() {
   const { isAdmin, isAccountant } = useRoles();
   const canEdit = isAdmin || isAccountant;
   const [tutorialOpen, setTutorialOpen] = useState(false);
-  const [wizardOpen, setWizardOpen] = useState(false);
-  
   const [companyId, setCompanyId] = useState<string>("");
+  const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
 
   useEffect(() => {
     const loadCompany = async () => {
@@ -196,29 +197,107 @@ export default function Payroll() {
       <SEO title="Payroll | Rigel Business" description="Manage payroll runs and employees" />
       <DashboardLayout>
         <div className="space-y-6">
-          <div className="flex items-center justify-between">
+          {/* Header with Quick Actions */}
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold">Payroll</h1>
-              <p className="text-muted-foreground mt-1">Employees, pay items, pay runs, and postings</p>
+              <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-gray-900 to-gray-600 dark:from-gray-100 dark:to-gray-400 bg-clip-text text-transparent">Payroll Management</h1>
+              <p className="text-muted-foreground mt-1">Manage employees, pay runs, and tax submissions efficiently</p>
             </div>
-            <Button variant="outline" onClick={() => setTutorialOpen(true)}>
-              <Info className="h-4 w-4 mr-2" />
-              Help & Tutorial
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setTutorialOpen(true)}>
+                <Info className="h-4 w-4 mr-2" />
+                Tutorial
+              </Button>
+              <Sheet open={isQuickActionsOpen} onOpenChange={setIsQuickActionsOpen}>
+                <SheetTrigger asChild>
+                  <Button className="bg-gradient-primary shadow-lg hover:shadow-xl transition-all">
+                    <Plus className="h-4 w-4 mr-2" /> Quick Actions
+                  </Button>
+                </SheetTrigger>
+                <SheetContent>
+                  <SheetHeader>
+                    <SheetTitle>Payroll Actions</SheetTitle>
+                    <SheetDescription>Quick access to common payroll tasks</SheetDescription>
+                  </SheetHeader>
+                  <div className="grid gap-4 py-4">
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { setTab("run"); setIsQuickActionsOpen(false); }}>
+                      <Calculator className="h-5 w-5 mr-3 text-primary" />
+                      Run Payroll
+                    </Button>
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { setTab("employees"); setIsQuickActionsOpen(false); }}>
+                      <Users className="h-5 w-5 mr-3 text-blue-500" />
+                      Add Employee
+                    </Button>
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { setTab("items"); setIsQuickActionsOpen(false); }}>
+                      <FileText className="h-5 w-5 mr-3 text-green-500" />
+                      Manage Pay Items
+                    </Button>
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { setTab("history"); setIsQuickActionsOpen(false); }}>
+                      <BarChart className="h-5 w-5 mr-3 text-purple-500" />
+                      View History
+                    </Button>
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </div>
           </div>
 
-          <Tabs value={tab} onValueChange={setTab}>
-          <TabsList>
-            <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-            <TabsTrigger value="run">Run Payroll</TabsTrigger>
-            <TabsTrigger value="employees">Employees</TabsTrigger>
-            <TabsTrigger value="payroll">Payroll</TabsTrigger>
-            <TabsTrigger value="items">Pay Items</TabsTrigger>
-            <TabsTrigger value="history">Payroll History</TabsTrigger>
-            <TabsTrigger value="tax">Payroll Tax Settings</TabsTrigger>
-          </TabsList>
+          <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+            <div className="border-b pb-px overflow-x-auto">
+              <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0 rounded-none">
+                <TabsTrigger 
+                  value="dashboard"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <LayoutDashboard className="h-4 w-4" />
+                  Dashboard
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="employees"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <Users className="h-4 w-4" />
+                  Employees
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="run"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <Calculator className="h-4 w-4" />
+                  Run Payroll
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="payroll"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <Wallet className="h-4 w-4" />
+                  Pay Runs
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="items"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <FileText className="h-4 w-4" />
+                  Pay Items
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="history"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <BarChart className="h-4 w-4" />
+                  Reports
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="tax"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <Landmark className="h-4 w-4" />
+                  Tax Settings
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
-            <TabsContent value="dashboard">
+            <TabsContent value="dashboard" className="animate-in fade-in-50 duration-500">
               <PayrollDashboard companyId={companyId} setTab={setTab} />
             </TabsContent>
 
@@ -231,7 +310,7 @@ export default function Payroll() {
             </TabsContent>
 
             <TabsContent value="payroll">
-              <PayrollPostingModule companyId={companyId} />
+              <PayRunsTab companyId={companyId} canEdit={canEdit} />
             </TabsContent>
 
             <TabsContent value="items">
@@ -239,7 +318,7 @@ export default function Payroll() {
             </TabsContent>
 
             <TabsContent value="history">
-              <PayrollHistory companyId={companyId} />
+              <PayrollReports companyId={companyId} />
             </TabsContent>
 
             <TabsContent value="tax">
@@ -247,47 +326,26 @@ export default function Payroll() {
             </TabsContent>
           </Tabs>
 
-          <Dialog open={wizardOpen} onOpenChange={setWizardOpen}>
+          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
             <DialogContent className="sm:max-w-[640px] p-4">
               <DialogHeader>
-                <DialogTitle>Quick Payroll Wizard</DialogTitle>
+                <DialogTitle>Payroll Tutorial</DialogTitle>
               </DialogHeader>
               <div className="space-y-3 text-sm">
-                <p>We’ll guide you through 4 simple steps:</p>
+                <p>Simple 5-step workflow aligned with South African payroll:</p>
                 <ol className="list-decimal list-inside space-y-1">
-                  <li>Add or confirm employees</li>
-                  <li>Create or select the current pay run</li>
-                  <li>Capture time, earnings and deductions</li>
-                  <li>Preview and download payslips</li>
+                  <li>Add Employees (Monthly/Hourly/Weekly, salary amount, bank details)</li>
+                  <li>Pay Items auto-setup: Basic Salary, Allowance, Overtime, PAYE, UIF (Emp/Er), SDL (Er)</li>
+                  <li>Select Payroll Period (create if not present)</li>
+                  <li>Run Payroll: enter allowances, overtime, bonuses, extra deductions; calculations apply automatically</li>
+                  <li>Generate Payslip and Post to Ledger (expenses and statutory payables)</li>
                 </ol>
+                <p>No manual PAYE/UIF/SDL calculations are needed — the system applies SARS brackets and statutory rates.</p>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setWizardOpen(false)}>Close</Button>
-                <Button onClick={() => { setWizardOpen(false); setTab("employees"); }}>Start</Button>
+                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
               </DialogFooter>
             </DialogContent>
-          </Dialog>
-
-          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
-          <DialogContent className="sm:max-w-[640px] p-4">
-            <DialogHeader>
-              <DialogTitle>Payroll Tutorial</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3 text-sm">
-              <p>Simple 5-step workflow aligned with South African payroll:</p>
-              <ol className="list-decimal list-inside space-y-1">
-                <li>Add Employees (Monthly/Hourly/Weekly, salary amount, bank details)</li>
-                <li>Pay Items auto-setup: Basic Salary, Allowance, Overtime, PAYE, UIF (Emp/Er), SDL (Er)</li>
-                <li>Select Payroll Period (create if not present)</li>
-                <li>Run Payroll: enter allowances, overtime, bonuses, extra deductions; calculations apply automatically</li>
-                <li>Generate Payslip and Post to Ledger (expenses and statutory payables)</li>
-              </ol>
-              <p>No manual PAYE/UIF/SDL calculations are needed — the system applies SARS brackets and statutory rates.</p>
-            </div>
-            <DialogFooter>
-              <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
-            </DialogFooter>
-          </DialogContent>
           </Dialog>
         </div>
       </DashboardLayout>
@@ -798,11 +856,13 @@ function PayrollDashboard({ companyId, setTab }: { companyId: string; setTab: (t
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [trendData, setTrendData] = useState<Array<{ month: string; salary: number; uif: number; paye: number; sdl: number }>>([]);
   const [refreshTick, setRefreshTick] = useState<number>(0);
+
   useEffect(() => {
     const h = () => setRefreshTick(v => v + 1);
     window.addEventListener('payroll-data-changed', h);
     return () => window.removeEventListener('payroll-data-changed', h);
   }, []);
+
   useEffect(() => {
     const load = async () => {
       const { data: empRows, count: empCount } = await supabase
@@ -834,6 +894,7 @@ function PayrollDashboard({ companyId, setTab }: { companyId: string; setTab: (t
 
       const needFallbackTotals = [gross, paye, uif, sdl, overtime].every(v => Number(v || 0) === 0);
       if (needFallbackTotals) {
+        // Fallback logic kept as is...
         const monthsCount = periodMode === 'year' ? 12 : 6;
         const startBase = periodMode === 'year' ? 0 : (selectedMonth - monthsCount);
         const periodStart = new Date(selectedYear, startBase, 1).toISOString();
@@ -873,6 +934,7 @@ function PayrollDashboard({ companyId, setTab }: { companyId: string; setTab: (t
         setTotals({ employees: employeesTotal, gross: g, paye: p, uif: u, sdl: s, overtime: ot, net: netApprox });
       }
 
+      // Trend data logic
       const monthsCount = periodMode === 'year' ? 12 : 6;
       const startBase = periodMode === 'year' ? 0 : (selectedMonth - monthsCount);
       const months: Array<{ start: Date; end: Date; label: string }> = [];
@@ -907,132 +969,107 @@ function PayrollDashboard({ companyId, setTab }: { companyId: string; setTab: (t
       }
       const series = months.map(m => ({ month: m.label, ...bucketMap[m.label] }));
       setTrendData(series);
-
-      const needFallbackTrend = series.every(r => [r.salary, r.uif, r.paye, r.sdl].every(v => Number(v || 0) === 0));
-      if (needFallbackTrend) {
-        const { data: accounts } = await supabase
-          .from('chart_of_accounts' as any)
-          .select('id, account_type, account_name, account_code')
-          .eq('company_id', companyId)
-          .eq('is_active', true);
-        const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
-        const nameById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_name || '').toLowerCase()]));
-        const codeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
-        const { data: teRange } = await supabase
-          .from('transaction_entries' as any)
-          .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id, status)`) 
-          .eq('transactions.company_id', companyId)
-          .eq('transactions.status', 'posted')
-          .gte('transactions.transaction_date', months[0].start.toISOString())
-          .lte('transactions.transaction_date', months[months.length - 1].end.toISOString());
-        const bucketMap2: Record<string, { salary: number; uif: number; paye: number; sdl: number }> = {};
-        months.forEach(m => { bucketMap2[m.label] = { salary: 0, uif: 0, paye: 0, sdl: 0 }; });
-        (teRange || []).forEach((e: any) => {
-          const dt = new Date(String(e.transactions?.transaction_date || new Date()));
-          const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
-          if (!bucketMap2[label]) return;
-          const id = String(e.account_id || '');
-          const type = (typeById.get(id) || '').toLowerCase();
-          const name = (nameById.get(id) || '').toLowerCase();
-          const code = (codeById.get(id) || '');
-          const debit = Number(e.debit || 0);
-          const credit = Number(e.credit || 0);
-          const naturalDebit = type === 'asset' || type === 'expense';
-          const bal = naturalDebit ? (debit - credit) : (credit - debit);
-          if (type.includes('expense') && (name.includes('salary') || name.includes('wage'))) bucketMap2[label].salary += Math.abs(bal);
-          if (code.startsWith('2100') || name.includes('paye') || name.includes('pay as you earn')) bucketMap2[label].paye += Math.abs(bal);
-          if (code.startsWith('2101') || name.includes('uif')) bucketMap2[label].uif += Math.abs(bal);
-          if (code.startsWith('2102') || name.includes('sdl')) bucketMap2[label].sdl += Math.abs(bal);
-        });
-        const series2 = months.map(m => ({ month: m.label, ...bucketMap2[m.label] }));
-        setTrendData(series2);
-      }
     };
     if (companyId) load();
   }, [companyId, selectedMonth, selectedYear, periodMode, refreshTick]);
+
   return (
     <div className="space-y-6">
-      <Card>
+      <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-card p-4 rounded-lg border shadow-sm">
+        <div className="flex items-center gap-2">
+          <div className="font-medium text-sm text-muted-foreground">Period:</div>
+          <Select value={periodMode} onValueChange={(v: any) => setPeriodMode(v)}>
+            <SelectTrigger className="w-[120px] h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="month">Monthly</SelectItem>
+              <SelectItem value="year">Annual</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select disabled={periodMode === 'year'} value={String(selectedMonth)} onValueChange={(v: any) => setSelectedMonth(parseInt(String(v)))}>
+            <SelectTrigger className="w-[150px] h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Array.from({ length: 12 }).map((_, i) => (
+                <SelectItem key={i + 1} value={String(i + 1)}>{new Date(selectedYear, i, 1).toLocaleString('en-ZA', { month: 'long' })}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input className="w-24 h-9" value={String(selectedYear)} onChange={(e) => setSelectedYear(parseInt(e.target.value || '0'))} />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <MetricCard 
+          title="Total Employees" 
+          value={totals.employees.toString()} 
+          icon={<Users className="h-4 w-4" />}
+          gradient="bg-blue-500/10"
+          className="border-l-4 border-l-blue-500"
+        />
+        <MetricCard 
+          title="Gross Pay" 
+          value={`R ${totals.gross.toFixed(2)}`} 
+          icon={<Wallet className="h-4 w-4" />}
+          gradient="bg-green-500/10"
+          className="border-l-4 border-l-green-500"
+        />
+        <MetricCard 
+          title="Net Pay" 
+          value={`R ${totals.net.toFixed(2)}`} 
+          icon={<ArrowUpRight className="h-4 w-4" />}
+          gradient="bg-emerald-500/10"
+          className="border-l-4 border-l-emerald-500"
+        />
+        <MetricCard 
+          title="PAYE Tax" 
+          value={`R ${totals.paye.toFixed(2)}`} 
+          icon={<Landmark className="h-4 w-4" />}
+          gradient="bg-amber-500/10"
+          className="border-l-4 border-l-amber-500"
+        />
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+         <MetricCard 
+          title="UIF Total" 
+          value={`R ${totals.uif.toFixed(2)}`} 
+          icon={<TrendingUp className="h-4 w-4" />}
+          gradient="bg-purple-500/10"
+          className="border-l-4 border-l-purple-500"
+        />
+        <MetricCard 
+          title="SDL Total" 
+          value={`R ${totals.sdl.toFixed(2)}`} 
+          icon={<TrendingDown className="h-4 w-4" />}
+          gradient="bg-pink-500/10"
+          className="border-l-4 border-l-pink-500"
+        />
+         <MetricCard 
+          title="Overtime" 
+          value={`R ${totals.overtime.toFixed(2)}`} 
+          icon={<Info className="h-4 w-4" />}
+          gradient="bg-orange-500/10"
+          className="border-l-4 border-l-orange-500"
+        />
+      </div>
+
+      <Card className="shadow-sm border-muted">
         <CardHeader>
-          <CardTitle>
-            {periodMode === 'month' ? `Payroll Dashboard • ${new Date(selectedYear, selectedMonth - 1, 1).toLocaleString('en-ZA', { month: 'long', year: 'numeric' })}` : `Payroll Dashboard • ${selectedYear}`}
-          </CardTitle>
+          <CardTitle>Payroll Trends</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <Label>Mode</Label>
-              <Select value={periodMode} onValueChange={(v: any) => setPeriodMode(v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="month">Monthly</SelectItem>
-                  <SelectItem value="year">Annual</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Month</Label>
-              <Select disabled={periodMode === 'year'} value={String(selectedMonth)} onValueChange={(v: any) => setSelectedMonth(parseInt(String(v)))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Array.from({ length: 12 }).map((_, i) => (
-                    <SelectItem key={i + 1} value={String(i + 1)}>{new Date(selectedYear, i, 1).toLocaleString('en-ZA', { month: 'long' })}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Year</Label>
-              <Input value={String(selectedYear)} onChange={(e) => setSelectedYear(parseInt(e.target.value || '0'))} />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Employees" value={`${totals.employees}`} />
-        <StatCard title="Gross Pay" value={`R ${totals.gross.toFixed(2)}`} />
-        <StatCard title="PAYE" value={`R ${totals.paye.toFixed(2)}`} />
-        <StatCard title="UIF" value={`R ${totals.uif.toFixed(2)}`} />
-        <StatCard title="SDL" value={`R ${totals.sdl.toFixed(2)}`} />
-        <StatCard title="Overtime" value={`R ${totals.overtime.toFixed(2)}`} />
-        <StatCard title="Net Pay" value={`R ${totals.net.toFixed(2)}`} />
-      </div>
-      <div className="flex justify-end">
-        <Drawer>
-          <DrawerTrigger asChild>
-            <Button variant="outline"><Calculator className="h-4 w-4 mr-2" />Actions</Button>
-          </DrawerTrigger>
-          <DrawerContent>
-            <DrawerHeader>
-              <DrawerTitle>Payroll Actions</DrawerTitle>
-              <DrawerDescription>Quick tasks for payroll</DrawerDescription>
-            </DrawerHeader>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4">
-              <Button className="bg-gradient-primary" onClick={() => setTab("run")}><Calculator className="h-4 w-4 mr-2" />Run Payroll</Button>
-              <Button variant="outline" onClick={() => setTab("employees")}><Users className="h-4 w-4 mr-2" />Employees</Button>
-              <Button variant="outline" onClick={() => setTab("items")}><FileText className="h-4 w-4 mr-2" />Pay Items</Button>
-              <Button variant="outline" onClick={() => setTab("history")}><BarChart className="h-4 w-4 mr-2" />Payroll History</Button>
-            </div>
-            <DrawerFooter>
-              <DrawerClose asChild>
-                <Button variant="outline">Close</Button>
-              </DrawerClose>
-            </DrawerFooter>
-          </DrawerContent>
-        </Drawer>
-      </div>
-      <Card>
-        <CardHeader><CardTitle>Salary, UIF, PAYE, SDL</CardTitle></CardHeader>
-        <CardContent>
-          <div style={{ width: '100%', height: 280 }}>
+          <div style={{ width: '100%', height: 350 }}>
             <ResponsiveContainer>
               <LineChart data={trendData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line type="monotone" dataKey="salary" stroke="#22c55e" name="Salary" strokeWidth={2} dot={false} />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `R${value}`} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', borderRadius: '8px' }}
+                  itemStyle={{ color: 'hsl(var(--foreground))' }}
+                />
+                <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                <Line type="monotone" dataKey="salary" stroke="#22c55e" name="Salary" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
                 <Line type="monotone" dataKey="uif" stroke="#ef4444" name="UIF" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="paye" stroke="#f59e0b" name="PAYE" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="sdl" stroke="#3b82f6" name="SDL" strokeWidth={2} dot={false} />

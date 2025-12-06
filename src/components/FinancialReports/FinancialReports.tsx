@@ -244,13 +244,14 @@ export const FinancialReports = () => {
         .eq('user_id', user.id)
         .single();
       if (!profile?.company_id) return;
-      const { data: trialBalance, error: tbError } = await supabase.rpc('get_trial_balance_for_company');
-      if (tbError) throw tbError;
-      if (trialBalance) {
-        generateProfitLoss(trialBalance);
-        generateBalanceSheet(trialBalance);
-        await generateCashFlow(profile.company_id);
-      }
+      const now = new Date();
+      const periodStart = `${now.getFullYear()}-01-01`;
+      const periodEnd = now.toISOString().split('T')[0];
+      const trialBalancePeriod = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
+      const trialBalanceAsOfEnd = await fetchTrialBalanceCumulativeToEnd(profile.company_id, periodEnd);
+      generateProfitLoss(trialBalancePeriod);
+      generateBalanceSheet(trialBalanceAsOfEnd);
+      await generateCashFlow(profile.company_id);
     } catch (error) {
       console.error('Error loading financial data:', error);
       toast({ title: "Error", description: "Failed to load financial reports", variant: "destructive" });
@@ -320,7 +321,15 @@ export const FinancialReports = () => {
 
   const generateBalanceSheet = (trialBalance: any[]) => {
     // Group by account type - use trial balance balances directly
-    const assets = trialBalance.filter(a => a.account_type.toLowerCase() === 'asset');
+    const assets = trialBalance
+      .filter(a => a.account_type.toLowerCase() === 'asset')
+      .filter(a => {
+        const name = String(a.account_name || '').toLowerCase();
+        const code = String(a.account_code || '');
+        const isInventory = name.includes('inventory');
+        const isPrimaryInventory = code === '1300';
+        return !isInventory || isPrimaryInventory;
+      });
     const liabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability');
     const equity = trialBalance.filter(a => a.account_type.toLowerCase() === 'equity');
 
@@ -709,3 +718,101 @@ export const FinancialReports = () => {
     </div>
   );
 };
+
+async function fetchTrialBalanceForPeriod(companyId: string, start: string, end: string) {
+  const startDateObj = new Date(start);
+  const startISO = startDateObj.toISOString();
+  const endDateObj = new Date(end);
+  endDateObj.setHours(23, 59, 59, 999);
+  const endISO = endDateObj.toISOString();
+
+  const { data: accounts } = await supabase
+    .from('chart_of_accounts')
+    .select('id, account_code, account_name, account_type')
+    .eq('company_id', companyId)
+    .eq('is_active', true)
+    .order('account_code');
+
+  const { data: txEntries } = await supabase
+    .from('transaction_entries')
+    .select(`transaction_id, account_id, debit, credit, description, transactions!inner ( transaction_date, status, company_id )`)
+    .eq('transactions.company_id', companyId)
+    .eq('transactions.status', 'posted')
+    .gte('transactions.transaction_date', startISO)
+    .lte('transactions.transaction_date', endISO)
+    .not('description', 'ilike', '%Opening balance (carry forward)%');
+
+  const { data: ledgerEntries } = await supabase
+    .from('ledger_entries')
+    .select('transaction_id, account_id, debit, credit, entry_date, description')
+    .eq('company_id', companyId)
+    .gte('entry_date', startISO)
+    .lte('entry_date', endISO)
+    .not('description', 'ilike', '%Opening balance (carry forward)%');
+
+  const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+  const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
+  const trial: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number }> = [];
+  (accounts || []).forEach((acc: any) => {
+    let sumDebit = 0;
+    let sumCredit = 0;
+    filteredTxEntries?.forEach((entry: any) => { if (entry.account_id === acc.id) { sumDebit += Number(entry.debit || 0); sumCredit += Number(entry.credit || 0); } });
+    ledgerEntries?.forEach((entry: any) => { if (entry.account_id === acc.id) { sumDebit += Number(entry.debit || 0); sumCredit += Number(entry.credit || 0); } });
+  const t = String(acc.account_type || '').toLowerCase();
+  const naturalDebit = t === 'asset' || t === 'expense';
+  const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+  const isInventory = String(acc.account_name || '').toLowerCase().includes('inventory');
+  const isPrimaryInventory = String(acc.account_code || '') === '1300';
+  const shouldShow = Math.abs(balance) > 0.01 && (!isInventory || isPrimaryInventory);
+  if (shouldShow) trial.push({ account_id: acc.id, account_code: acc.account_code, account_name: acc.account_name, account_type: acc.account_type, balance });
+  });
+  return trial;
+}
+
+async function fetchTrialBalanceCumulativeToEnd(companyId: string, end: string) {
+  const endDateObj = new Date(end);
+  endDateObj.setHours(23, 59, 59, 999);
+  const endISO = endDateObj.toISOString();
+
+  const { data: accounts } = await supabase
+    .from('chart_of_accounts')
+    .select('id, account_code, account_name, account_type')
+    .eq('company_id', companyId)
+    .eq('is_active', true)
+    .order('account_code');
+
+  const { data: txEntries } = await supabase
+    .from('transaction_entries')
+    .select(`transaction_id, account_id, debit, credit, description, transactions!inner ( transaction_date, status, company_id )`)
+    .eq('transactions.company_id', companyId)
+    .eq('transactions.status', 'posted')
+    .lte('transactions.transaction_date', endISO)
+    .not('description', 'ilike', '%Opening balance (carry forward)%');
+
+  const { data: ledgerEntries } = await supabase
+    .from('ledger_entries')
+    .select('transaction_id, account_id, debit, credit, entry_date, description')
+    .eq('company_id', companyId)
+    .lte('entry_date', endISO)
+    .not('description', 'ilike', '%Opening balance (carry forward)%');
+
+  const ledgerTxIds = new Set<string>((ledgerEntries || []).map((e: any) => String(e.transaction_id || '')));
+  const filteredTxEntries = (txEntries || []).filter((e: any) => !ledgerTxIds.has(String(e.transaction_id || '')));
+
+  const trial: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number }> = [];
+  (accounts || []).forEach((acc: any) => {
+    let sumDebit = 0;
+    let sumCredit = 0;
+    filteredTxEntries?.forEach((entry: any) => { if (entry.account_id === acc.id) { sumDebit += Number(entry.debit || 0); sumCredit += Number(entry.credit || 0); } });
+    ledgerEntries?.forEach((entry: any) => { if (entry.account_id === acc.id) { sumDebit += Number(entry.debit || 0); sumCredit += Number(entry.credit || 0); } });
+  const t = String(acc.account_type || '').toLowerCase();
+  const naturalDebit = t === 'asset' || t === 'expense';
+  const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+  const isInventory = String(acc.account_name || '').toLowerCase().includes('inventory');
+  const isPrimaryInventory = String(acc.account_code || '') === '1300';
+  const shouldShow = Math.abs(balance) > 0.01 && (!isInventory || isPrimaryInventory);
+  if (shouldShow) trial.push({ account_id: acc.id, account_code: acc.account_code, account_name: acc.account_name, account_type: acc.account_type, balance });
+  });
+  return trial;
+}

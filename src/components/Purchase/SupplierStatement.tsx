@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
+import { Download, RefreshCw } from "lucide-react";
 
 interface Row {
   date: string;
@@ -105,56 +105,72 @@ export const SupplierStatement = ({ supplierId, supplierName, open, onOpenChange
         <DialogHeader>
           <DialogTitle>Supplier Statement • {supplierName}</DialogTitle>
         </DialogHeader>
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Statement Period</CardTitle>
-              <div className="flex items-center gap-2">
-                <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-                <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
-                <Button variant="outline" onClick={loadStatement} disabled={loading}>Refresh</Button>
-                <Button onClick={downloadCSV} disabled={loading}>Download CSV</Button>
-              </div>
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 bg-muted/30 rounded-lg">
+            <div className="text-sm font-medium">Period Selection</div>
+            <div className="flex flex-1 items-center gap-2 w-full sm:w-auto">
+              <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full sm:w-auto" />
+              <span className="text-muted-foreground">-</span>
+              <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full sm:w-auto" />
+              <Button variant="outline" size="icon" onClick={loadStatement} disabled={loading}>
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon" onClick={downloadCSV} disabled={loading}>
+                <Download className="h-4 w-4" />
+              </Button>
             </div>
-          </CardHeader>
-          <CardContent>
-            <div className="text-sm mb-2">Opening Balance: <span className="font-mono">R {openingBalance.toFixed(2)}</span></div>
-            {loading ? (
-              <div className="py-6 text-muted-foreground">Loading statement…</div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead>Reference</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead className="text-right">Debit</TableHead>
-                    <TableHead className="text-right">Credit</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((r, idx) => (
-                    <TableRow key={idx}>
-                      <TableCell>{r.date}</TableCell>
-                      <TableCell>{r.type}</TableCell>
-                      <TableCell>{r.reference}</TableCell>
-                      <TableCell className="text-muted-foreground">{r.description}</TableCell>
-                      <TableCell className="text-right">R {r.debit.toFixed(2)}</TableCell>
-                      <TableCell className="text-right">R {r.credit.toFixed(2)}</TableCell>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex justify-between items-center px-2">
+              <div className="text-sm text-muted-foreground">Opening Balance</div>
+              <div className="font-mono font-medium">R {openingBalance.toFixed(2)}</div>
+            </div>
+            
+            <div className="rounded-md border">
+              {loading ? (
+                <div className="py-12 text-center text-muted-foreground">Loading statement...</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Reference</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-right">Debit</TableHead>
+                      <TableHead className="text-right">Credit</TableHead>
                     </TableRow>
-                  ))}
-                  <TableRow>
-                    <TableCell colSpan={4} className="text-right font-medium">Closing Balance</TableCell>
-                    <TableCell colSpan={2} className="text-right font-mono">R {closingBalance.toFixed(2)}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No transactions in this period</TableCell>
+                      </TableRow>
+                    ) : (
+                      rows.map((r, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>{r.date}</TableCell>
+                          <TableCell>{r.type}</TableCell>
+                          <TableCell className="font-mono text-xs">{r.reference}</TableCell>
+                          <TableCell className="text-muted-foreground">{r.description}</TableCell>
+                          <TableCell className="text-right font-mono text-sm">R {r.debit.toFixed(2)}</TableCell>
+                          <TableCell className="text-right font-mono text-sm">R {r.credit.toFixed(2)}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+            
+            <div className="flex justify-between items-center px-4 py-3 bg-muted/30 rounded-lg font-medium">
+              <div>Closing Balance</div>
+              <div className="font-mono text-lg">R {closingBalance.toFixed(2)}</div>
+            </div>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
 };
-

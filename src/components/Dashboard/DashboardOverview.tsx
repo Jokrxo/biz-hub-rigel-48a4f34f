@@ -24,11 +24,15 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useNavigate } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useAuth } from "@/context/useAuth";
+import { DashboardCalendar } from "./DashboardCalendar";
 
 export const DashboardOverview = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
+
   const [metrics, setMetrics] = useState({
     totalAssets: 0,
     totalLiabilities: 0,
@@ -63,11 +67,10 @@ export const DashboardOverview = () => {
   const [cashGaugePct, setCashGaugePct] = useState<number>(0);
   const [cashOnTrack, setCashOnTrack] = useState<boolean>(true);
   const [safeMinimum, setSafeMinimum] = useState<number>(0);
-  const [firstRun, setFirstRun] = useState<{ hasCoa: boolean; hasBank: boolean; hasProducts: boolean; hasCustomers: boolean; hasSuppliers: boolean; hasEmployees: boolean }>({ hasCoa: true, hasBank: true, hasProducts: true, hasCustomers: true, hasSuppliers: true, hasEmployees: true });
   const [userName, setUserName] = useState<string>("");
+  const [currentTime, setCurrentTime] = useState(new Date());
   const [companyId, setCompanyId] = useState<string>("");
   const [chartMonths, setChartMonths] = useState<number>(12);
-  const [onboardingOpen, setOnboardingOpen] = useState<boolean>(false);
   const loadingRef = useRef(false);
   
   // Date filter state
@@ -97,6 +100,8 @@ export const DashboardOverview = () => {
     return { ...defaultWidgets, ...parsed };
   });
   const [todoItems, setTodoItems] = useState<Array<{ id: string; label: string; done: boolean }>>([]);
+
+
 
   const calculateTotalInventoryValue = useCallback(async (companyId: string) => {
     try {
@@ -1122,48 +1127,57 @@ export const DashboardOverview = () => {
     localStorage.setItem('dashboardWidgets', JSON.stringify(widgets));
   }, [widgets]);
 
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const toggleWidget = (widget: string) => {
     setWidgets((prev: any) => ({ ...prev, [widget]: !prev[widget] }));
   };
-
-  const setupComplete = firstRun.hasCoa && firstRun.hasBank && firstRun.hasProducts && firstRun.hasCustomers && firstRun.hasSuppliers && firstRun.hasEmployees;
 
   const metricCards = [
     {
       title: "Total Assets",
       value: `R ${metrics.totalAssets.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
       icon: Building2,
-      color: "text-primary"
+      color: "text-blue-600",
+      gradient: "bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-background border-blue-200/50"
     },
     {
       title: "Total Liabilities",
       value: `R ${metrics.totalLiabilities.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
       icon: FileText,
-      color: "text-destructive"
+      color: "text-red-600",
+      gradient: "bg-gradient-to-br from-red-500/10 via-red-500/5 to-background border-red-200/50"
     },
     {
       title: "Total Equity",
       value: `R ${metrics.totalEquity.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
       icon: Briefcase,
-      color: "text-accent"
+      color: "text-purple-600",
+      gradient: "bg-gradient-to-br from-purple-500/10 via-purple-500/5 to-background border-purple-200/50"
     },
     {
       title: "Total Income",
       value: `R ${metrics.totalIncome.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
       icon: TrendingUp,
-      color: "text-primary"
+      color: "text-emerald-600",
+      gradient: "bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-background border-emerald-200/50"
     },
     {
       title: "Operating Expenses",
       value: `(R ${metrics.operatingExpenses.toLocaleString('en-ZA', { minimumFractionDigits: 2 })})`,
       icon: TrendingDown,
-      color: "text-accent"
+      color: "text-amber-600",
+      gradient: "bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-background border-amber-200/50"
     },
     {
       title: "Bank Balance",
       value: `R ${metrics.bankBalance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
       icon: CreditCard,
-      color: "text-primary"
+      color: "text-cyan-600",
+      gradient: "bg-gradient-to-br from-cyan-500/10 via-cyan-500/5 to-background border-cyan-200/50"
     }
   ];
 
@@ -1193,127 +1207,12 @@ export const DashboardOverview = () => {
   
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>{userName ? `Welcome, ${userName}` : 'Welcome'}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {setupComplete ? (
-            <div className="space-y-3">
-              <div className="text-sm text-muted-foreground">Your company setup is complete. Choose a module to continue.</div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => navigate('/sales')}>Go to Sales</Button>
-                <Button variant="outline" onClick={() => navigate('/purchase')}>Go to Purchase</Button>
-                <Button variant="outline" onClick={() => navigate('/customers')}>Go to Customers</Button>
-                <Button variant="outline" onClick={() => navigate('/payroll')}>Go to Payroll</Button>
-                <Button variant="outline" onClick={() => navigate('/investments')}>Go to Investments</Button>
-                <Button variant="outline" onClick={() => navigate('/reports')}>View Reports</Button>
-              </div>
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">Complete your company setup to get started.</div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Sheet open={onboardingOpen} onOpenChange={setOnboardingOpen}>
-        <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>Company Setup</SheetTitle>
-            <SheetDescription>Add core records for products, customers, suppliers, and employees.</SheetDescription>
-          </SheetHeader>
-          <div className="space-y-6 mt-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Product</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="text-sm text-muted-foreground">Add products via Purchase Orders to capture costs and stock updates.</div>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => navigate('/purchase')}>Go to Purchase</Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Customer</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="text-sm text-muted-foreground">Manage your customers in the Customers module.</div>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => navigate('/customers')}>Go to Customers</Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Supplier</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="text-sm text-muted-foreground">Create and manage suppliers in the Purchase module.</div>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => navigate('/purchase')}>Go to Purchase</Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Employee</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="text-sm text-muted-foreground">Add employees in the Payroll module.</div>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => navigate('/payroll')}>Go to Payroll</Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <div className="flex items-center justify-between">
-              <div className="text-sm text-muted-foreground">You can skip and complete later in relevant pages.</div>
-              <Button variant="outline" onClick={() => setOnboardingOpen(false)}>Skip</Button>
-            </div>
-          </div>
-        </SheetContent>
-      </Sheet>
-      {/* First-run setup banner */}
-      {(!firstRun.hasCoa || !firstRun.hasBank) && (
-        <Card className="border-dashed">
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Welcome! Let’s set up your company</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="p-3 border rounded">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">Chart of Accounts</span>
-                  <Badge variant={firstRun.hasCoa ? 'default' : 'outline'}>{firstRun.hasCoa ? 'Done' : 'Not set'}</Badge>
-                </div>
-                {!firstRun.hasCoa && (
-                  <Button className="mt-3" onClick={() => navigate('/transactions?tab=chart')}>Create Accounts</Button>
-                )}
-              </div>
-              <div className="p-3 border rounded">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">Bank Account</span>
-                  <Badge variant={firstRun.hasBank ? 'default' : 'outline'}>{firstRun.hasBank ? 'Done' : 'Not set'}</Badge>
-                </div>
-                {!firstRun.hasBank && (
-                  <Button className="mt-3" onClick={() => navigate('/bank')}>Add Bank Account</Button>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
       {/* Page Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Dashboard</h1>
           <p className="text-muted-foreground mt-1">
-            Welcome back! Here's your live financial overview
+            Welcome {userName}, {currentTime.toLocaleDateString('en-US', { weekday: 'long' })} {currentTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric', hour12: true })}
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1362,6 +1261,7 @@ export const DashboardOverview = () => {
             <Calendar className="h-4 w-4" />
             {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })} • {chartMonths} months
           </Badge>
+          <DashboardCalendar />
           <Sheet>
             <SheetTrigger asChild>
               <Button variant="outline" size="icon">
@@ -1399,7 +1299,7 @@ export const DashboardOverview = () => {
       {widgets.metrics && (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {metricCards.map((metric) => (
-            <Card key={metric.title} className="card-professional">
+            <Card key={metric.title} className={`border shadow-sm ${metric.gradient}`}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
                   {metric.title}
