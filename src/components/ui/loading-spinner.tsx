@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { useEffect, useState } from "react";
 
 interface LoadingSpinnerProps {
   className?: string;
@@ -43,15 +44,34 @@ export const LoadingSpinner = ({ className, size = "md" }: LoadingSpinnerProps) 
 };
 
 export const PageLoader = () => {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setProgress((prev) => {
+        if (prev >= 100) {
+          clearInterval(timer);
+          return 100;
+        }
+        // Random increment between 5 and 15
+        const increment = Math.floor(Math.random() * 10) + 5;
+        return Math.min(prev + increment, 100);
+      });
+    }, 200);
+
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-subtle">
       <div className="text-center space-y-4">
         <LoadingSpinner size="lg" />
         <div className="space-y-2">
-          <h2 className="text-2xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-            Rigel Business
-          </h2>
-          <p className="text-sm text-muted-foreground animate-pulse">Loading your workspace...</p>
+          {/* Removed Rigel Business text as requested */}
+          <div className="text-2xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+            {progress}%
+          </div>
+          <p className="text-sm text-muted-foreground animate-pulse">Loading...</p>
         </div>
       </div>
     </div>

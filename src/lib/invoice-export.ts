@@ -38,76 +38,192 @@ export const buildInvoicePDF = (
   const doc = new jsPDF();
   const today = new Date().toLocaleDateString('en-ZA');
 
-  // Header
+  // Colors
+  const PRIMARY_COLOR: [number, number, number] = [30, 41, 59]; // Slate 800
+  const ACCENT_COLOR: [number, number, number] = [59, 130, 246]; // Blue 500
+
+  // Header Background
+  doc.setFillColor(...PRIMARY_COLOR);
+  doc.rect(0, 0, 210, 40, 'F');
+
+  // Company Name (Top Left, White)
   doc.setFontSize(22);
-  doc.text('INVOICE', 180, 20, { align: 'right' });
-  doc.setFontSize(14);
-  doc.text(company.name || 'Company', 14, 20);
-  doc.setFontSize(10);
-  if (company.address) doc.text(company.address, 14, 26);
-  if (company.phone) doc.text(`P: ${company.phone}`, 14, 32);
-  if (company.email) doc.text(`E: ${company.email}`, 14, 38);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont(undefined, 'bold');
+  doc.text(company.name || 'Company Name', 14, 25);
 
-  // Invoice meta
-  doc.setFontSize(10);
-  const metaStartY = 50;
-  doc.text(`Invoice #: ${invoice.invoice_number}`, 14, metaStartY);
-  doc.text(`Invoice date: ${new Date(invoice.invoice_date).toLocaleDateString('en-ZA')}`, 14, metaStartY + 6);
-  doc.text(`Due date: ${invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-ZA') : 'NA'}`, 14, metaStartY + 12);
-  doc.text(`Bill to: ${invoice.customer_name}`, 14, metaStartY + 18);
-  if (invoice.customer_email) doc.text(`Email: ${invoice.customer_email}`, 14, metaStartY + 24);
+  // Invoice Label (Top Right, White)
+  doc.setFontSize(30);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont(undefined, 'bold');
+  doc.text('INVOICE', 196, 25, { align: 'right' });
 
-  // Items table
-  const body = items.map((it, idx) => {
+  doc.setTextColor(0, 0, 0); // Reset text color
+
+  // Layout Constants
+  const leftColX = 14;
+  const rightColX = 140;
+  let currentY = 55;
+
+  // --- Company Details (Left) ---
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'bold');
+  doc.text("FROM:", leftColX, currentY);
+  currentY += 5;
+  doc.setFont(undefined, 'normal');
+  doc.setTextColor(80, 80, 80);
+  
+  // Address handling to avoid overlay
+  if (company.address) {
+    const addressLines = doc.splitTextToSize(company.address, 80);
+    doc.text(addressLines, leftColX, currentY);
+    currentY += (addressLines.length * 5);
+  } else {
+    currentY += 5;
+  }
+  
+  if (company.phone) {
+    doc.text(`Phone: ${company.phone}`, leftColX, currentY);
+    currentY += 5;
+  }
+  if (company.email) {
+    doc.text(`Email: ${company.email}`, leftColX, currentY);
+    currentY += 5;
+  }
+  if (company.tax_number) {
+    doc.text(`Tax ID: ${company.tax_number}`, leftColX, currentY);
+    currentY += 5;
+  }
+  if (company.vat_number) {
+    doc.text(`VAT No: ${company.vat_number}`, leftColX, currentY);
+    currentY += 5;
+  }
+
+  // --- Invoice Details (Right) ---
+  let metaY = 55;
+  doc.setFontSize(10);
+  doc.setTextColor(0, 0, 0);
+
+  // Helper for meta rows
+  const addMetaRow = (label: string, value: string) => {
+    doc.setFont(undefined, 'bold');
+    doc.text(label, rightColX, metaY);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(80, 80, 80);
+    doc.text(value, 196, metaY, { align: 'right' });
+    doc.setTextColor(0, 0, 0);
+    metaY += 6;
+  };
+
+  addMetaRow("Invoice #:", invoice.invoice_number);
+  addMetaRow("Date:", new Date(invoice.invoice_date).toLocaleDateString('en-ZA'));
+  addMetaRow("Due Date:", invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-ZA') : 'Due on Receipt');
+  
+  // Spacing before "Bill To"
+  metaY += 6;
+  doc.setFont(undefined, 'bold');
+  doc.text("BILL TO:", rightColX, metaY);
+  metaY += 5;
+  doc.setFont(undefined, 'normal');
+  doc.setTextColor(80, 80, 80);
+  doc.text(invoice.customer_name, rightColX, metaY);
+  metaY += 5;
+  if (invoice.customer_email) {
+    doc.text(invoice.customer_email, rightColX, metaY);
+  }
+
+  // Ensure items table starts below the lowest content
+  const startTableY = Math.max(currentY, metaY) + 10;
+
+  // --- Items Table ---
+  const tableBody = items.map((it, idx) => {
     const price = it.quantity * it.unit_price;
     return [
-      `A${String(idx + 1).padStart(3, '0')}`,
-      it.description || '-',
+      idx + 1,
+      it.description || 'Item',
       it.quantity,
       `R ${it.unit_price.toFixed(2)}`,
-      'R 0.00',
+      `${(it.tax_rate || 0).toFixed(0)}%`,
       `R ${price.toFixed(2)}`
     ];
   });
 
   autoTable(doc, {
-    startY: metaStartY + 32,
-    head: [['Item #', 'Description', 'Qty', 'Unit price', 'Discount', 'Price']],
-    body,
-    styles: { fontSize: 9, cellPadding: 3 },
-    headStyles: { fillColor: [34, 139, 34], textColor: 255, fontStyle: 'bold' },
-    columnStyles: { 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
+    startY: startTableY,
+    head: [['#', 'Description', 'Qty', 'Price', 'Tax', 'Total']],
+    body: tableBody,
+    styles: { 
+      fontSize: 9, 
+      cellPadding: 4,
+      textColor: [50, 50, 50]
+    },
+    headStyles: { 
+      fillColor: PRIMARY_COLOR, 
+      textColor: 255, 
+      fontStyle: 'bold',
+      halign: 'left'
+    },
+    columnStyles: { 
+      0: { halign: 'center', cellWidth: 15 },
+      2: { halign: 'center', cellWidth: 20 },
+      3: { halign: 'right', cellWidth: 30 },
+      4: { halign: 'center', cellWidth: 20 },
+      5: { halign: 'right', cellWidth: 35 }
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252]
+    }
   });
 
-  // Totals box (right side)
-  let y = (doc as any).lastAutoTable.finalY + 8;
-  doc.setFontSize(10);
-  doc.text('Invoice Subtotal:', 140, y);
-  doc.text(`R ${invoice.subtotal.toFixed(2)}`, 190, y, { align: 'right' });
-  y += 6;
-  doc.text('Tax Rate:', 140, y);
-  const taxRate = items[0]?.tax_rate ?? 0;
-  doc.text(`${taxRate.toFixed(0)}%`, 190, y, { align: 'right' });
-  y += 6;
-  doc.text('Sales Tax:', 140, y);
-  doc.text(`R ${invoice.tax_amount.toFixed(2)}`, 190, y, { align: 'right' });
-  y += 6;
-  doc.text('Deposit Received:', 140, y);
-  doc.text('R 0.00', 190, y, { align: 'right' });
-  y += 6;
-  doc.setFont(undefined, 'bold');
-  doc.text('Total:', 140, y);
-  doc.text(`R ${invoice.total_amount.toFixed(2)}`, 190, y, { align: 'right' });
-  doc.setFont(undefined, 'normal');
+  // --- Totals Section ---
+  let finalY = (doc as any).lastAutoTable.finalY + 10;
+  
+  // Draw Totals Box Background
+  doc.setFillColor(248, 250, 252);
+  doc.rect(130, finalY - 2, 70, 40, 'F');
+  
+  const addTotalRow = (label: string, value: string, isBold = false, isBig = false) => {
+    doc.setFont(undefined, isBold ? 'bold' : 'normal');
+    doc.setFontSize(isBig ? 12 : 10);
+    doc.setTextColor(0, 0, 0);
+    doc.text(label, 135, finalY + 5);
+    doc.text(value, 195, finalY + 5, { align: 'right' });
+    finalY += (isBig ? 10 : 7);
+  };
 
-  // Footer note
-  y += 14;
+  addTotalRow('Subtotal:', `R ${invoice.subtotal.toFixed(2)}`);
+  addTotalRow('VAT (15%):', `R ${invoice.tax_amount.toFixed(2)}`);
+  doc.setDrawColor(200, 200, 200);
+  doc.line(135, finalY, 195, finalY); // Separator line
+  finalY += 2;
+  addTotalRow('Total:', `R ${invoice.total_amount.toFixed(2)}`, true, true);
+
+  // --- Footer Section ---
+  const pageHeight = doc.internal.pageSize.height;
+  
+  // Footer Background
+  doc.setFillColor(245, 245, 245);
+  doc.rect(0, pageHeight - 30, 210, 30, 'F');
+  
+  // Footer Content
   doc.setFontSize(9);
-  doc.text('Please make all checks payable to ' + (company.name || 'Company'), 14, y);
-  y += 6;
-  doc.text('Total due in 30 days. Overdue accounts subject to a service charge of 1.5% per month.', 14, y);
-  y += 6;
-  doc.text(`Generated on ${today}`, 14, y);
+  doc.setTextColor(100, 100, 100);
+  doc.setFont(undefined, 'normal');
+  
+  const footerText1 = `Thank you for your business!`;
+  const footerText2 = `Please make checks payable to ${company.name}`;
+  const footerText3 = `Generated by Rigel Business Accounting System`;
+  
+  doc.text(footerText1, 105, pageHeight - 20, { align: 'center' });
+  doc.text(footerText2, 105, pageHeight - 15, { align: 'center' });
+  
+  // Branding (Small & Subtle)
+  doc.setFontSize(8);
+  doc.setTextColor(150, 150, 150);
+  doc.text(footerText3, 105, pageHeight - 8, { align: 'center' });
+
+  // Add Logo at the end to ensure it layers correctly if needed, though header background is at top
+  // Note: Logo addition logic is handled by the caller using addLogoToPDF, but we reserved space in the header.
 
   return doc;
 };
@@ -124,7 +240,13 @@ export const exportInvoiceToPDF = (
 
 export const addLogoToPDF = (doc: any, logoDataUrl: string) => {
   try {
-    doc.addImage(logoDataUrl, 'PNG', 14, 8, 24, 24);
+    // Add logo in the header area, left aligned
+    // White background circle for logo to pop against the dark header
+    doc.setFillColor(255, 255, 255);
+    doc.circle(26, 20, 14, 'F'); 
+    
+    // Add image centered in the circle
+    doc.addImage(logoDataUrl, 'PNG', 16, 10, 20, 20);
   } catch (e) {
     console.warn('Failed to add logo to PDF', e);
   }
@@ -147,120 +269,4 @@ export const fetchLogoDataUrl = async (logoUrl?: string | null): Promise<string>
     console.warn('Failed to fetch logo for PDF', e);
     return '';
   }
-};
-
-export const buildInvoicePDFTemplate2 = (
-  invoice: InvoiceForPDF,
-  items: InvoiceItemForPDF[],
-  company: CompanyForPDF
-) => {
-  const doc = new jsPDF();
-  doc.setFontSize(18);
-  doc.text(company.name || 'Company', 14, 16);
-  doc.setFontSize(10);
-  const topRightY = 12;
-  doc.text('INVOICE', 190, topRightY, { align: 'right' });
-  doc.text(`Invoice #: ${invoice.invoice_number}`, 190, topRightY + 6, { align: 'right' });
-  doc.text(`Date: ${new Date(invoice.invoice_date).toLocaleDateString('en-ZA')}`, 190, topRightY + 12, { align: 'right' });
-  if (company.address) doc.text(company.address, 14, 22);
-  const metaStartY = 34;
-  doc.text(`Bill to: ${invoice.customer_name}`, 14, metaStartY);
-  if (invoice.customer_email) doc.text(`Email: ${invoice.customer_email}`, 14, metaStartY + 6);
-  const body = items.map((it) => {
-    const price = it.quantity * it.unit_price;
-    const vat = (it.tax_rate ?? 0) / 100 * price;
-    return [
-      it.description || '-',
-      it.quantity,
-      `R ${it.unit_price.toFixed(2)}`,
-      `R ${vat.toFixed(2)}`,
-      `R ${price.toFixed(2)}`
-    ];
-  });
-  autoTable(doc, {
-    startY: metaStartY + 14,
-    head: [['Description', 'Qty', 'Unit', 'VAT', 'Line Total']],
-    body,
-    styles: { fontSize: 9, cellPadding: 3 },
-    headStyles: { fillColor: [0, 0, 0], textColor: 255 },
-    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } }
-  });
-  const y = (doc as any).lastAutoTable.finalY + 8;
-  doc.setDrawColor(0);
-  doc.rect(130, y, 70, 30);
-  doc.setFontSize(10);
-  doc.text('Subtotal', 134, y + 6);
-  doc.text(`R ${invoice.subtotal.toFixed(2)}`, 194, y + 6, { align: 'right' });
-  doc.text('VAT', 134, y + 12);
-  doc.text(`R ${invoice.tax_amount.toFixed(2)}`, 194, y + 12, { align: 'right' });
-  doc.setFont(undefined, 'bold');
-  doc.text('Total', 134, y + 24);
-  doc.text(`R ${invoice.total_amount.toFixed(2)}`, 194, y + 24, { align: 'right' });
-  doc.setFont(undefined, 'normal');
-  return doc;
-};
-
-export const buildInvoicePDFTemplate3 = (
-  invoice: InvoiceForPDF,
-  items: InvoiceItemForPDF[],
-  company: CompanyForPDF
-) => {
-  const doc = new jsPDF();
-  doc.setFontSize(16);
-  doc.text('Invoice', 14, 16);
-  doc.setFontSize(12);
-  doc.text(company.name || 'Company', 14, 24);
-  const rightY = 16;
-  doc.text(`No: ${invoice.invoice_number}`, 190, rightY, { align: 'right' });
-  doc.text(`Date: ${new Date(invoice.invoice_date).toLocaleDateString('en-ZA')}`, 190, rightY + 6, { align: 'right' });
-  if (invoice.due_date) doc.text(`Due: ${new Date(invoice.due_date).toLocaleDateString('en-ZA')}`, 190, rightY + 12, { align: 'right' });
-  const metaStartY = 34;
-  doc.setFontSize(10);
-  doc.text(`Bill to: ${invoice.customer_name}`, 14, metaStartY);
-  const body = items.map((it) => {
-    const line = it.quantity * it.unit_price;
-    const rate = it.tax_rate ?? 0;
-    const vat = rate / 100 * line;
-    const total = line + vat;
-    return [
-      it.description || '-',
-      it.quantity,
-      `R ${it.unit_price.toFixed(2)}`,
-      `${rate.toFixed(0)}%`,
-      `R ${vat.toFixed(2)}`,
-      `R ${total.toFixed(2)}`
-    ];
-  });
-  autoTable(doc, {
-    startY: metaStartY + 8,
-    head: [['Description', 'Qty', 'Unit', 'Tax', 'VAT', 'Total']],
-    body,
-    styles: { fontSize: 9, cellPadding: 2 },
-    headStyles: { fillColor: [34, 139, 34], textColor: 255, fontStyle: 'bold' },
-    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' } }
-  });
-  let y = (doc as any).lastAutoTable.finalY + 6;
-  doc.setFontSize(10);
-  doc.text('Subtotal', 140, y);
-  doc.text(`R ${invoice.subtotal.toFixed(2)}`, 190, y, { align: 'right' });
-  y += 6;
-  doc.text('VAT', 140, y);
-  doc.text(`R ${invoice.tax_amount.toFixed(2)}`, 190, y, { align: 'right' });
-  y += 6;
-  doc.setFont(undefined, 'bold');
-  doc.text('Total', 140, y);
-  doc.text(`R ${invoice.total_amount.toFixed(2)}`, 190, y, { align: 'right' });
-  doc.setFont(undefined, 'normal');
-  return doc;
-};
-
-export const buildInvoicePDFByTemplate = (
-  template: string,
-  invoice: InvoiceForPDF,
-  items: InvoiceItemForPDF[],
-  company: CompanyForPDF
-) => {
-  if (template === 'template2') return buildInvoicePDFTemplate2(invoice, items, company);
-  if (template === 'template3') return buildInvoicePDFTemplate3(invoice, items, company);
-  return buildInvoicePDF(invoice, items, company);
 };

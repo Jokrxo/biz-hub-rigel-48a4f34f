@@ -16,6 +16,8 @@ import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 
+import { MessageBox } from "./MessageBox";
+
 interface DashboardHeaderProps {
   onMenuClick: () => void;
 }
@@ -419,6 +421,7 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
       </div>
 
       <div className="flex items-center gap-3 sm:gap-4">
+        <MessageBox />
         <Button variant="ghost" size="icon" className="relative h-10 w-10 rounded-full hover:bg-primary/10 hover:text-primary transition-colors" onClick={() => setNotificationOpen(true)}>
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (

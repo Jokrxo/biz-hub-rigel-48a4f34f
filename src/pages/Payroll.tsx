@@ -267,11 +267,11 @@ export default function Payroll() {
                   Run Payroll
                 </TabsTrigger>
                 <TabsTrigger 
-                  value="payroll"
+                  value="posting"
                   className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
                 >
                   <Wallet className="h-4 w-4" />
-                  Pay Runs
+                  Posting & Payment
                 </TabsTrigger>
                 <TabsTrigger 
                   value="items"
@@ -309,8 +309,8 @@ export default function Payroll() {
               <EmployeesSimple companyId={companyId} canEdit={canEdit} />
             </TabsContent>
 
-            <TabsContent value="payroll">
-              <PayRunsTab companyId={companyId} canEdit={canEdit} />
+            <TabsContent value="posting">
+              <PayrollPostingModule companyId={companyId} />
             </TabsContent>
 
             <TabsContent value="items">

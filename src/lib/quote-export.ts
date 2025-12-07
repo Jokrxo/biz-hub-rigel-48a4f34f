@@ -36,44 +36,172 @@ export const buildQuotePDF = (
   company: CompanyForPDF
 ) => {
   const doc = new jsPDF();
-  doc.setFontSize(18);
-  doc.text(company.name || 'Company', 14, 18);
-  doc.setFontSize(12);
-  doc.text(`Quote ${quote.quote_number}`, 14, 26);
-  doc.setFontSize(10);
-  doc.text(`Date: ${new Date(quote.quote_date).toLocaleDateString('en-ZA')}`, 14, 33);
-  if (quote.expiry_date) doc.text(`Expiry: ${new Date(quote.expiry_date).toLocaleDateString('en-ZA')}`, 14, 38);
-  doc.text(`Customer: ${quote.customer_name}`, 14, 44);
+  
+  // Colors - Purple/Indigo Theme for Quotes
+  const PRIMARY_COLOR: [number, number, number] = [67, 56, 202]; // Indigo 700
+  
+  // Header Background
+  doc.setFillColor(...PRIMARY_COLOR);
+  doc.rect(0, 0, 210, 40, 'F');
 
-  const tableBody = items.map(it => [
+  // Company Name (Top Left, White)
+  doc.setFontSize(22);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont(undefined, 'bold');
+  doc.text(company.name || 'Company Name', 14, 25);
+
+  // Quote Label (Top Right, White)
+  doc.setFontSize(30);
+  doc.setTextColor(255, 255, 255);
+  doc.setFont(undefined, 'bold');
+  doc.text('QUOTE', 196, 25, { align: 'right' });
+
+  doc.setTextColor(0, 0, 0); // Reset text color
+
+  // Layout Constants
+  const leftColX = 14;
+  const rightColX = 140;
+  let currentY = 55;
+
+  // --- Company Details (Left) ---
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'bold');
+  doc.text("FROM:", leftColX, currentY);
+  currentY += 5;
+  doc.setFont(undefined, 'normal');
+  doc.setTextColor(80, 80, 80);
+  
+  // Address handling
+  if (company.address) {
+    const addressLines = doc.splitTextToSize(company.address, 80);
+    doc.text(addressLines, leftColX, currentY);
+    currentY += (addressLines.length * 5);
+  } else {
+    currentY += 5;
+  }
+  
+  if (company.phone) {
+    doc.text(`Phone: ${company.phone}`, leftColX, currentY);
+    currentY += 5;
+  }
+  if (company.email) {
+    doc.text(`Email: ${company.email}`, leftColX, currentY);
+    currentY += 5;
+  }
+
+  // --- Quote Details (Right) ---
+  let metaY = 55;
+  doc.setFontSize(10);
+  doc.setTextColor(0, 0, 0);
+
+  const addMetaRow = (label: string, value: string) => {
+    doc.setFont(undefined, 'bold');
+    doc.text(label, rightColX, metaY);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(80, 80, 80);
+    doc.text(value, 196, metaY, { align: 'right' });
+    doc.setTextColor(0, 0, 0);
+    metaY += 6;
+  };
+
+  addMetaRow("Quote #:", quote.quote_number);
+  addMetaRow("Date:", new Date(quote.quote_date).toLocaleDateString('en-ZA'));
+  addMetaRow("Expiry:", quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-ZA') : 'N/A');
+  
+  // Bill To Section
+  metaY += 6;
+  doc.setFont(undefined, 'bold');
+  doc.text("TO:", rightColX, metaY);
+  metaY += 5;
+  doc.setFont(undefined, 'normal');
+  doc.setTextColor(80, 80, 80);
+  doc.text(quote.customer_name, rightColX, metaY);
+  metaY += 5;
+  if (quote.customer_email) {
+    doc.text(quote.customer_email, rightColX, metaY);
+  }
+
+  // Ensure table starts below all content
+  const startTableY = Math.max(currentY, metaY) + 10;
+
+  const tableBody = items.map((it, idx) => [
+    idx + 1,
     it.description,
     it.quantity,
-    it.unit_price.toFixed(2),
+    `R ${it.unit_price.toFixed(2)}`,
     `${it.tax_rate}%`,
-    (it.quantity * it.unit_price).toFixed(2)
+    `R ${(it.quantity * it.unit_price).toFixed(2)}`
   ]);
 
   autoTable(doc, {
-    head: [["Description","Qty","Unit Price","Tax %","Line Total"]],
+    startY: startTableY,
+    head: [["#", "Description", "Qty", "Price", "Tax", "Total"]],
     body: tableBody,
-    startY: 50,
-    styles: { fontSize: 9, cellPadding: 3 },
-    headStyles: { fillColor: [34, 139, 34], textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [248, 248, 248] },
+    styles: { 
+      fontSize: 9, 
+      cellPadding: 4,
+      textColor: [50, 50, 50]
+    },
+    headStyles: { 
+      fillColor: PRIMARY_COLOR, 
+      textColor: 255, 
+      fontStyle: 'bold',
+      halign: 'left'
+    },
+    columnStyles: { 
+      0: { halign: 'center', cellWidth: 15 },
+      2: { halign: 'center', cellWidth: 20 },
+      3: { halign: 'right', cellWidth: 30 },
+      4: { halign: 'center', cellWidth: 20 },
+      5: { halign: 'right', cellWidth: 35 }
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252]
+    }
   });
 
-  const y = (doc as any).lastAutoTable.finalY || 50;
-  doc.setFontSize(12);
-  doc.text('Totals', 14, y + 10);
-  doc.setFontSize(10);
-  doc.text(`Subtotal: R ${quote.subtotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, 14, y + 16);
-  doc.text(`Tax: R ${quote.tax_amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, 14, y + 22);
-  doc.text(`Total: R ${quote.total_amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, 14, y + 28);
-  if (quote.notes) {
-    doc.text('Notes:', 14, y + 36);
-    doc.setFontSize(9);
-    doc.text(String(quote.notes), 14, y + 42);
-  }
+  // --- Totals Section ---
+  let finalY = (doc as any).lastAutoTable.finalY + 10;
+  
+  doc.setFillColor(248, 250, 252);
+  doc.rect(130, finalY - 2, 70, 40, 'F');
+  
+  const addTotalRow = (label: string, value: string, isBold = false, isBig = false) => {
+    doc.setFont(undefined, isBold ? 'bold' : 'normal');
+    doc.setFontSize(isBig ? 12 : 10);
+    doc.setTextColor(0, 0, 0);
+    doc.text(label, 135, finalY + 5);
+    doc.text(value, 195, finalY + 5, { align: 'right' });
+    finalY += (isBig ? 10 : 7);
+  };
+
+  addTotalRow('Subtotal:', `R ${quote.subtotal.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`);
+  addTotalRow('Tax:', `R ${quote.tax_amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`);
+  doc.setDrawColor(200, 200, 200);
+  doc.line(135, finalY, 195, finalY);
+  finalY += 2;
+  addTotalRow('Total:', `R ${quote.total_amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`, true, true);
+
+  // --- Footer Section ---
+  const pageHeight = doc.internal.pageSize.height;
+  
+  // Footer Background
+  doc.setFillColor(245, 245, 245);
+  doc.rect(0, pageHeight - 30, 210, 30, 'F');
+  
+  // Footer Content
+  doc.setFontSize(9);
+  doc.setTextColor(100, 100, 100);
+  doc.setFont(undefined, 'normal');
+  
+  const footerText1 = `This quote is valid until ${quote.expiry_date ? new Date(quote.expiry_date).toLocaleDateString('en-ZA') : 'further notice'}`;
+  const footerText2 = `Generated by Rigel Business Accounting System`;
+  
+  doc.text(footerText1, 105, pageHeight - 20, { align: 'center' });
+  doc.setFontSize(8);
+  doc.setTextColor(150, 150, 150);
+  doc.text(footerText2, 105, pageHeight - 10, { align: 'center' });
+
   return doc;
 };
 

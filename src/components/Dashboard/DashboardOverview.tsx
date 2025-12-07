@@ -63,7 +63,8 @@ export const DashboardOverview = () => {
   const [budgetOnTrack, setBudgetOnTrack] = useState<boolean>(true);
   const [inventoryLevels, setInventoryLevels] = useState<Array<{ name: string; qty: number }>>([]);
   const [bsComposition, setBsComposition] = useState<Array<{ label: string; assets: number; liabilities: number; equity: number }>>([]);
-  const [revenueByCategory, setRevenueByCategory] = useState<Array<{ month: string; products: number; services: number; consulting: number }>>([]);
+  const [costStructure, setCostStructure] = useState<any[]>([]);
+  const [profitMargins, setProfitMargins] = useState<any[]>([]);
   const [cashGaugePct, setCashGaugePct] = useState<number>(0);
   const [cashOnTrack, setCashOnTrack] = useState<boolean>(true);
   const [safeMinimum, setSafeMinimum] = useState<number>(0);
@@ -274,7 +275,8 @@ export const DashboardOverview = () => {
         description: String(t.description || ''),
         date: new Date(String(t.transaction_date || new Date())).toLocaleDateString('en-ZA'),
         type: ['sales','income','asset_disposal','invoice'].includes(String(t.transaction_type || '').toLowerCase()) ? 'income' : 'expense',
-        amount: `R ${Number(t.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`
+        amount: Number(t.total_amount || 0),
+        status: String(t.status || 'pending').toLowerCase()
       }));
       setRecentTransactions(recent);
       const totals = totalsFromTrialBalance(trialBalance);
@@ -362,10 +364,10 @@ export const DashboardOverview = () => {
       const typeByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
       const nameByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
       const codeByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
-      const buckets: Record<string, { income: number; expenses: number; label: string }> = {};
+      const buckets: Record<string, { income: number; expenses: number; cogs: number; opex: number; label: string }> = {};
       const incAgg: Record<string, number> = {};
       const expAgg: Record<string, number> = {};
-      months.forEach(m => { buckets[m.label] = { income: 0, expenses: 0, label: m.label }; });
+      months.forEach(m => { buckets[m.label] = { income: 0, expenses: 0, cogs: 0, opex: 0, label: m.label }; });
       (teRange || []).forEach((e: any) => {
         const dt = new Date(String(e.transactions?.transaction_date || new Date()));
         const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
@@ -386,13 +388,43 @@ export const DashboardOverview = () => {
           const val = Math.abs(debit - credit);
           buckets[label].expenses += val;
           expAgg[id] = (expAgg[id] || 0) + val;
+          
+          const isCogs = name.includes('cost of') || String(code).startsWith('5000');
+          if (isCogs) buckets[label].cogs += val;
+          else buckets[label].opex += val;
         }
       });
+      
+      const costStructureData: any[] = [];
+      const profitMarginsData: any[] = [];
+
       Object.values(buckets).forEach(r => {
         monthlyData.push({ month: r.label, income: Number(r.income.toFixed(2)), expenses: Number(r.expenses.toFixed(2)) });
         netTrend.push({ month: r.label, netProfit: Number((r.income - r.expenses).toFixed(2)) });
+        
+        costStructureData.push({ 
+            month: r.label, 
+            cogs: Number(r.cogs.toFixed(2)), 
+            opex: Number(r.opex.toFixed(2)) 
+        });
+
+        const grossProfit = r.income - r.cogs;
+        const netProfit = r.income - r.expenses;
+        const grossMargin = r.income > 0 ? (grossProfit / r.income) * 100 : 0;
+        const netMargin = r.income > 0 ? (netProfit / r.income) * 100 : 0;
+
+        profitMarginsData.push({
+            month: r.label,
+            grossMargin: Number(grossMargin.toFixed(1)),
+            netMargin: Number(netMargin.toFixed(1))
+        });
+
         assetMonthly.push({ month: r.label, nbv: 0 });
       });
+      
+      setCostStructure(costStructureData);
+      setProfitMargins(profitMarginsData);
+
       const { data: fa } = await supabase
         .from('fixed_assets')
         .select('id, description, cost, purchase_date, useful_life_years, status')
@@ -469,77 +501,7 @@ export const DashboardOverview = () => {
       if (expenseDonutBreak.length > 0) setExpenseBreakdown(expenseDonutBreak);
       if (incomeDonutBreak.length > 0) setIncomeBreakdown(incomeDonutBreak);
       
-      // Top Sales Products (by amount) over selected range
-      try {
-        const { data: invItems } = await supabase
-          .from('invoice_items')
-          .select(`product_id, item_id, item_type, quantity, amount, unit_price, invoices!inner (company_id, invoice_date, status)`) as any;
-        const itemsMap: Record<string, { name: string; type: string }> = {};
-        try {
-          const { data: itemsRows } = await supabase
-            .from('items')
-            .select('id, name, item_name, item_type')
-            .eq('company_id', profile.company_id);
-          (itemsRows || []).forEach((r: any) => { itemsMap[String(r.id)] = { name: String(r.name || r.item_name || r.id), type: String(r.item_type || '').toLowerCase() }; });
-        } catch {}
-        const agg: Record<string, number> = {};
-        const rangeStartIso = months[0].start.toISOString();
-        const rangeEndIso = months[months.length - 1].end.toISOString();
-        (invItems || []).forEach((row: any) => {
-          const inv = row.invoices || {};
-          const invCompany = String(inv.company_id || '');
-          if (invCompany !== String(profile.company_id)) return;
-          const dt = new Date(String(inv.invoice_date || row.invoice_date || new Date()));
-          if (dt.toISOString() < rangeStartIso || dt.toISOString() > rangeEndIso) return;
-          const id = String(row.product_id || row.item_id || '');
-          const type = (itemsMap[id]?.type || String(row.item_type || '')).toLowerCase();
-          if (type !== 'product') return;
-          const qty = Number(row.quantity || 0);
-          const unit = Number(row.unit_price || 0);
-          const amt = Number(row.amount || (qty * unit) || 0);
-          const key = id || 'unknown';
-          agg[key] = (agg[key] || 0) + Math.max(0, amt);
-        });
-        const donut = Object.entries(agg)
-          .map(([id, val]) => ({ name: itemsMap[id]?.name || id, value: Number(val.toFixed(2)) }))
-          .sort((a, b) => b.value - a.value)
-          .slice(0, 10);
-        setTopProductsDonut(donut);
-      } catch {}
-
-      try {
-        const catBuckets: Record<string, { products: number; services: number; consulting: number; month: string }> = {};
-        const rangeStartIso = months[0].start.toISOString();
-        const rangeEndIso = months[months.length - 1].end.toISOString();
-        months.forEach(m => { catBuckets[m.label] = { products: 0, services: 0, consulting: 0, month: m.label }; });
-        (invItems || []).forEach((row: any) => {
-          const inv = row.invoices || {};
-          const invCompany = String(inv.company_id || '');
-          if (invCompany !== String(profile.company_id)) return;
-          const dt = new Date(String(inv.invoice_date || row.invoice_date || new Date()));
-          const dtIso = dt.toISOString();
-          if (dtIso < rangeStartIso || dtIso > rangeEndIso) return;
-          const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
-          if (!catBuckets[label]) return;
-          const id = String(row.product_id || row.item_id || '');
-          const mapInfo = itemsMap[id] || { name: '', type: '' };
-          const type = (mapInfo.type || String(row.item_type || '')).toLowerCase();
-          const name = mapInfo.name || '';
-          const qty = Number(row.quantity || 0);
-          const unit = Number(row.unit_price || 0);
-          const amt = Number(row.amount || (qty * unit) || 0);
-          if (type === 'product') catBuckets[label].products += Math.max(0, amt);
-          else if (type === 'service') {
-            const isConsult = String(name).toLowerCase().includes('consult');
-            if (isConsult) catBuckets[label].consulting += Math.max(0, amt); else catBuckets[label].services += Math.max(0, amt);
-          } else {
-            // If type is unknown, place under services by default
-            catBuckets[label].services += Math.max(0, amt);
-          }
-        });
-        const catSeries = Object.values(catBuckets).map(b => ({ month: b.month, products: Number(b.products.toFixed(2)), services: Number(b.services.toFixed(2)), consulting: Number(b.consulting.toFixed(2)) }));
-        setRevenueByCategory(catSeries);
-      } catch {}
+      // Legacy charts logic removed (Top Sales Products & Revenue by Category)
 
       // Quotes acceptance vs unaccepted over selected range
       try {
@@ -1195,7 +1157,6 @@ export const DashboardOverview = () => {
   const [expenseWheelInner, setExpenseWheelInner] = useState<any[]>([]);
   const [incomeWheelInner, setIncomeWheelInner] = useState<any[]>([]);
   const [incomeWheelOuter, setIncomeWheelOuter] = useState<any[]>([]);
-  const [topProductsDonut, setTopProductsDonut] = useState<Array<{ name: string; value: number }>>([]);
   const [quotesAcceptanceDonut, setQuotesAcceptanceDonut] = useState<Array<{ name: string; value: number }>>([]);
 
   if (loading) {
@@ -1667,33 +1628,26 @@ export const DashboardOverview = () => {
           </Card>
         )}
 
-      </div>
-
-      
-
-      {/* Sales & Quotes Donuts */}
-      <div className="grid gap-6 lg:grid-cols-2">
         <Card className="card-professional">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <FileText className="h-5 w-5 text-primary" />
-              Revenue by Category
+              <TrendingDown className="h-5 w-5 text-primary" />
+              Cost Structure (COGS vs OPEX)
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {revenueByCategory.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No revenue data in selected range</div>
+            {costStructure.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No expense data in selected range</div>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={revenueByCategory}>
+                <BarChart data={costStructure}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
                   <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} />
                   <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }} formatter={(value: number) => [`R ${Number(value).toLocaleString('en-ZA')}`, '']} />
                   <Legend />
-                  <Bar dataKey="products" stackId="rev" fill="#3B82F6" name="Products" radius={[0,0,0,0]} />
-                  <Bar dataKey="services" stackId="rev" fill="#10B981" name="Services" radius={[0,0,0,0]} />
-                  <Bar dataKey="consulting" stackId="rev" fill="#F59E0B" name="Consulting" radius={[8,8,0,0]} />
+                  <Bar dataKey="cogs" stackId="cost" fill="#F97316" name="COGS" radius={[0,0,0,0]} />
+                  <Bar dataKey="opex" stackId="cost" fill="#F59E0B" name="Operating Expenses" radius={[4,4,0,0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -1702,24 +1656,24 @@ export const DashboardOverview = () => {
         <Card className="card-professional">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <FileText className="h-5 w-5 text-primary" />
-              Top Sales Products
+              <TrendingUp className="h-5 w-5 text-primary" />
+              Profitability Margins
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {topProductsDonut.length === 0 ? (
-              <div className="text-sm text-muted-foreground">No product sales in selected range</div>
+            {profitMargins.length === 0 ? (
+              <div className="text-sm text-muted-foreground">No profit data in selected range</div>
             ) : (
               <ResponsiveContainer width="100%" height={260}>
-                <PieChart>
-                  <Pie data={topProductsDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
-                    {topProductsDonut.map((entry, index) => (
-                      <Cell key={`cell-prod-${index}`} fill={PRODUCT_COLORS[index % PRODUCT_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
+                <LineChart data={profitMargins}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
+                  <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `${Number(v).toFixed(0)}%`} />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`${Number(v).toFixed(1)}%`, '']} />
                   <Legend />
-                </PieChart>
+                  <Line type="monotone" dataKey="grossMargin" name="Gross Margin %" stroke="#3B82F6" strokeWidth={2} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="netMargin" name="Net Margin %" stroke="#10B981" strokeWidth={2} dot={{ r: 4 }} />
+                </LineChart>
               </ResponsiveContainer>
             )}
           </CardContent>
@@ -1792,56 +1746,52 @@ export const DashboardOverview = () => {
 
           {widgets.recentTransactions && (
             <Card className="card-professional">
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
-                  <Receipt className="h-5 w-5 text-primary" />
-                  To-Do List
+                  <CreditCard className="h-5 w-5 text-primary" />
+                  Live Bank Feed
                 </CardTitle>
+                <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-200 animate-pulse">
+                  ● Live
+                </Badge>
               </CardHeader>
               <CardContent>
-                <div className="space-y-2">
-                  {todoItems.map((item) => (
-                    <div key={item.id} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-                      <div className="flex items-center gap-3">
-                        <input type="checkbox" checked={item.done} onChange={() => toggleTodo(item.id)} />
-                        <span className={`text-sm ${item.done ? 'line-through text-muted-foreground' : 'text-foreground'}`}>{item.label}</span>
+                <div className="rounded-md border">
+                  <div className="grid grid-cols-12 gap-4 p-3 bg-muted/50 font-medium text-xs text-muted-foreground border-b">
+                    <div className="col-span-2">Date</div>
+                    <div className="col-span-6">Description</div>
+                    <div className="col-span-2 text-right">Amount</div>
+                    <div className="col-span-2 text-center">Status</div>
+                  </div>
+                  <div className="max-h-[300px] overflow-y-auto">
+                    {recentTransactions.length === 0 ? (
+                      <div className="p-8 text-center text-muted-foreground text-sm">
+                        No recent transactions found
                       </div>
-                      {!item.done && (
-                        <div className="flex items-center gap-2">
-                          {item.id === 'todo-connect-bank' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Open Bank</Button>
-                          )}
-                          {item.id === 'todo-import-statement' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Import CSV</Button>
-                          )}
-                          {item.id === 'todo-reconcile-month' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Reconcile</Button>
-                          )}
-                          {item.id === 'todo-approve-transactions' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/transactions')}>Approve</Button>
-                          )}
-                          {item.id === 'todo-first-invoice' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/sales')}>Invoice</Button>
-                          )}
-                          {item.id === 'todo-first-bill' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/purchase')}>Bill</Button>
-                          )}
-                          {item.id === 'todo-lock-period' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Lock</Button>
-                          )}
-                          {item.id === 'todo-recon-report' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/reports')}>Report</Button>
-                          )}
-                          {item.id === 'todo-outstanding' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Outstanding</Button>
-                          )}
-                          {item.id === 'todo-bank-rules' && (
-                            <Button variant="outline" size="sm" onClick={() => navigate('/bank')}>Rules</Button>
-                          )}
+                    ) : (
+                      recentTransactions.map((tx) => (
+                        <div key={tx.id} className="grid grid-cols-12 gap-4 p-3 border-b last:border-0 hover:bg-muted/30 transition-colors items-center text-sm">
+                          <div className="col-span-2 text-muted-foreground text-xs">{tx.date}</div>
+                          <div className="col-span-6 font-medium truncate" title={tx.description}>
+                            {tx.description || 'Uncategorized Transaction'}
+                          </div>
+                          <div className={`col-span-2 text-right font-medium ${tx.type === 'income' ? 'text-emerald-600' : 'text-foreground'}`}>
+                            {tx.type === 'income' ? '+' : ''} R {Number(tx.amount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                          </div>
+                          <div className="col-span-2 flex justify-center">
+                            <Badge variant={tx.status === 'posted' || tx.status === 'approved' ? 'default' : 'secondary'} className="text-[10px] h-5 px-2">
+                              {tx.status === 'posted' || tx.status === 'approved' ? 'Cleared' : 'Pending'}
+                            </Badge>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <Button variant="outline" size="sm" onClick={() => navigate('/transactions')} className="text-xs">
+                    View All Transactions
+                  </Button>
                 </div>
               </CardContent>
             </Card>

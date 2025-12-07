@@ -40,6 +40,7 @@ const Investments = lazy(() => import("./pages/Investments"));
 const PaymentPortal = lazy(() => import("./pages/PaymentPortal"));
 const License = lazy(() => import("./pages/License"));
 const LicenseAdmin = lazy(() => import("./pages/LicenseAdmin"));
+const Companies = lazy(() => import("./pages/Companies"));
 import About from "./pages/About";
 import Community from "./pages/Community";
 
@@ -163,6 +164,7 @@ const App = () => {
             <Route path="/billing" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense></ProtectedRoute>} />
             <Route path="/license" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><License /></Suspense></ProtectedRoute>} />
             <Route path="/license-admin" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><LicenseAdmin /></Suspense></ProtectedRoute>} />
+            <Route path="/companies" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Companies /></Suspense></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Settings /></Suspense></ProtectedRoute>} />
             <Route path="/about" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
             <Route path="/about-us" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />

@@ -209,7 +209,22 @@ export default function InvoicesPage() {
   };
 
   const fetchCompanyForPDF = async (): Promise<CompanyForPDF> => {
-    const { data } = await supabase.from('companies').select('name,email,phone,address,tax_number,vat_number,logo_url').limit(1).maybeSingle();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Not authenticated");
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("company_id")
+      .eq("user_id", user.id)
+      .single();
+
+    if (!profile?.company_id) throw new Error("No company profile found");
+
+    const { data } = await supabase.from('companies')
+      .select('name,email,phone,address,tax_number,vat_number,logo_url')
+      .eq('id', profile.company_id)
+      .single();
+
     return {
       name: (data as any)?.name || 'Company',
       email: (data as any)?.email,

@@ -90,6 +90,7 @@ const navGroups = [
     title: "System",
     items: [
       { icon: Crown, label: "License", href: "/license" },
+      { icon: Building2, label: "Companies", href: "/companies" },
       { icon: Settings, label: "Settings", href: "/settings" },
       { icon: Info, label: "About", href: "/about-us" },
     ]

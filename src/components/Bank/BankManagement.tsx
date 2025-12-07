@@ -15,6 +15,8 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { CSVImport } from "./CSVImport";
 import { ConnectBank } from "./ConnectBank";
 import { BankReconciliation } from "./BankReconciliation";
+import { BankStatementView } from "./BankStatementView";
+import { FileText } from "lucide-react";
 
 const bankOptions = [
   { value: "ABSA", label: "ABSA Bank", branchCode: "632005" },
@@ -48,6 +50,7 @@ export const BankManagement = () => {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [selectedBankForStatement, setSelectedBankForStatement] = useState<BankAccount | null>(null);
   const [form, setForm] = useState({
     account_name: "",
     account_number: "",
@@ -507,6 +510,12 @@ export const BankManagement = () => {
         </Card>
       </div>
 
+      <BankStatementView 
+        bankAccount={selectedBankForStatement} 
+        isOpen={!!selectedBankForStatement} 
+        onClose={() => setSelectedBankForStatement(null)} 
+      />
+
       <Tabs defaultValue="accounts" className="w-full">
         <TabsList className="grid w-full grid-cols-2 max-w-md">
           <TabsTrigger value="accounts">Bank Accounts</TabsTrigger>
@@ -546,6 +555,7 @@ export const BankManagement = () => {
                       <TableHead>Bank Name</TableHead>
                       <TableHead className="text-right">Opening Balance</TableHead>
                       <TableHead className="text-right pr-6">Current Balance</TableHead>
+                      <TableHead className="w-[140px] text-right pr-6">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -574,6 +584,17 @@ export const BankManagement = () => {
                           <span className={`font-mono font-bold ${bank.current_balance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                             R {bank.current_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
                           </span>
+                        </TableCell>
+                        <TableCell className="text-right pr-6">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-8 gap-2 hover:bg-primary hover:text-primary-foreground transition-colors"
+                            onClick={() => setSelectedBankForStatement(bank)}
+                          >
+                            <FileText className="h-3.5 w-3.5" />
+                            Statement
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
