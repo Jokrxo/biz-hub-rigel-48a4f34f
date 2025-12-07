@@ -23,7 +23,14 @@ import {
   HelpCircle,
   BookOpen,
   Video,
-  MessageSquare
+  MessageSquare,
+  Calendar,
+  StickyNote,
+  CheckSquare,
+  Keyboard,
+  MessageCircle,
+  Bug,
+  Grip
 } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
 import { supabase } from "@/integrations/supabase/client";
@@ -45,8 +52,17 @@ import {
 } from "@/components/ui/dialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 
 import { StellaBotModal } from "@/components/Stella/StellaBotModal";
+import { FloatingCalculator } from "@/components/Tools/FloatingCalculator";
+import { StickyNoteBoard } from "@/components/Tools/StickyNoteBoard";
+import { AdvancedCalendar } from "@/components/Tools/AdvancedCalendar";
+import { CurrencyConverter } from "@/components/Tools/CurrencyConverter";
+import { TaskManager } from "@/components/Tools/TaskManager";
+import { KeyboardShortcuts } from "@/components/Support/KeyboardShortcuts";
+import { FeedbackModal } from "@/components/Support/FeedbackModal";
+import { SupportAppModal } from "@/components/Support/SupportAppModal";
 import { DocumentationModal } from "@/components/Help/DocumentationModal"; // Import the new component
 
 interface SidebarProps {
@@ -69,6 +85,7 @@ const navGroups = [
       { icon: Receipt, label: "Tax", href: "/tax" },
       { icon: Building2, label: "Fixed Assets", href: "/fixed-assets" },
       { icon: Calculator, label: "Trial Balance", href: "/trial-balance" },
+      { icon: BookOpen, label: "Journals", href: "/journals" },
       { icon: TrendingUp, label: "Financial Reports", href: "/reports" },
       { icon: Wallet, label: "Budget", href: "/budget" },
       { icon: CreditCard, label: "Loans", href: "/loans" },
@@ -109,6 +126,17 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
   const [quickSetupOpen, setQuickSetupOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [documentationOpen, setDocumentationOpen] = useState(false);
+  
+  // Tools state
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [currencyOpen, setCurrencyOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [supportAppOpen, setSupportAppOpen] = useState(false);
+
   const [setupStatus, setSetupStatus] = useState({
     hasCoa: false,
     hasBank: false,
@@ -269,8 +297,47 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
 
           {/* Utilities Section */}
           <div className="pt-4 mt-4 border-t border-sidebar-border">
-            {open && <h3 className="px-4 text-xs font-semibold text-sidebar-foreground/50 uppercase tracking-wider mb-2">Utilities</h3>}
+            {open && <h3 className="px-4 text-xs font-semibold text-sidebar-foreground/50 uppercase tracking-wider mb-2">Tools & Support</h3>}
             
+            <Button
+              variant="ghost"
+              onClick={() => setCalculatorOpen(true)}
+              className={cn(
+                "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
+                !open && "justify-center px-2"
+              )}
+              title="Calculator"
+            >
+              <Calculator className="h-5 w-5 text-emerald-500" />
+              {open && <span className="font-medium text-sidebar-foreground">Calculator</span>}
+            </Button>
+
+            <Button
+              variant="ghost"
+              onClick={() => setCalendarOpen(true)}
+              className={cn(
+                "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
+                !open && "justify-center px-2"
+              )}
+              title="Tax Calendar"
+            >
+              <Calendar className="h-5 w-5 text-indigo-500" />
+              {open && <span className="font-medium text-sidebar-foreground">Tax Calendar</span>}
+            </Button>
+
+            <Button
+              variant="ghost"
+              onClick={() => setSupportAppOpen(true)}
+              className={cn(
+                "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
+                !open && "justify-center px-2"
+              )}
+              title="Support App"
+            >
+              <Grip className="h-5 w-5 text-muted-foreground" />
+              {open && <span className="font-medium text-sidebar-foreground">Support App</span>}
+            </Button>
+
             <Button
               variant="ghost"
               onClick={() => setQuickSetupOpen(true)}
@@ -278,6 +345,7 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
                 "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
                 !open && "justify-center px-2"
               )}
+              title="Quick Setup"
             >
               <Zap className="h-5 w-5 text-amber-500" />
               {open && <span className="font-medium text-sidebar-foreground">Quick Setup</span>}
@@ -290,6 +358,7 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
                 "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
                 !open && "justify-center px-2"
               )}
+              title="Help & Support"
             >
               <HelpCircle className="h-5 w-5 text-blue-500" />
               {open && <span className="font-medium text-sidebar-foreground">Help & Support</span>}
@@ -458,6 +527,37 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
       </Dialog>
 
       <DocumentationModal open={documentationOpen} onOpenChange={setDocumentationOpen} />
+
+      {/* Floating Calculator */}
+      <FloatingCalculator isOpen={calculatorOpen} onClose={() => setCalculatorOpen(false)} />
+
+      {/* Advanced Tax Calendar */}
+      <AdvancedCalendar isOpen={calendarOpen} onClose={() => setCalendarOpen(false)} />
+
+      {/* Sticky Note Board */}
+      <StickyNoteBoard isOpen={notesOpen} onClose={() => setNotesOpen(false)} />
+
+      {/* Currency Converter */}
+      <CurrencyConverter isOpen={currencyOpen} onClose={() => setCurrencyOpen(false)} />
+
+      {/* Task Manager */}
+      <TaskManager isOpen={tasksOpen} onClose={() => setTasksOpen(false)} />
+
+      {/* Keyboard Shortcuts */}
+      <KeyboardShortcuts isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
+      {/* Feedback Modal */}
+      <FeedbackModal isOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
+      {/* Support App Modal */}
+      <SupportAppModal 
+        isOpen={supportAppOpen} 
+        onClose={() => setSupportAppOpen(false)} 
+        onOpenNotes={() => setNotesOpen(true)}
+        onOpenCurrency={() => setCurrencyOpen(true)}
+        onOpenTasks={() => setTasksOpen(true)}
+        onOpenShortcuts={() => setShortcutsOpen(true)}
+        onOpenFeedback={() => setFeedbackOpen(true)}
+      />
     </aside>
   );
 };

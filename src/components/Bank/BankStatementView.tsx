@@ -99,8 +99,8 @@ export const BankStatementView = ({ bankAccount, isOpen, onClose }: BankStatemen
       format(new Date(tx.transaction_date), "yyyy-MM-dd"),
       tx.description || "",
       tx.reference_number || "-",
-      tx.total_amount >= 0 ? `R ${tx.total_amount.toFixed(2)}` : "",
-      tx.total_amount < 0 ? `R ${Math.abs(tx.total_amount).toFixed(2)}` : "",
+      Number(tx.total_amount || 0) >= 0 ? `R ${Number(tx.total_amount || 0).toFixed(2)}` : "",
+      Number(tx.total_amount || 0) < 0 ? `R ${Math.abs(Number(tx.total_amount || 0)).toFixed(2)}` : "",
       tx.status
     ]);
 
@@ -129,8 +129,8 @@ export const BankStatementView = ({ bankAccount, isOpen, onClose }: BankStatemen
             </div>
             <div className="text-right">
               <div className="text-sm text-muted-foreground">Current Balance</div>
-              <div className={`text-2xl font-bold ${bankAccount && bankAccount.current_balance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                R {bankAccount?.current_balance.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+              <div className={`text-2xl font-bold ${bankAccount && (bankAccount.current_balance || 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                R {Number(bankAccount?.current_balance || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
               </div>
             </div>
           </div>

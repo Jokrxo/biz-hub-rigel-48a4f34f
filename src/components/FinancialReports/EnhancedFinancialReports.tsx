@@ -18,7 +18,9 @@ import {
   Activity,
   Loader2,
   Calendar,
-  Eye
+  Eye,
+  CheckCircle2,
+  AlertTriangle
 } from "lucide-react";
 
 export const EnhancedFinancialReports = () => {
@@ -441,55 +443,11 @@ export const EnhancedFinancialReports = () => {
   const generateBalanceSheet = (trialBalance: any[]): any[] => {
     const data: any[] = [];
 
-    // ASSETS - use trial balance balances directly
+    // ASSETS
     data.push({ type: 'header', account: 'ASSETS', amount: 0, accountId: null });
     
-    // Current Assets
-    data.push({ type: 'subheader', account: 'Current Assets', amount: 0, accountId: null });
-    const currentAssets = trialBalance.filter(a => 
-      a.account_type.toLowerCase() === 'asset' && 
-      parseInt(a.account_code || '0') < 1500 &&
-      !String(a.account_name || '').toLowerCase().includes('vat') &&
-      !['1210','2110','2210'].includes(String(a.account_code || '')) &&
-      (!String(a.account_name || '').toLowerCase().includes('inventory') || String(a.account_code || '') === '1300')
-    );
-    
-    const vatReceivable = trialBalance
-      .filter(a => a.account_type.toLowerCase() === 'asset' && (String(a.account_name || '').toLowerCase().includes('vat input') || String(a.account_name || '').toLowerCase().includes('vat receivable')))
-      .reduce((sum, a) => sum + Number(a.balance || 0), 0);
-    const vatPayable = trialBalance
-      .filter(a => a.account_type.toLowerCase() === 'liability' && String(a.account_name || '').toLowerCase().includes('vat'))
-      .reduce((sum, a) => sum + Number(a.balance || 0), 0);
-    let totalCurrentAssets = 0;
-    const bankPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1100');
-    const arPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1200');
-    const restCA = currentAssets.filter(acc => {
-      const code = (acc.account_code || '').toString();
-      return code !== '1100' && code !== '1200';
-    });
-    const orderedCA = [bankPinned, arPinned, ...restCA].filter(Boolean) as any[];
-    orderedCA.forEach(acc => {
-      // Use balance from trial balance directly
-      const total = acc.balance || 0;
-      if (Math.abs(total) > 0.01) {
-        data.push({ 
-          type: 'asset', 
-          account: acc.account_name, 
-          amount: total,
-          accountId: acc.account_id,
-          accountCode: acc.account_code
-        });
-        totalCurrentAssets += total;
-      }
-    });
-    if (vatReceivable >= 0) {
-      data.push({ type: 'asset', account: 'VAT Receivable', amount: vatReceivable, accountId: null, accountCode: '1210' });
-      totalCurrentAssets += vatReceivable;
-    }
-    data.push({ type: 'subtotal', account: 'Total Current Assets', amount: totalCurrentAssets, accountId: null });
-
-    // Non-current Assets (NBV)
-    data.push({ type: 'subheader', account: 'Non-current Assets (NBV)', amount: 0, accountId: null });
+    // 1. Non-current Assets (NBV)
+    data.push({ type: 'subheader', account: 'Non-current Assets', amount: 0, accountId: null });
     const fixedAssetsAll = trialBalance.filter(a => 
       a.account_type.toLowerCase() === 'asset' && 
       parseInt(a.account_code || '0') >= 1500
@@ -525,40 +483,107 @@ export const EnhancedFinancialReports = () => {
         totalFixedAssets += nbv;
       }
     });
-    data.push({ type: 'subtotal', account: 'Total Fixed Assets (NBV)', amount: totalFixedAssets, accountId: null });
-    data.push({ type: 'total', account: 'TOTAL ASSETS', amount: totalCurrentAssets + totalFixedAssets, accountId: null });
+    data.push({ type: 'subtotal', account: 'Total Non-current Assets', amount: totalFixedAssets, accountId: null });
 
-    // LIABILITIES & EQUITY - use trial balance balances directly
-    data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
-    data.push({ type: 'header', account: 'LIABILITIES', amount: 0, accountId: null });
+    // 2. Current Assets
+    data.push({ type: 'subheader', account: 'Current Assets', amount: 0, accountId: null });
+    const currentAssets = trialBalance.filter(a => 
+      a.account_type.toLowerCase() === 'asset' && 
+      parseInt(a.account_code || '0') < 1500 &&
+      !String(a.account_name || '').toLowerCase().includes('vat') &&
+      !['1210','2110','2210'].includes(String(a.account_code || '')) &&
+      (!String(a.account_name || '').toLowerCase().includes('inventory') || String(a.account_code || '') === '1300')
+    );
     
-    const liabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability' && !(String(a.account_name || '').toLowerCase().includes('vat') || ['2100','2200'].includes(String(a.account_code || ''))));
-    let totalLiabilities = 0;
-    liabilities.forEach(acc => {
-      // Use balance from trial balance directly
+    const vatReceivable = trialBalance
+      .filter(a => a.account_type.toLowerCase() === 'asset' && (String(a.account_name || '').toLowerCase().includes('vat input') || String(a.account_name || '').toLowerCase().includes('vat receivable')))
+      .reduce((sum, a) => sum + Number(a.balance || 0), 0);
+    
+    let totalCurrentAssets = 0;
+    const bankPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1100');
+    const arPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1200');
+    const restCA = currentAssets.filter(acc => {
+      const code = (acc.account_code || '').toString();
+      return code !== '1100' && code !== '1200';
+    });
+    const orderedCA = [bankPinned, arPinned, ...restCA].filter(Boolean) as any[];
+    orderedCA.forEach(acc => {
       const total = acc.balance || 0;
       if (Math.abs(total) > 0.01) {
         data.push({ 
-          type: 'liability', 
+          type: 'asset', 
           account: acc.account_name, 
           amount: total,
           accountId: acc.account_id,
           accountCode: acc.account_code
         });
-        totalLiabilities += total;
+        totalCurrentAssets += total;
       }
     });
-    data.push({ type: 'liability', account: 'VAT Payable', amount: vatPayable, accountId: null, accountCode: '2200' });
-    totalLiabilities += vatPayable;
-    data.push({ type: 'subtotal', account: 'Total Liabilities', amount: totalLiabilities, accountId: null });
+    if (vatReceivable >= 0) {
+      data.push({ type: 'asset', account: 'VAT Receivable', amount: vatReceivable, accountId: null, accountCode: '1210' });
+      totalCurrentAssets += vatReceivable;
+    }
+    data.push({ type: 'subtotal', account: 'Total Current Assets', amount: totalCurrentAssets, accountId: null });
+    
+    // Total Assets
+    data.push({ type: 'total', account: 'TOTAL ASSETS', amount: totalCurrentAssets + totalFixedAssets, accountId: null, color: 'text-emerald-700' });
 
+    // LIABILITIES
+    data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
+    data.push({ type: 'header', account: 'LIABILITIES', amount: 0, accountId: null });
+    
+    const vatPayable = trialBalance
+      .filter(a => a.account_type.toLowerCase() === 'liability' && String(a.account_name || '').toLowerCase().includes('vat'))
+      .reduce((sum, a) => sum + Number(a.balance || 0), 0);
+
+    const allLiabilities = trialBalance.filter(a => a.account_type.toLowerCase() === 'liability' && !(String(a.account_name || '').toLowerCase().includes('vat') || ['2100','2200'].includes(String(a.account_code || ''))));
+    
+    // Non-Current Liabilities
+    data.push({ type: 'subheader', account: 'Non-current Liabilities', amount: 0, accountId: null });
+    const nonCurrentLiabilities = allLiabilities.filter(a => {
+        const code = parseInt(a.account_code || '0');
+        const name = (a.account_name || '').toLowerCase();
+        return code >= 2500 || name.includes('long term') || name.includes('mortgage');
+    });
+    let totalNonCurrentLiab = 0;
+    nonCurrentLiabilities.forEach(acc => {
+        const total = acc.balance || 0;
+        if (Math.abs(total) > 0.01) {
+            data.push({ type: 'liability', account: acc.account_name, amount: total, accountId: acc.account_id, accountCode: acc.account_code });
+            totalNonCurrentLiab += total;
+        }
+    });
+    data.push({ type: 'subtotal', account: 'Total Non-current Liabilities', amount: totalNonCurrentLiab, accountId: null });
+
+    // Current Liabilities
+    data.push({ type: 'subheader', account: 'Current Liabilities', amount: 0, accountId: null });
+    const currentLiabilities = allLiabilities.filter(a => {
+        const code = parseInt(a.account_code || '0');
+        const name = (a.account_name || '').toLowerCase();
+        return !(code >= 2500 || name.includes('long term') || name.includes('mortgage'));
+    });
+    let totalCurrentLiab = 0;
+    currentLiabilities.forEach(acc => {
+        const total = acc.balance || 0;
+        if (Math.abs(total) > 0.01) {
+            data.push({ type: 'liability', account: acc.account_name, amount: total, accountId: acc.account_id, accountCode: acc.account_code });
+            totalCurrentLiab += total;
+        }
+    });
+    data.push({ type: 'liability', account: 'VAT Payable', amount: vatPayable, accountId: null, accountCode: '2200' });
+    totalCurrentLiab += vatPayable;
+    data.push({ type: 'subtotal', account: 'Total Current Liabilities', amount: totalCurrentLiab, accountId: null });
+    
+    const totalLiabilities = totalNonCurrentLiab + totalCurrentLiab;
+
+    // EQUITY
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
     data.push({ type: 'header', account: 'EQUITY', amount: 0, accountId: null });
     
     const equity = trialBalance.filter(a => a.account_type.toLowerCase() === 'equity');
     let totalEquity = 0;
     equity.forEach(acc => {
-      // Use balance from trial balance directly
       const total = acc.balance || 0;
       if (Math.abs(total) > 0.01) {
         data.push({ 
@@ -572,7 +597,23 @@ export const EnhancedFinancialReports = () => {
       }
     });
     data.push({ type: 'subtotal', account: 'Total Equity', amount: totalEquity, accountId: null });
-    data.push({ type: 'final', account: 'TOTAL LIABILITIES & EQUITY', amount: totalLiabilities + totalEquity, accountId: null });
+    
+    // Total Liab & Equity
+    data.push({ type: 'final', account: 'TOTAL LIABILITIES & EQUITY', amount: totalLiabilities + totalEquity, accountId: null, color: 'text-purple-700' });
+
+    // Validation
+    const totalAssets = totalCurrentAssets + totalFixedAssets;
+    const totalLiabEquity = totalLiabilities + totalEquity;
+    const isBalanced = Math.abs(totalAssets - totalLiabEquity) < 0.1; // Allow small rounding diff
+    
+    data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
+    data.push({ 
+      type: 'balance_check', 
+      account: isBalanced ? 'Statement is Balanced' : 'Statement is Unbalanced', 
+      amount: totalAssets - totalLiabEquity, 
+      accountId: null,
+      isBalanced 
+    });
 
     return data;
   };
@@ -928,6 +969,31 @@ export const EnhancedFinancialReports = () => {
                           </TableRow>
                         );
                       }
+                      if (item.type === 'balance_check') {
+                        return (
+                          <TableRow key={index} className={item.isBalanced ? "bg-emerald-50/50" : "bg-red-50/50"}>
+                            <TableCell colSpan={3} className="py-4">
+                                <div className="flex items-center justify-center gap-2 font-bold">
+                                    {item.isBalanced ? (
+                                        <div className="flex items-center gap-2 text-emerald-700">
+                                            <div className="h-6 w-6 rounded-full bg-emerald-100 flex items-center justify-center border border-emerald-200">
+                                                <CheckCircle2 className="h-4 w-4" />
+                                            </div>
+                                            <span>Statement is Balanced</span>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-2 text-red-700">
+                                             <div className="h-6 w-6 rounded-full bg-red-100 flex items-center justify-center border border-red-200">
+                                                <AlertTriangle className="h-4 w-4" />
+                                            </div>
+                                            <span>Statement is Unbalanced (Diff: R {item.amount.toFixed(2)})</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
                       return (
                         <TableRow 
                           key={index}
@@ -943,12 +1009,15 @@ export const EnhancedFinancialReports = () => {
                               item.type === 'total' || item.type === 'final' ? 'font-bold' : ''
                             } ${
                               ['expense', 'asset', 'liability', 'equity'].includes(item.type) ? 'pl-8' : ''
+                            } ${
+                              item.color ? item.color : ''
                             }`}
                           >
                             {item.account}
                           </TableCell>
                           <TableCell 
                             className={`text-right font-mono ${
+                              item.color ? item.color + ' font-bold' :
                               item.type === 'income' || item.type === 'subtotal' || item.type === 'total' 
                                 ? 'text-primary font-bold' 
                                 : item.type === 'final'

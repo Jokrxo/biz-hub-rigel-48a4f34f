@@ -1,13 +1,18 @@
 import React, { useState, useEffect } from "react";
+import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
-import { RefreshCw, Download, Eye, Calendar, FileDown, Scale, Activity, ArrowLeftRight, History, PieChart, BarChart3, Filter } from "lucide-react";
+import { RefreshCw, Download, Eye, Calendar, FileDown, Scale, Activity, ArrowLeftRight, History, PieChart, BarChart3, Filter, CheckCircle2, AlertTriangle, FileText, Info } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { exportFinancialReportToExcel, exportFinancialReportToPDF, exportComparativeCashFlowToExcel, exportComparativeCashFlowToPDF } from "@/lib/export-utils";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { systemOverview, accountingPrimer } from "@/components/Stella/knowledge";
 import StellaAdvisor from "@/components/Stella/StellaAdvisor";
 
@@ -43,6 +48,8 @@ export const GAAPFinancialStatements = () => {
     return date.toISOString().split('T')[0];
   });
   const [periodEnd, setPeriodEnd] = useState(() => new Date().toISOString().split('T')[0]);
+  const [showCashFlowAudit, setShowCashFlowAudit] = useState(false);
+  const [auditDiscrepancy, setAuditDiscrepancy] = useState(0);
   const [trialBalance, setTrialBalance] = useState<TrialBalanceRow[]>([]);
   const [drilldownAccount, setDrilldownAccount] = useState<string | null>(null);
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
@@ -133,6 +140,7 @@ export const GAAPFinancialStatements = () => {
   useEffect(() => {
     if (periodMode === 'monthly') {
       const [y, m] = selectedMonth.split('-').map((v) => parseInt(v, 10));
+      if (y !== selectedYear) setSelectedYear(y);
       const start = new Date(y, m - 1, 1);
       const end = new Date(y, m, 0);
       setPeriodStart(start.toISOString().split('T')[0]);
@@ -153,7 +161,7 @@ export const GAAPFinancialStatements = () => {
       loadComparativeData();
     }
   }, [activeTab, periodMode, selectedYear]);
-  useEffect(() => { if (activeTab === 'monthly-report') { loadMonthlyAFS(); } }, [activeTab, selectedYear]);
+  useEffect(() => { loadMonthlyAFS(); }, [selectedYear]);
 
   useEffect(() => {
     const toLower = (s: string) => String(s || '').toLowerCase();
@@ -678,19 +686,47 @@ export const GAAPFinancialStatements = () => {
           getCashFlowForPeriod(companyProfile.company_id, r.start, r.end),
         ]);
         const toLower = (s: string) => String(s || '').toLowerCase();
+        
+        // Define filters for assets
+        const isCurrentAsset = (x: any) => (
+            toLower(x.account_type) === 'asset' &&
+            (
+              toLower(x.account_name).includes('cash') ||
+              toLower(x.account_name).includes('bank') ||
+              toLower(x.account_name).includes('receivable') ||
+              toLower(x.account_name).includes('inventory') ||
+              parseInt(String(x.account_code || '0'), 10) < 1500
+            ) &&
+            !toLower(x.account_name).includes('vat') &&
+            !['1210','2110','2210'].includes(String(x.account_code || '')) &&
+            (!toLower(x.account_name).includes('inventory') || String(x.account_code || '') === '1300')
+        );
+
         const currentAssetsItems = (tbAsOf || [])
-          .filter((x: any) => toLower(x.account_type) === 'asset')
-          .filter((x: any) => (
-            toLower(x.account_name).includes('cash') ||
-            toLower(x.account_name).includes('bank') ||
-            toLower(x.account_name).includes('receivable') ||
-            toLower(x.account_name).includes('inventory') ||
-            parseInt(String(x.account_code || '0'), 10) < 1500
-          ))
-          .filter((x: any) => !toLower(x.account_name).includes('vat'))
-          .filter((x: any) => !['1210','2110','2210'].includes(String(x.account_code || '')))
-          .filter((x: any) => (!toLower(x.account_name).includes('inventory') || String(x.account_code || '') === '1300'))
+          .filter(isCurrentAsset)
           .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
+
+        const nonCurrentAssetsAll = (tbAsOf || [])
+            .filter((x: any) => toLower(x.account_type) === 'asset' && !isCurrentAsset(x) && !toLower(x.account_name).includes('vat'));
+        
+        const accDepRows = nonCurrentAssetsAll.filter((r: any) => String(r.account_name || '').toLowerCase().includes('accumulated'));
+        const nonCurrentAssets = nonCurrentAssetsAll.filter((r: any) => !String(r.account_name || '').toLowerCase().includes('accumulated'));
+        const normalizeName = (name: string) => String(name || '').toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+        const nbvFor = (assetRow: any) => {
+            const base = normalizeName(assetRow.account_name);
+            const related = accDepRows.filter((ad: any) => {
+                const adBase = normalizeName(ad.account_name);
+                return adBase.includes(base) || base.includes(adBase);
+            });
+            const accTotal = related.reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
+            return Number(assetRow.balance || 0) - accTotal;
+        };
+
+        const nonCurrentAssetsItems = nonCurrentAssets.map((x: any) => ({
+            label: `${x.account_code} - ${x.account_name}`,
+            amount: nbvFor(x)
+        }));
+
         const vatReceivableItem = {
           label: 'VAT Receivable',
           amount: (tbAsOf || [])
@@ -722,15 +758,30 @@ export const GAAPFinancialStatements = () => {
         const nonCurrentLiabilitiesItems = (tbAsOf || [])
           .filter((x: any) => toLower(x.account_type) === 'liability')
           .filter((x: any) => !currentSet.has(`${x.account_code} - ${x.account_name}`))
+          .filter((x: any) => !toLower(x.account_name).includes('vat'))
           .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
+        const sum = (arr: any[]) => (arr || []).reduce((s, e) => s + Number(e.balance || 0), 0);
+
+        // Calculate YTD Net Profit from tbAsOf for Retained Earnings adjustment
+        const ytdRevenue = sum((tbAsOf || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'revenue' || String(x.account_type || '').toLowerCase() === 'income'));
+        const ytdExpenses = sum((tbAsOf || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'expense' && !String(x.account_name || '').toLowerCase().includes('vat')));
+        const ytdNetProfit = ytdRevenue - ytdExpenses;
+
         const equityItems = (tbAsOf || [])
           .filter((x: any) => toLower(x.account_type) === 'equity')
           .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
+        
+        const retainedIndex = equityItems.findIndex((x: any) => x.label.toLowerCase().includes('retained earning'));
+        if (retainedIndex >= 0) {
+            equityItems[retainedIndex].amount += ytdNetProfit;
+        } else {
+            equityItems.push({ label: 'Retained Earnings', amount: ytdNetProfit });
+        }
+
         const revenueRows = (tbPeriod || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'revenue' || String(x.account_type || '').toLowerCase() === 'income');
         const expenseRows = (tbPeriod || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'expense');
         const costOfSalesRows = expenseRows.filter((x: any) => String(x.account_name || '').toLowerCase().includes('cost of') || String(x.account_code || '').startsWith('50'));
         const opexRows = expenseRows.filter((x: any) => !costOfSalesRows.includes(x)).filter((x: any) => !String(x.account_name || '').toLowerCase().includes('vat'));
-        const sum = (arr: any[]) => (arr || []).reduce((s, e) => s + Number(e.balance || 0), 0);
         const revenue = sum(revenueRows);
         const costOfSalesRaw = sum(costOfSalesRows);
         const costOfSales = costOfSalesRaw > 0 ? costOfSalesRaw : cogs;
@@ -738,14 +789,48 @@ export const GAAPFinancialStatements = () => {
         const opex = sum(opexRows);
         const netProfit = grossProfit - opex;
         const bs = bsGroups(tbAsOf || []);
+        bs.totalEquity += ytdNetProfit;
         return {
           label: r.label,
           bs,
           bsDetail: {
+            nonCurrentAssetsItems,
             currentAssetsItems: [...currentAssetsItems, vatReceivableItem],
             currentLiabilitiesItems: [...currentLiabilitiesItems, vatPayableItem],
             nonCurrentLiabilitiesItems,
             equityItems,
+          },
+          audit: {
+             unmappedAccounts: (tbAsOf || []).filter((x: any) => {
+                 const label = `${x.account_code} - ${x.account_name}`;
+                 const used = new Set([
+                     ...nonCurrentAssetsItems.map((i: any) => i.label),
+                     ...currentAssetsItems.map((i: any) => i.label),
+                     vatReceivableItem.label,
+                     ...currentLiabilitiesItems.map((i: any) => i.label),
+                     vatPayableItem.label,
+                     ...nonCurrentLiabilitiesItems.map((i: any) => i.label),
+                     ...equityItems.map((i: any) => i.label)
+                 ]);
+                 // Also exclude Accumulated Dep accounts as they are netted off
+                 if (toLower(x.account_name).includes('accumulated')) return false;
+                 // Exclude VAT accounts as they are aggregated
+                 if (toLower(x.account_name).includes('vat')) return false;
+                 
+                 return !used.has(label) && Math.abs(Number(x.balance || 0)) > 0.01;
+             }).map((x: any) => ({
+                 code: x.account_code,
+                 name: x.account_name,
+                 type: x.account_type,
+                 balance: Number(x.balance || 0)
+             })),
+             tbBalance: sum(tbAsOf || []),
+             retainedEarningsCalcs: {
+                 ytdRevenue,
+                 ytdExpenses,
+                 ytdNetProfit,
+                 retainedOpeningYTD: periodMode === 'monthly' ? retainedOpeningYTD : 0
+             }
           },
           pl: { revenue, costOfSales, grossProfit, opex, netProfit },
           plDetail: {
@@ -1190,6 +1275,34 @@ export const GAAPFinancialStatements = () => {
     
     const totalEquity = equityDisplay.reduce((sum, r) => sum + r.balance, 0);
 
+    // Helper to get note number
+    const getNoteNumber = (row: any) => {
+      const name = String(row.account_name || '').toLowerCase();
+      const code = String(row.account_code || '');
+      
+      if (name.includes('inventory')) return '3';
+      if (name.includes('receivable') || name.includes('impairment')) return '4';
+      if (name.includes('cash') || name.includes('bank')) return '5';
+      if (name.includes('payable') || name.includes('accrual')) return '6';
+      if (row.account_type === 'equity') return '11';
+      
+      return '';
+    };
+
+    const handleNoteClick = (noteId: string) => {
+      if (!noteId) return;
+      setActiveTab('ifrs-notes');
+      setTimeout(() => {
+        const el = document.getElementById(`note-${noteId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Optional: Add highlight
+          el.style.backgroundColor = 'rgba(var(--primary), 0.1)';
+          setTimeout(() => el.style.backgroundColor = '', 2000);
+        }
+      }, 200);
+    };
+
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between mb-6">
@@ -1209,44 +1322,93 @@ export const GAAPFinancialStatements = () => {
           </div>
         </div>
 
+        {/* Header Row */}
+        <div className="grid grid-cols-[1fr_80px_150px] border-b pb-2 mb-4 font-semibold text-sm text-muted-foreground">
+            <div>Description</div>
+            <div className="text-center">Note</div>
+            <div className="text-right">Amount</div>
+        </div>
+
         {/* ASSETS */}
         <div className="space-y-4">
           <h3 className="text-xl font-bold border-b-2 pb-2">ASSETS</h3>
           
+          {/* Non-current Assets - MOVED FIRST */}
+          <div className="pl-4">
+            <h4 className="font-semibold text-lg mb-2">Non-current Assets</h4>
+            <div className="grid grid-cols-[1fr_80px_150px] py-1 px-2 items-center hover:bg-accent/50 rounded">
+              <span>Total Fixed Assets (NBV)</span>
+              <span 
+                className="text-center text-sm text-primary underline cursor-pointer hover:text-primary/80"
+                onClick={() => handleNoteClick('2')}
+              >
+                2
+              </span>
+              <span className="font-mono text-right">R {totalNonCurrentAssets.toLocaleString()}</span>
+            </div>
+            <div className="grid grid-cols-[1fr_80px_150px] py-2 font-semibold border-t mt-2">
+              <span>Total Non-current Assets</span>
+              <span></span>
+              <span className="font-mono text-right">R {totalNonCurrentAssets.toLocaleString()}</span>
+            </div>
+          </div>
+
+          {/* Current Assets - MOVED SECOND */}
           <div className="pl-4">
             <h4 className="font-semibold text-lg mb-2">Current Assets</h4>
             {currentAssets.map(row => (
-              <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
-                   onClick={() => handleDrilldown(row.account_id, row.account_name)}>
-                <span>{row.account_code} - {row.account_name}</span>
-                <span className="font-mono">R {row.balance.toLocaleString()}</span>
+              <div key={row.account_id} className="grid grid-cols-[1fr_80px_150px] py-1 hover:bg-accent/50 px-2 rounded group items-center">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <span 
+                    className="cursor-pointer truncate"
+                    onClick={() => handleDrilldown(row.account_id, row.account_name)}
+                  >
+                    {row.account_code} - {row.account_name}
+                  </span>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div 
+                          className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer p-0.5 rounded-full hover:bg-primary/10 shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDrilldown(row.account_id, row.account_name);
+                          }}
+                        >
+                          <Info className="h-3 w-3 text-muted-foreground" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>View source transactions</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <span 
+                  className="text-center text-sm text-primary underline cursor-pointer hover:text-primary/80"
+                  onClick={() => handleNoteClick(getNoteNumber(row))}
+                >
+                  {getNoteNumber(row)}
+                </span>
+                <span className="font-mono text-right">R {row.balance.toLocaleString()}</span>
               </div>
             ))}
-            <div className="flex justify-between py-1 px-2">
+            <div className="grid grid-cols-[1fr_80px_150px] py-1 px-2 items-center">
               <span>VAT Receivable</span>
-              <span className="font-mono">R {vatReceivable.toLocaleString()}</span>
+              <span></span>
+              <span className="font-mono text-right">R {vatReceivable.toLocaleString()}</span>
             </div>
-            <div className="flex justify-between py-2 font-semibold border-t mt-2">
+            <div className="grid grid-cols-[1fr_80px_150px] py-2 font-semibold border-t mt-2">
               <span>Total Current Assets</span>
-              <span className="font-mono">R {totalCurrentAssets.toLocaleString()}</span>
+              <span></span>
+              <span className="font-mono text-right">R {totalCurrentAssets.toLocaleString()}</span>
             </div>
           </div>
 
-          <div className="pl-4">
-            <h4 className="font-semibold text-lg mb-2">Non-current Assets</h4>
-            <div className="flex justify-between py-1 px-2">
-              <span>Total Fixed Assets (NBV)</span>
-              <span className="font-mono">R {totalNonCurrentAssets.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between py-2 font-semibold border-t mt-2">
-              <span>Total Non-current Assets</span>
-              <span className="font-mono">R {totalNonCurrentAssets.toLocaleString()}</span>
-            </div>
-          </div>
-
-          <div className="flex justify-between py-2 text-lg font-bold border-t-2 border-b-2">
+          <div className="grid grid-cols-[1fr_80px_150px] py-2 text-lg font-bold border-t-2 border-b-2 text-emerald-700 bg-emerald-50/30 px-2">
             <span>TOTAL ASSETS</span>
-            <span className="font-mono">R {totalAssets.toLocaleString()}</span>
+            <span></span>
+            <span className="font-mono text-right">R {totalAssets.toLocaleString()}</span>
           </div>
         </div>
 
@@ -1254,43 +1416,109 @@ export const GAAPFinancialStatements = () => {
         <div className="space-y-4 mt-8">
           <h3 className="text-xl font-bold border-b-2 pb-2">LIABILITIES</h3>
           
-          <div className="pl-4">
-            <h4 className="font-semibold text-lg mb-2">Current Liabilities</h4>
-            {currentLiabilities.map(row => (
-              <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
-                   onClick={() => handleDrilldown(row.account_id, row.account_name)}>
-                <span>{row.account_code} - {row.account_name}</span>
-                <span className="font-mono">R {row.balance.toLocaleString()}</span>
-              </div>
-            ))}
-            <div className="flex justify-between py-1 px-2">
-              <span>VAT Payable</span>
-              <span className="font-mono">R {vatPayable.toLocaleString()}</span>
-            </div>
-            <div className="flex justify-between py-2 font-semibold border-t mt-2">
-              <span>Total Current Liabilities</span>
-              <span className="font-mono">R {(totalCurrentLiabilities + vatPayable).toLocaleString()}</span>
-            </div>
-          </div>
-
+          {/* Non-current Liabilities - MOVED FIRST */}
           <div className="pl-4">
             <h4 className="font-semibold text-lg mb-2">Non-current Liabilities</h4>
             {nonCurrentLiabilities.map(row => (
-              <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
-                   onClick={() => handleDrilldown(row.account_id, row.account_name)}>
-                <span>{row.account_code} - {row.account_name}</span>
-                <span className="font-mono">R {row.balance.toLocaleString()}</span>
+              <div key={row.account_id} className="grid grid-cols-[1fr_80px_150px] py-1 hover:bg-accent/50 px-2 rounded group items-center">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <span 
+                    className="cursor-pointer truncate"
+                    onClick={() => handleDrilldown(row.account_id, row.account_name)}
+                  >
+                    {row.account_code} - {row.account_name}
+                  </span>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div 
+                          className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer p-0.5 rounded-full hover:bg-primary/10 shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDrilldown(row.account_id, row.account_name);
+                          }}
+                        >
+                          <Info className="h-3 w-3 text-muted-foreground" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>View source transactions</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <span 
+                  className="text-center text-sm text-primary underline cursor-pointer hover:text-primary/80"
+                  onClick={() => handleNoteClick(getNoteNumber(row))}
+                >
+                  {getNoteNumber(row)}
+                </span>
+                <span className="font-mono text-right">R {row.balance.toLocaleString()}</span>
               </div>
             ))}
-            <div className="flex justify-between py-2 font-semibold border-t mt-2">
+            <div className="grid grid-cols-[1fr_80px_150px] py-2 font-semibold border-t mt-2">
               <span>Total Non-current Liabilities</span>
-              <span className="font-mono">R {totalNonCurrentLiabilities.toLocaleString()}</span>
+              <span></span>
+              <span className="font-mono text-right">R {totalNonCurrentLiabilities.toLocaleString()}</span>
             </div>
           </div>
 
-          <div className="flex justify-between py-2 font-semibold border-t">
+          {/* Current Liabilities - MOVED SECOND */}
+          <div className="pl-4">
+            <h4 className="font-semibold text-lg mb-2">Current Liabilities</h4>
+            {currentLiabilities.map(row => (
+              <div key={row.account_id} className="grid grid-cols-[1fr_80px_150px] py-1 hover:bg-accent/50 px-2 rounded group items-center">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <span 
+                    className="cursor-pointer truncate"
+                    onClick={() => handleDrilldown(row.account_id, row.account_name)}
+                  >
+                    {row.account_code} - {row.account_name}
+                  </span>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div 
+                          className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer p-0.5 rounded-full hover:bg-primary/10 shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDrilldown(row.account_id, row.account_name);
+                          }}
+                        >
+                          <Info className="h-3 w-3 text-muted-foreground" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>View source transactions</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <span 
+                  className="text-center text-sm text-primary underline cursor-pointer hover:text-primary/80"
+                  onClick={() => handleNoteClick(getNoteNumber(row))}
+                >
+                  {getNoteNumber(row)}
+                </span>
+                <span className="font-mono text-right">R {row.balance.toLocaleString()}</span>
+              </div>
+            ))}
+            <div className="grid grid-cols-[1fr_80px_150px] py-1 px-2 items-center">
+              <span>VAT Payable</span>
+              <span></span>
+              <span className="font-mono text-right">R {vatPayable.toLocaleString()}</span>
+            </div>
+            <div className="grid grid-cols-[1fr_80px_150px] py-2 font-semibold border-t mt-2">
+              <span>Total Current Liabilities</span>
+              <span></span>
+              <span className="font-mono text-right">R {(totalCurrentLiabilities + vatPayable).toLocaleString()}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-[1fr_80px_150px] py-2 font-semibold border-t px-2">
             <span>Total Liabilities</span>
-            <span className="font-mono">R {totalLiabilities.toLocaleString()}</span>
+            <span></span>
+            <span className="font-mono text-right">R {totalLiabilities.toLocaleString()}</span>
           </div>
         </div>
 
@@ -1299,38 +1527,396 @@ export const GAAPFinancialStatements = () => {
           <h3 className="text-xl font-bold border-b-2 pb-2">EQUITY</h3>
           <div className="pl-4">
             {equityDisplay.map(row => (
-              <div key={row.account_id || row.account_code} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded">
-                <span>{row.account_code} - {row.account_name}</span>
-                <span className="font-mono">R {row.balance.toLocaleString()}</span>
+              <div key={row.account_id || row.account_code} className="grid grid-cols-[1fr_80px_150px] py-1 hover:bg-accent/50 px-2 rounded group items-center">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <span 
+                    className="cursor-pointer truncate"
+                    onClick={() => handleDrilldown(row.account_id, row.account_name)}
+                  >
+                    {row.account_code} - {row.account_name}
+                  </span>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div 
+                          className="opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer p-0.5 rounded-full hover:bg-primary/10 shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDrilldown(row.account_id, row.account_name);
+                          }}
+                        >
+                          <Info className="h-3 w-3 text-muted-foreground" />
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>View source transactions</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <span 
+                  className="text-center text-sm text-primary underline cursor-pointer hover:text-primary/80"
+                  onClick={() => handleNoteClick(getNoteNumber(row))}
+                >
+                  {getNoteNumber(row)}
+                </span>
+                <span className="font-mono text-right">R {row.balance.toLocaleString()}</span>
               </div>
             ))}
-            <div className="flex justify-between py-2 font-semibold border-t mt-2">
+            <div className="grid grid-cols-[1fr_80px_150px] py-2 font-semibold border-t mt-2">
               <span>Total Equity</span>
-              <span className="font-mono">R {totalEquity.toLocaleString()}</span>
+              <span></span>
+              <span className="font-mono text-right">R {totalEquity.toLocaleString()}</span>
             </div>
           </div>
         </div>
 
-        {/* TOTAL */}
-        <div className="flex justify-between py-3 text-lg font-bold border-t-2 border-b-2 bg-primary/5">
+        {/* TOTAL LIAB & EQUITY */}
+        <div className="grid grid-cols-[1fr_80px_150px] py-3 text-lg font-bold border-t-2 border-b-2 bg-purple-50/30 text-purple-700 px-2">
           <span>TOTAL LIABILITIES & EQUITY</span>
-          <span className="font-mono">R {(totalLiabilities + totalEquity).toLocaleString()}</span>
+          <span></span>
+          <span className="font-mono text-right">R {(totalLiabilities + totalEquity).toLocaleString()}</span>
         </div>
 
 
-        {/* Validation */}
+        {/* Validation / Statement Balanced */}
         {accountingEquation && (
-          <div className={`p-4 rounded-lg ${accountingEquation.is_valid ? 'bg-green-100 dark:bg-green-900/20' : 'bg-red-100 dark:bg-red-900/20'}`}>
-            <p className="font-semibold">
-              {accountingEquation.is_valid
-                ? 'Accounting equation holds for selected period'
-                : `ERROR: Assets (R ${formatRand(accountingEquation.total_assets)}) ≠ Liabilities (R ${formatRand(accountingEquation.total_liabilities)}) + Equity (R ${formatRand(accountingEquation.total_equity)}) | Difference: R ${formatRand(accountingEquation.difference)}`}
-            </p>
-            {!accountingEquation.is_valid && (
-              <p className="text-sm mt-2">Assets: R {formatRand(accountingEquation.total_assets)} | Liabilities: R {formatRand(accountingEquation.total_liabilities)} | Equity: R {formatRand(accountingEquation.total_equity)}</p>
-            )}
+          <div className={`p-4 rounded-lg mt-4 flex items-center justify-center ${accountingEquation.is_valid ? 'bg-emerald-50 border border-emerald-100' : 'bg-red-50 border border-red-100'}`}>
+             <div className="flex items-center gap-2 font-bold">
+                {accountingEquation.is_valid ? (
+                    <div className="flex items-center gap-2 text-emerald-700">
+                        <div className="h-6 w-6 rounded-full bg-emerald-100 flex items-center justify-center border border-emerald-200">
+                            <CheckCircle2 className="h-4 w-4" />
+                        </div>
+                        <span>Statement is Balanced</span>
+                    </div>
+                ) : (
+                    <div className="flex flex-col items-center gap-1 text-red-700">
+                         <div className="flex items-center gap-2">
+                            <div className="h-6 w-6 rounded-full bg-red-100 flex items-center justify-center border border-red-200">
+                                <AlertTriangle className="h-4 w-4" />
+                            </div>
+                            <span>Statement is Unbalanced</span>
+                        </div>
+                        <span className="text-sm font-normal">Difference: R {formatRand(accountingEquation.difference)}</span>
+                    </div>
+                )}
+            </div>
           </div>
         )}
+      </div>
+    );
+  };
+
+  const renderIFRSNotes = () => {
+    // Helper to sum accounts
+    const sum = (arr: TrialBalanceRow[]) => arr.reduce((s, r) => s + Number(r.balance || 0), 0);
+    const toLower = (s: string) => String(s || '').toLowerCase();
+    const formatCurrency = (amount: number) => new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(amount);
+    
+    // --- DATA PREPARATION ---
+    // Balance Sheet items use 'trialBalanceAsOf' (Cumulative)
+    // P&L items use 'trialBalance' (Period Movement)
+
+    // 2. PPE (BS)
+    const nonCurrentAssets = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'asset' && parseInt(String(r.account_code || '0'), 10) >= 1500);
+    const ppeItems = nonCurrentAssets.filter(r => !toLower(r.account_name).includes('accumulated') && !toLower(r.account_name).includes('intangible') && !toLower(r.account_name).includes('investment'));
+    const accDepItems = nonCurrentAssets.filter(r => toLower(r.account_name).includes('accumulated'));
+    
+    const getAccumulatedFor = (name: string) => {
+        const base = toLower(name).replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+        return accDepItems.filter(ad => {
+            const adBase = toLower(ad.account_name).replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+            return adBase.includes(base) || base.includes(adBase);
+        }).reduce((s, r) => s + r.balance, 0);
+    };
+
+    // 3. Inventory (BS)
+    const inventoryItems = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'asset' && toLower(r.account_name).includes('inventory'));
+
+    // 4. Receivables (BS)
+    const tradeReceivables = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'asset' && (toLower(r.account_name).includes('trade receivable') || toLower(r.account_name).includes('accounts receivable')));
+    const impairment = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'asset' && toLower(r.account_name).includes('impairment'));
+    const otherReceivables = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'asset' && !tradeReceivables.includes(r) && !inventoryItems.includes(r) && !ppeItems.includes(r) && !toLower(r.account_name).includes('bank') && !toLower(r.account_name).includes('cash') && parseInt(String(r.account_code || '0'), 10) < 1500);
+
+    // 5. Cash (BS)
+    const cashItems = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'asset' && (toLower(r.account_name).includes('cash') || toLower(r.account_name).includes('bank')));
+    
+    // 6. Payables (BS)
+    const tradePayables = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'liability' && (toLower(r.account_name).includes('trade payable') || toLower(r.account_name).includes('accounts payable')));
+    const otherPayables = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'liability' && !tradePayables.includes(r) && !toLower(r.account_name).includes('tax') && !toLower(r.account_name).includes('vat'));
+
+    // 7. Revenue (P&L)
+    const revenueItems = trialBalance.filter(r => toLower(r.account_type) === 'revenue' || toLower(r.account_type) === 'income');
+    
+    // 8. Cost of Sales (P&L)
+    const cogsItems = trialBalance.filter(r => (String(r.account_code || '')).startsWith('50') || toLower(r.account_name).includes('cost of') || toLower(r.account_name).includes('purchases'));
+
+    // 9. Operating Expenses (P&L)
+    const expenseItems = trialBalance.filter(r => toLower(r.account_type) === 'expense' && !cogsItems.includes(r) && !toLower(r.account_name).includes('tax'));
+
+    // 10. Taxation (P&L)
+    const taxItems = trialBalance.filter(r => toLower(r.account_type) === 'expense' && toLower(r.account_name).includes('tax'));
+
+    // 11. Equity (BS)
+    const equityItems = trialBalanceAsOf.filter(r => toLower(r.account_type) === 'equity');
+
+    return (
+      <div className="space-y-8 p-4">
+        <div className="border-b pb-4">
+          <h2 className="text-2xl font-bold text-center">Notes to the Financial Statements</h2>
+          <p className="text-center text-muted-foreground">For the period ended {format(new Date(periodEnd), 'dd MMMM yyyy')}</p>
+        </div>
+
+        {/* 1. Basis of Preparation */}
+        <div id="note-1" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">1. Basis of Preparation</h3>
+          <p className="text-sm text-muted-foreground">
+            Financial statements are prepared on the accrual basis in accordance with IFRS for SMEs and on a going-concern assumption.
+          </p>
+        </div>
+
+        {/* 2. Property, Plant & Equipment */}
+        <div id="note-2" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">2. Property, Plant & Equipment</h3>
+          <p className="text-sm text-muted-foreground mb-2">Shows PPE cost, additions, depreciation, and carrying amount.</p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Description</TableHead>
+                <TableHead className="text-right">Cost</TableHead>
+                <TableHead className="text-right">Accumulated Depreciation</TableHead>
+                <TableHead className="text-right">Carrying Value</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {ppeItems.map(item => {
+                const cost = item.balance;
+                const accDep = getAccumulatedFor(item.account_name); 
+                return (
+                  <TableRow key={item.account_code}>
+                    <TableCell>{item.account_name}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(cost)}</TableCell>
+                    <TableCell className="text-right">{formatCurrency(accDep)}</TableCell>
+                    <TableCell className="text-right font-medium">{formatCurrency(cost + accDep)}</TableCell>
+                  </TableRow>
+                );
+              })}
+              <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Total</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(ppeItems))}</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(accDepItems))}</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(ppeItems) + sum(accDepItems))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 3. Inventory */}
+        <div id="note-3" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">3. Inventory</h3>
+          <p className="text-sm text-muted-foreground mb-2">Inventory measured at lower of cost and NRV.</p>
+          <Table>
+            <TableBody>
+              {inventoryItems.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(item.balance)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Total Inventory</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(inventoryItems))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 4. Trade Receivables */}
+        <div id="note-4" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">4. Trade Receivables</h3>
+          <p className="text-sm text-muted-foreground mb-2">Shows receivables balance and impairment (ECL) if any.</p>
+          <Table>
+            <TableBody>
+              <TableRow>
+                <TableCell>Trade Receivables (Gross)</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(tradeReceivables))}</TableCell>
+              </TableRow>
+              {impairment.length > 0 && (
+                 <TableRow>
+                  <TableCell>Less: Impairment (ECL)</TableCell>
+                  <TableCell className="text-right">{formatCurrency(sum(impairment))}</TableCell>
+                </TableRow>
+              )}
+              {otherReceivables.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(item.balance)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Net Trade and Other Receivables</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(tradeReceivables) + sum(impairment) + sum(otherReceivables))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 5. Cash & Cash Equivalents */}
+        <div id="note-5" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">5. Cash & Cash Equivalents</h3>
+          <p className="text-sm text-muted-foreground mb-2">Bank and cash on hand.</p>
+          <Table>
+            <TableBody>
+              {cashItems.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(item.balance)}</TableCell>
+                </TableRow>
+              ))}
+               <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Total Cash and Cash Equivalents</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(cashItems))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 6. Trade Payables */}
+        <div id="note-6" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">6. Trade Payables</h3>
+          <p className="text-sm text-muted-foreground mb-2">Closing balance of payables.</p>
+          <Table>
+            <TableBody>
+              <TableRow>
+                <TableCell>Trade Payables</TableCell>
+                <TableCell className="text-right">{formatCurrency(Math.abs(sum(tradePayables)))}</TableCell>
+              </TableRow>
+               {otherPayables.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(Math.abs(item.balance))}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Total Trade and Other Payables</TableCell>
+                <TableCell className="text-right">{formatCurrency(Math.abs(sum(tradePayables) + sum(otherPayables)))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 7. Revenue */}
+        <div id="note-7" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">7. Revenue</h3>
+          <p className="text-sm text-muted-foreground mb-2">Total revenue for the year.</p>
+          <Table>
+            <TableBody>
+              {revenueItems.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(Math.abs(item.balance))}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Total Revenue</TableCell>
+                <TableCell className="text-right">{formatCurrency(Math.abs(sum(revenueItems)))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 8. Cost of Sales */}
+        <div id="note-8" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">8. Cost of Sales</h3>
+          <p className="text-sm text-muted-foreground mb-2">Opening inventory, purchases, closing inventory.</p>
+          <Table>
+            <TableBody>
+              {cogsItems.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(item.balance)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Total Cost of Sales</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(cogsItems))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 9. Operating Expenses */}
+        <div id="note-9" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">9. Operating Expenses</h3>
+          <p className="text-sm text-muted-foreground mb-2">Grouped total of expenses.</p>
+          <Table>
+             <TableHeader>
+              <TableRow>
+                <TableHead>Account</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {expenseItems.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(item.balance)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Total Operating Expenses</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(expenseItems))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 10. Taxation */}
+        <div id="note-10" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">10. Taxation</h3>
+          <p className="text-sm text-muted-foreground mb-2">Current tax expense and tax rate used.</p>
+          <Table>
+            <TableBody>
+              {taxItems.length > 0 ? taxItems.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(item.balance)}</TableCell>
+                </TableRow>
+              )) : (
+                <TableRow>
+                    <TableCell colSpan={2} className="text-center text-muted-foreground">No tax expense recorded for this period.</TableCell>
+                </TableRow>
+              )}
+              {taxItems.length > 0 && (
+                <TableRow className="bg-muted/50 font-bold">
+                    <TableCell>Total Taxation</TableCell>
+                    <TableCell className="text-right">{formatCurrency(sum(taxItems))}</TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        {/* 11. Equity */}
+        <div id="note-11" className="space-y-4 scroll-mt-24">
+          <h3 className="text-lg font-semibold">11. Equity</h3>
+          <p className="text-sm text-muted-foreground mb-2">Opening balance, contributions, withdrawals, closing balance.</p>
+          <Table>
+            <TableBody>
+              {equityItems.map(item => (
+                <TableRow key={item.account_code}>
+                  <TableCell>{item.account_name}</TableCell>
+                  <TableCell className="text-right">{formatCurrency(item.balance)}</TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/50 font-bold">
+                <TableCell>Total Equity</TableCell>
+                <TableCell className="text-right">{formatCurrency(sum(equityItems))}</TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </div>
       </div>
     );
   };
@@ -1377,13 +1963,13 @@ export const GAAPFinancialStatements = () => {
       return (isPayableOrTax && !isLongLoan) || isShortLoan;
     });
     const currentSet = new Set(currentLiabilities.map(r => r.account_id));
-    const nonCurrentLiabilities = tb.filter(r => r.account_type.toLowerCase() === 'liability' && !currentSet.has(r.account_id));
+    const nonCurrentLiabilities = tb.filter(r => r.account_type.toLowerCase() === 'liability' && !currentSet.has(r.account_id) && !String(r.account_name || '').toLowerCase().includes('vat'));
     const equity = tb.filter(r => r.account_type.toLowerCase() === 'equity');
     const totalEquity = equity.reduce((sum, r) => sum + r.balance, 0);
     const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
-    const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0);
+    const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0) + vatPayable;
     const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
-    const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities + vatPayable;
+    const totalLiabilities = totalCurrentLiabilities + totalNonCurrentLiabilities;
     return {
       totalCurrentAssets,
       totalNonCurrentAssets,
@@ -2045,6 +2631,21 @@ export const GAAPFinancialStatements = () => {
     if (netFinancingDisplay > 0) adviceLines.push(`Financing inflows fund activities; monitor leverage and debt service capacity.`);
     if (vatNet > 0) adviceLines.push(`VAT payable position; set aside cash to meet statutory payments.`);
     if (vatNet < 0) adviceLines.push(`VAT receivable position; consider claiming refunds or offsetting.`);
+
+    // --- RECONCILIATION & AUDIT LOGIC ---
+    const actualClosingCash = sum(lowerTB.filter(a => a.account_type === 'asset' && (a.account_name.includes('cash') || a.account_name.includes('bank'))));
+    const calculatedClosingCash = cf.opening_cash_balance + netChangeDisplay;
+    const discrepancy = calculatedClosingCash - actualClosingCash;
+    const isDiscrepancy = Math.abs(discrepancy) > 1.0;
+
+    const actualOpeningCash = sum(lowerPrevTB.filter(r => r.account_type === 'asset' && (r.account_name.includes('cash') || r.account_name.includes('bank'))));
+    const openingDiff = cf.opening_cash_balance - actualOpeningCash;
+    
+    // Equity / RE Check
+    const reCurr = sum(lowerTB.filter(r => r.account_type === 'equity' && r.account_name.includes('retained')));
+    const rePrev = sum(lowerPrevTB.filter(r => r.account_type === 'equity' && r.account_name.includes('retained')));
+    const reDiff = (reCurr - rePrev) - (profitBeforeTax - Math.abs(taxPaidCF) - Math.abs(dividendsPaidCF));
+
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -2133,6 +2734,31 @@ export const GAAPFinancialStatements = () => {
             </div>
           </div>
 
+          {isDiscrepancy && (
+             <div className="rounded-md border border-red-200 bg-red-50 p-4 mb-6">
+               <div className="flex items-center gap-3">
+                 <AlertTriangle className="h-5 w-5 text-red-600" />
+                 <div className="flex-1">
+                   <h4 className="font-semibold text-red-900">Reconciliation Discrepancy Detected</h4>
+                   <p className="text-sm text-red-700 mt-1">
+                     The calculated closing cash balance (R {formatRand(calculatedClosingCash)}) does not match the actual bank balance (R {formatRand(actualClosingCash)}).
+                     Difference: R {formatRand(discrepancy)}
+                   </p>
+                 </div>
+                 <Button 
+                   variant="destructive" 
+                   size="sm"
+                   onClick={() => {
+                     setAuditDiscrepancy(discrepancy);
+                     setShowCashFlowAudit(true);
+                   }}
+                 >
+                   Audit This
+                 </Button>
+               </div>
+             </div>
+          )}
+
           <div className="space-y-2">
             <h3 className="text-xl font-bold">Advisory Insights</h3>
             <div className="space-y-1 pl-2">
@@ -2143,6 +2769,80 @@ export const GAAPFinancialStatements = () => {
             </div>
           </div>
         </div>
+
+        {/* Audit Modal */}
+        <Dialog open={showCashFlowAudit} onOpenChange={setShowCashFlowAudit}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-red-700">
+                <Activity className="h-5 w-5" />
+                Cash Flow Audit Report
+              </DialogTitle>
+              <DialogDescription>
+                Analysis of the difference between Cash Flow Statement and Balance Sheet.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="p-4 bg-muted rounded-lg space-y-2">
+                <div className="flex justify-between font-semibold">
+                  <span>Discrepancy Amount:</span>
+                  <span className="text-red-600">R {formatRand(auditDiscrepancy)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  A positive amount means the Cash Flow Statement shows more cash than the Balance Sheet.
+                </p>
+              </div>
+
+              <h4 className="font-semibold border-b pb-1">Potential Causes Found:</h4>
+              <ul className="space-y-3 text-sm">
+                {Math.abs(openingDiff) > 1 && (
+                  <li className="flex items-start gap-2 text-amber-700">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold">Opening Balance Mismatch:</span>
+                      <p>The opening cash balance in Cash Flow (R {formatRand(cf.opening_cash_balance)}) differs from the previous period's closing cash (R {formatRand(actualOpeningCash)}). Difference: R {formatRand(openingDiff)}.</p>
+                    </div>
+                  </li>
+                )}
+                
+                {Math.abs(reDiff) > 1 && (
+                  <li className="flex items-start gap-2 text-amber-700">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold">Unexplained Equity Movements:</span>
+                      <p>Retained Earnings changed by an amount not explained by Profit and Dividends. Check for manual journal entries to Equity accounts. Unexplained movement: R {formatRand(reDiff)}.</p>
+                    </div>
+                  </li>
+                )}
+
+                {/* Heuristics for common missing non-cash items */}
+                {Math.abs(discrepancy) > 0 && (
+                  <li className="flex items-start gap-2">
+                    <Info className="h-4 w-4 shrink-0 mt-0.5 text-blue-500" />
+                    <div>
+                      <span className="font-semibold">Review Non-Cash Adjustments:</span>
+                      <p>Ensure all depreciation, amortization, and unrealized FX gains/losses are added back in Operating Activities.</p>
+                    </div>
+                  </li>
+                )}
+                
+                {Math.abs(discrepancy) > 0 && (
+                  <li className="flex items-start gap-2">
+                     <Info className="h-4 w-4 shrink-0 mt-0.5 text-blue-500" />
+                    <div>
+                      <span className="font-semibold">Check Asset Disposals:</span>
+                      <p>Verify that proceeds from sales of assets are recorded in Investing Activities and the Profit/Loss on disposal is adjusted in Operating Activities.</p>
+                    </div>
+                  </li>
+                )}
+              </ul>
+              
+              <div className="pt-4 border-t flex justify-end">
+                <Button variant="outline" onClick={() => setShowCashFlowAudit(false)}>Close Audit</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   };
@@ -2274,6 +2974,10 @@ export const GAAPFinancialStatements = () => {
               <BarChart3 className="h-4 w-4" />
               Monthly Report
             </TabsTrigger>
+            <TabsTrigger value="ifrs-notes" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Notes to Financial Statements (IFRS)
+            </TabsTrigger>
           </TabsList>
         </div>
 
@@ -2397,6 +3101,40 @@ export const GAAPFinancialStatements = () => {
                           </tr>
                         </thead>
                         <tbody>
+                          {/* Non-current Assets */}
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Non-current Assets</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-nca-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.nonCurrentAssetsItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`bs-nca-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.bsDetail?.nonCurrentAssetsItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`bs-nca-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {[
+                            { key: 'Total Fixed Assets (NBV)', get: (m: any) => m.bs.totalNonCurrentAssets },
+                            { key: 'Total Non-current Assets', get: (m: any) => m.bs.totalNonCurrentAssets },
+                          ].map((row) => (
+                            <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+
+                          {/* Current Assets */}
                           <tr>
                             <td className="py-1 font-bold sticky left-0 bg-background z-10">Current Assets</td>
                             {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ca-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
@@ -2416,6 +3154,39 @@ export const GAAPFinancialStatements = () => {
                           })()}
                           {[
                             { key: 'Total Current Assets', get: (m: any) => m.bs.totalCurrentAssets },
+                            { key: 'TOTAL ASSETS', get: (m: any) => m.bs.totalAssets, bold: true, color: 'text-emerald-700 bg-emerald-50/50' },
+                          ].map((row) => (
+                            <tr key={`bs-${row.key}`} className={`border-b odd:bg-muted/40 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>
+                              <td className={`py-1 sticky left-0 bg-background z-10 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+
+                          {/* Non-current Liabilities */}
+                          <tr>
+                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Non-current Liabilities</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ncl-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.nonCurrentLiabilitiesItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`bs-ncl-${lab}`} className="border-b">
+                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.bsDetail?.nonCurrentLiabilitiesItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`bs-ncl-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {[
+                            { key: 'Total Non-current Liabilities', get: (m: any) => m.bs.totalNonCurrentLiabilities },
                           ].map((row) => (
                             <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
                               <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
@@ -2427,6 +3198,8 @@ export const GAAPFinancialStatements = () => {
                               })}
                             </tr>
                           ))}
+
+                          {/* Current Liabilities */}
                           <tr>
                             <td className="py-1 font-bold sticky left-0 bg-background z-10">Current Liabilities</td>
                             {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-cl-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
@@ -2446,6 +3219,7 @@ export const GAAPFinancialStatements = () => {
                           })()}
                           {[
                             { key: 'Total Current Liabilities', get: (m: any) => m.bs.totalCurrentLiabilities },
+                            { key: 'Total Liabilities', get: (m: any) => m.bs.totalLiabilities },
                           ].map((row) => (
                             <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
                               <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
@@ -2457,23 +3231,8 @@ export const GAAPFinancialStatements = () => {
                               })}
                             </tr>
                           ))}
-                          <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Non-current Liabilities</td>
-                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ncl-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
-                          </tr>
-                          {(() => {
-                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.nonCurrentLiabilitiesItems || []).map((i: any) => i.label))));
-                            return labels.map((lab) => (
-                              <tr key={`bs-ncl-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
-                                {monthlyAFSData.map((m: any, i: number) => {
-                                  const found = (m.bsDetail?.nonCurrentLiabilitiesItems || []).find((x: any) => x.label === lab);
-                                  const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`bs-ncl-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
-                                })}
-                              </tr>
-                            ));
-                          })()}
+
+                          {/* Equity */}
                           <tr>
                             <td className="py-1 font-bold sticky left-0 bg-background z-10">Equity</td>
                             {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-eq-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
@@ -2492,15 +3251,11 @@ export const GAAPFinancialStatements = () => {
                             ));
                           })()}
                           {[
-                            { key: 'Total Non-current Assets', get: (m: any) => m.bs.totalNonCurrentAssets },
-                            { key: 'TOTAL ASSETS', get: (m: any) => m.bs.totalAssets },
-                            { key: 'Total Non-current Liabilities', get: (m: any) => m.bs.totalNonCurrentLiabilities },
-                            { key: 'Total Liabilities', get: (m: any) => m.bs.totalLiabilities },
                             { key: 'Total Equity', get: (m: any) => m.bs.totalEquity },
-                            { key: 'TOTAL L & E', get: (m: any) => m.bs.totalLiabilities + m.bs.totalEquity },
+                            { key: 'TOTAL LIABILITIES & EQUITY', get: (m: any) => m.bs.totalLiabilities + m.bs.totalEquity, bold: true, color: 'text-purple-700 bg-purple-50/50' },
                           ].map((row) => (
-                            <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
-                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                            <tr key={`bs-${row.key}`} className={`border-b odd:bg-muted/40 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>
+                              <td className={`py-1 sticky left-0 bg-background z-10 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
@@ -2509,6 +3264,107 @@ export const GAAPFinancialStatements = () => {
                               })}
                             </tr>
                           ))}
+
+                          {/* Balance Check */}
+                          <tr>
+                             <td className="py-1 font-bold sticky left-0 bg-background z-10">Balance Check</td>
+                             {monthlyAFSData.map((m: any, i: number) => {
+                                 const diff = m.bs.totalAssets - (m.bs.totalLiabilities + m.bs.totalEquity);
+                                 const isBalanced = Math.abs(diff) < 0.1;
+                                 return (
+                                     <td key={`bs-check-${m.label}`} className={`py-1 text-right ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>
+                                         {isBalanced ? (
+                                             <CheckCircle2 className="h-4 w-4 text-emerald-500 inline-block" />
+                                         ) : (
+                                             <Dialog>
+                                                 <DialogTrigger asChild>
+                                                     <Button variant="ghost" size="sm" className="h-6 px-2 text-red-500 hover:text-red-700 hover:bg-red-50 font-mono text-xs">
+                                                         <AlertTriangle className="h-3 w-3 mr-1" />
+                                                         {diff.toFixed(2)}
+                                                     </Button>
+                                                 </DialogTrigger>
+                                                 <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+                                                     <DialogHeader>
+                                                         <DialogTitle>Balance Sheet Audit - {m.label}</DialogTitle>
+                                                         <DialogDescription>
+                                                             Detailed analysis of the imbalance (Assets - Liab - Equity = {diff.toFixed(2)})
+                                                         </DialogDescription>
+                                                     </DialogHeader>
+                                                     <div className="space-y-6">
+                                                         <div className="grid grid-cols-2 gap-4">
+                                                             <Card>
+                                                                 <CardHeader className="py-2"><CardTitle className="text-sm">Summary</CardTitle></CardHeader>
+                                                                 <CardContent className="py-2 text-sm">
+                                                                     <div className="flex justify-between"><span>Total Assets:</span><span className="font-mono">{formatAccounting(m.bs.totalAssets).display}</span></div>
+                                                                     <div className="flex justify-between"><span>Total Liabilities:</span><span className="font-mono">{formatAccounting(m.bs.totalLiabilities).display}</span></div>
+                                                                     <div className="flex justify-between"><span>Total Equity:</span><span className="font-mono">{formatAccounting(m.bs.totalEquity).display}</span></div>
+                                                                     <div className="flex justify-between font-bold border-t mt-2 pt-1"><span>Difference:</span><span className="text-red-600 font-mono">{diff.toFixed(2)}</span></div>
+                                                                 </CardContent>
+                                                             </Card>
+                                                             <Card>
+                                                                 <CardHeader className="py-2"><CardTitle className="text-sm">Data Integrity Check</CardTitle></CardHeader>
+                                                                 <CardContent className="py-2 text-sm">
+                                                                     <div className="flex justify-between">
+                                                                         <span>Trial Balance Net Sum:</span>
+                                                                         <span className={`font-mono ${Math.abs(m.audit?.tbBalance || 0) > 0.01 ? 'text-red-600 font-bold' : 'text-green-600'}`}>
+                                                                             {(m.audit?.tbBalance || 0).toFixed(2)}
+                                                                         </span>
+                                                                     </div>
+                                                                     <p className="text-xs text-muted-foreground mt-2">
+                                                                         * If this is not zero, the database entries for this period are not balanced (Credits != Debits).
+                                                                     </p>
+                                                                 </CardContent>
+                                                             </Card>
+                                                         </div>
+
+                                                         {m.audit?.unmappedAccounts && m.audit.unmappedAccounts.length > 0 && (
+                                                             <div>
+                                                                 <h4 className="font-semibold text-red-600 mb-2 flex items-center">
+                                                                     <AlertTriangle className="h-4 w-4 mr-2" />
+                                                                     Unmapped Accounts (Missing from Report)
+                                                                 </h4>
+                                                                 <ScrollArea className="h-[200px] border rounded-md">
+                                                                     <Table>
+                                                                         <TableHeader>
+                                                                             <TableRow>
+                                                                                 <TableHead>Code</TableHead>
+                                                                                 <TableHead>Account</TableHead>
+                                                                                 <TableHead>Type</TableHead>
+                                                                                 <TableHead className="text-right">Balance</TableHead>
+                                                                             </TableRow>
+                                                                         </TableHeader>
+                                                                         <TableBody>
+                                                                             {m.audit.unmappedAccounts.map((acc: any) => (
+                                                                                 <TableRow key={acc.code}>
+                                                                                     <TableCell className="font-mono text-xs">{acc.code}</TableCell>
+                                                                                     <TableCell>{acc.name}</TableCell>
+                                                                                     <TableCell className="text-xs uppercase">{acc.type}</TableCell>
+                                                                                     <TableCell className="text-right font-mono text-xs">{acc.balance.toFixed(2)}</TableCell>
+                                                                                 </TableRow>
+                                                                             ))}
+                                                                         </TableBody>
+                                                                     </Table>
+                                                                 </ScrollArea>
+                                                             </div>
+                                                         )}
+
+                                                         <div>
+                                                             <h4 className="font-semibold mb-2">Retained Earnings Logic</h4>
+                                                             <div className="bg-muted p-4 rounded-md text-sm font-mono space-y-1">
+                                                                 <div className="flex justify-between"><span>YTD Revenue:</span><span>{formatAccounting(m.audit?.retainedEarningsCalcs?.ytdRevenue).display}</span></div>
+                                                                 <div className="flex justify-between"><span>YTD Expenses:</span><span>{formatAccounting(m.audit?.retainedEarningsCalcs?.ytdExpenses).display}</span></div>
+                                                                 <div className="flex justify-between border-t pt-1"><span>= YTD Net Profit:</span><span>{formatAccounting(m.audit?.retainedEarningsCalcs?.ytdNetProfit).display}</span></div>
+                                                                 <div className="flex justify-between"><span>+ Opening Retained:</span><span>{formatAccounting(m.audit?.retainedEarningsCalcs?.retainedOpeningYTD).display}</span></div>
+                                                             </div>
+                                                         </div>
+                                                     </div>
+                                                 </DialogContent>
+                                             </Dialog>
+                                         )}
+                                     </td>
+                                 );
+                             })}
+                          </tr>
                         </tbody>
                       </table>
                     </div>
@@ -2669,38 +3525,51 @@ export const GAAPFinancialStatements = () => {
             </CardContent>
           </Card>
         </TabsContent>
+        <TabsContent value="ifrs-notes">
+          <Card>
+            <CardContent className="pt-6">
+              <ScrollArea className="h-[600px] pr-4">
+                {renderIFRSNotes()}
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
 
       {/* Drill-down modal */}
-      {drilldownAccount && (
-        <Card className="mt-6">
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle>Ledger Entries: {drilldownAccount}</CardTitle>
-              <Button variant="outline" size="sm" onClick={() => setDrilldownAccount(null)}>
-                Close
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {ledgerEntries.map(entry => (
-                <div key={entry.id} className="flex justify-between border-b pb-2">
-                  <div>
-                    <p className="font-semibold">{entry.description}</p>
-                    <p className="text-sm text-muted-foreground">{entry.entry_date} | Ref: {entry.reference_id}</p>
+      <Dialog open={!!drilldownAccount} onOpenChange={(open) => !open && setDrilldownAccount(null)}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Ledger Entries: {drilldownAccount}</DialogTitle>
+            <DialogDescription>
+              Detailed transactions for the selected period
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {ledgerEntries.length === 0 ? (
+               <div className="text-center py-8 text-muted-foreground">
+                 No transactions found for this period.
+               </div>
+            ) : (
+              <div className="space-y-2">
+                {ledgerEntries.map(entry => (
+                  <div key={entry.id} className="flex justify-between border-b pb-2 last:border-0">
+                    <div>
+                      <p className="font-semibold">{entry.description}</p>
+                      <p className="text-sm text-muted-foreground">{entry.entry_date} | Ref: {entry.reference_id}</p>
+                    </div>
+                    <div className="text-right font-mono">
+                      {entry.debit > 0 && <p className="text-red-600">Dr: R {entry.debit.toLocaleString()}</p>}
+                      {entry.credit > 0 && <p className="text-green-600">Cr: R {entry.credit.toLocaleString()}</p>}
+                    </div>
                   </div>
-                  <div className="text-right font-mono">
-                    {entry.debit > 0 && <p>Dr: R {entry.debit.toLocaleString()}</p>}
-                    {entry.credit > 0 && <p>Cr: R {entry.credit.toLocaleString()}</p>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                ))}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {showAdviceModal && (
         <Card className="mt-6">
@@ -2718,11 +3587,12 @@ export const GAAPFinancialStatements = () => {
           </CardContent>
         </Card>
       )}
-
       
     </div>
   );
 };
+
+
 
 // Period-scoped trial balance computation using transaction_entries joined to transactions.transaction_date
 // Function to calculate total inventory value from products

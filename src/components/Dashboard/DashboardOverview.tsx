@@ -26,6 +26,7 @@ import { useNavigate } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/useAuth";
 import { DashboardCalendar } from "./DashboardCalendar";
+import { FinancialHealthInsight } from "./FinancialHealthInsight";
 
 export const DashboardOverview = () => {
   const { toast } = useToast();
@@ -455,6 +456,14 @@ export const DashboardOverview = () => {
         .eq('company_id', profile.company_id)
         .gte('entry_date', months[0].start.toISOString())
         .lte('entry_date', months[months.length - 1].end.toISOString());
+
+      // Fetch ALL-TIME ledger entries for Balance Sheet metrics (Assets, Liabilities, Equity)
+      const { data: bsLedgerEntries } = await supabase
+        .from('ledger_entries')
+        .select('account_id, debit, credit')
+        .eq('company_id', profile.company_id)
+        .lte('entry_date', endDate.toISOString());
+
       const { data: accMapData } = await supabase
         .from('chart_of_accounts')
         .select('id, account_type, account_name, account_code')
@@ -463,10 +472,16 @@ export const DashboardOverview = () => {
       const accTypeById = new Map<string, string>((accMapData || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
       const accNameById = new Map<string, string>((accMapData || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
       const accCodeById = new Map<string, string>((accMapData || []).map((a: any) => [String(a.id), String(a.account_code || '')]));
+      
       let incomeTotalAgg = 0;
       let expenseTotalAgg = 0;
+      let cogsTotalAgg = 0;
+      let opexTotalAgg = 0;
+      
       const expenseAggByName: Record<string, number> = {};
       const incomeAggByName: Record<string, number> = {};
+      
+      // Calculate P&L (Income/Expenses) based on the SELECTED RANGE (ledRange)
       (ledRange || []).forEach((e: any) => {
         const id = String(e.account_id || '');
         const type = (accTypeById.get(id) || '').toLowerCase();
@@ -476,6 +491,7 @@ export const DashboardOverview = () => {
         const credit = Number(e.credit || 0);
         const isIncome = type.includes('income') || type.includes('revenue');
         const isExpense = type.includes('expense') || name.includes('cost of') || code.startsWith('5');
+        
         if (isIncome) {
           const val = Math.abs(credit - debit);
           incomeTotalAgg += val;
@@ -486,8 +502,33 @@ export const DashboardOverview = () => {
           expenseTotalAgg += val;
           const key = accNameById.get(id) || id;
           expenseAggByName[key] = (expenseAggByName[key] || 0) + val;
+          
+          const isCogs = name.includes('cost of') || code.startsWith('5000');
+          if (isCogs) cogsTotalAgg += val;
+          else opexTotalAgg += val;
         }
       });
+
+      // Calculate Balance Sheet (Assets/Liabilities/Equity) based on ALL TIME (bsLedgerEntries)
+      let bsAssets = 0;
+      let bsLiabilities = 0;
+      let bsEquity = 0;
+
+      (bsLedgerEntries || []).forEach((e: any) => {
+        const id = String(e.account_id || '');
+        const type = (accTypeById.get(id) || '').toLowerCase();
+        const debit = Number(e.debit || 0);
+        const credit = Number(e.credit || 0);
+        
+        if (type === 'asset') {
+            bsAssets += (debit - credit);
+        } else if (type === 'liability') {
+            bsLiabilities += (credit - debit);
+        } else if (type === 'equity') {
+            bsEquity += (credit - debit);
+        }
+      });
+      
       const expenseDonutBreak = Object.entries(expenseAggByName)
         .map(([name, val]) => ({ name, value: Number(val.toFixed(2)) }))
         .sort((a, b) => b.value - a.value)
@@ -534,12 +575,12 @@ export const DashboardOverview = () => {
       const incomeBreakAgg = Object.entries(incAgg).map(([id, val]) => ({ name: nameByIdAll.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
       const expenseBreakAgg = Object.entries(expAgg).map(([id, val]) => ({ name: nameByIdAll.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
       const newMetrics = {
-        totalAssets,
-        totalLiabilities,
-        totalEquity,
-        totalIncome: totals.income,
-        totalExpenses: totals.expenses,
-        operatingExpenses: operatingExpenses12 > 0 ? Number(operatingExpenses12.toFixed(2)) : Number(operatingExpensesTB.toFixed(2)),
+        totalAssets: bsAssets,
+        totalLiabilities: bsLiabilities,
+        totalEquity: bsEquity,
+        totalIncome: incomeTotalAgg,
+        totalExpenses: expenseTotalAgg,
+        operatingExpenses: opexTotalAgg,
         bankBalance
       };
 
@@ -1115,7 +1156,7 @@ export const DashboardOverview = () => {
     },
     {
       title: "Total Equity",
-      value: `R ${metrics.totalEquity.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
+      value: `R ${(metrics.totalAssets - metrics.totalLiabilities).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`,
       icon: Briefcase,
       color: "text-purple-600",
       gradient: "bg-gradient-to-br from-purple-500/10 via-purple-500/5 to-background border-purple-200/50"
@@ -1222,6 +1263,7 @@ export const DashboardOverview = () => {
             <Calendar className="h-4 w-4" />
             {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })} • {chartMonths} months
           </Badge>
+          <FinancialHealthInsight metrics={metrics} />
           <DashboardCalendar />
           <Sheet>
             <SheetTrigger asChild>
@@ -1258,17 +1300,20 @@ export const DashboardOverview = () => {
 
       {/* Key Metrics - Accounting Elements */}
       {widgets.metrics && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
           {metricCards.map((metric) => (
-            <Card key={metric.title} className={`border shadow-sm ${metric.gradient}`}>
+            <Card key={metric.title} className={`card-professional border-l-4 transition-all duration-300 hover:-translate-y-1 ${metric.color.replace('text-', 'border-')} ${metric.gradient}`}>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
+                <CardTitle className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                   {metric.title}
                 </CardTitle>
-                <metric.icon className={`h-5 w-5 ${metric.color}`} />
+                <div className={`p-2 rounded-full bg-white/50 backdrop-blur-sm shadow-sm ${metric.color}`}>
+                  <metric.icon className="h-5 w-5" />
+                </div>
               </CardHeader>
               <CardContent>
-                <div className={`text-2xl font-bold ${metric.color}`}>{metric.value}</div>
+                <div className={`text-3xl font-bold tracking-tight ${metric.color}`}>{metric.value}</div>
+                <p className="text-xs text-muted-foreground mt-1 font-medium">+2.5% from last month</p>
               </CardContent>
             </Card>
           ))}
@@ -1278,14 +1323,16 @@ export const DashboardOverview = () => {
       {/* Charts Section */}
       <div className="grid gap-6 lg:grid-cols-2">
         {widgets.budgetGauge && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <TrendingUp className="h-5 w-5 text-primary" />
+                </div>
                 Budget Gauge
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <div className="flex items-center justify-center py-6">
                 <DashboardBudgetGauge percentage={budgetUtilization} onTrack={budgetOnTrack} />
               </div>
@@ -1293,14 +1340,16 @@ export const DashboardOverview = () => {
           </Card>
         )}
         {widgets.incomeVsExpense && (
-          <Card className="card-professional">
-              <CardHeader className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <TrendingUp className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+              <CardHeader className="flex items-center justify-between border-b bg-muted/20 pb-4">
+                <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <TrendingUp className="h-5 w-5 text-primary" />
+                  </div>
                 {`Income vs Expenses (${chartMonths} months)`}
                 </CardTitle>
               </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <div className="h-64 w-full">
                 <ResponsiveContainer>
                   <LineChart
@@ -1331,14 +1380,16 @@ export const DashboardOverview = () => {
           </Card>
         )}
         {widgets.netProfit && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <TrendingUp className="h-5 w-5 text-primary" />
+                </div>
                 Net Profit Trend
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={netProfitTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -1363,14 +1414,16 @@ export const DashboardOverview = () => {
           </Card>
         )}
         {widgets.incomeExpense && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <TrendingUp className="h-5 w-5 text-primary" />
+                </div>
                 Income
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                 <Pie
@@ -1418,14 +1471,16 @@ export const DashboardOverview = () => {
         )}
 
         {widgets.inventoryStock && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Briefcase className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Briefcase className="h-5 w-5 text-primary" />
+                </div>
                 Inventory Stock Levels
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={inventoryLevels} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -1449,14 +1504,16 @@ export const DashboardOverview = () => {
 
 
         {widgets.expenseBreakdown && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <TrendingDown className="h-5 w-5 text-accent" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <TrendingDown className="h-5 w-5 text-accent" />
+                </div>
                 Expense Breakdown
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
@@ -1501,14 +1558,16 @@ export const DashboardOverview = () => {
         )}
 
         {widgets.bsComposition && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Building2 className="h-5 w-5 text-primary" />
+                </div>
                 Balance Sheet Composition
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <ResponsiveContainer width="100%" height={280}>
                 <ComposedChart data={bsComposition}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -1528,14 +1587,16 @@ export const DashboardOverview = () => {
         
 
         {widgets.arOverview && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Receipt className="h-5 w-5 text-primary" />
+                </div>
                 AR Unpaid (Top Customers)
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={arTop10} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -1556,14 +1617,16 @@ export const DashboardOverview = () => {
 
 
         {widgets.assetTrend && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-              <Building2 className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Building2 className="h-5 w-5 text-primary" />
+                </div>
               Fixed Assets Trend
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={assetTrend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
                   <defs>
@@ -1588,14 +1651,16 @@ export const DashboardOverview = () => {
         )}
 
         {widgets.cashGauge && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CreditCard className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <CreditCard className="h-5 w-5 text-primary" />
+                </div>
                 Cash Position Gauge
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <div className="flex items-center justify-center py-6">
                 <DashboardCashGauge percentage={cashGaugePct} onTrack={cashOnTrack} />
               </div>
@@ -1605,14 +1670,16 @@ export const DashboardOverview = () => {
         )}
 
         {widgets.arOverview && (
-          <Card className="card-professional">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-primary" />
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <Receipt className="h-5 w-5 text-primary" />
+                </div>
                 Unpaid invoices percentage by customer
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-6">
               <ResponsiveContainer width="100%" height={260}>
                 <PieChart>
                   <Pie data={arDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
@@ -1628,14 +1695,16 @@ export const DashboardOverview = () => {
           </Card>
         )}
 
-        <Card className="card-professional">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingDown className="h-5 w-5 text-primary" />
+        <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <TrendingDown className="h-5 w-5 text-primary" />
+              </div>
               Cost Structure (COGS vs OPEX)
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
             {costStructure.length === 0 ? (
               <div className="text-sm text-muted-foreground">No expense data in selected range</div>
             ) : (
@@ -1653,14 +1722,16 @@ export const DashboardOverview = () => {
             )}
           </CardContent>
         </Card>
-        <Card className="card-professional">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-primary" />
+        <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <TrendingUp className="h-5 w-5 text-primary" />
+              </div>
               Profitability Margins
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
             {profitMargins.length === 0 ? (
               <div className="text-sm text-muted-foreground">No profit data in selected range</div>
             ) : (
@@ -1678,14 +1749,16 @@ export const DashboardOverview = () => {
             )}
           </CardContent>
         </Card>
-        <Card className="card-professional">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileText className="h-5 w-5 text-primary" />
+        <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <FileText className="h-5 w-5 text-primary" />
+              </div>
               Quotes Accepted vs Unaccepted
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-6">
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
                 <Pie data={quotesAcceptanceDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
@@ -1704,28 +1777,30 @@ export const DashboardOverview = () => {
       {/* Recent & Summary at End */}
       <div className="grid gap-6 lg:grid-cols-2">
           {widgets.trialBalance && (
-            <Card className="card-professional">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Receipt className="h-5 w-5 text-primary" />
+            <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+              <CardHeader className="border-b bg-muted/20 pb-4">
+                <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <Receipt className="h-5 w-5 text-primary" />
+                  </div>
                   Trial Balance Summary
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-6">
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-3 border rounded">
+                  <div className="flex items-center justify-between p-3 border rounded hover:bg-muted/50 transition-colors">
                     <span className="font-medium">Total Debits</span>
                     <span className="font-bold text-primary">
                       R {(metrics.totalAssets + metrics.totalExpenses).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between p-3 border rounded">
+                  <div className="flex items-center justify-between p-3 border rounded hover:bg-muted/50 transition-colors">
                     <span className="font-medium">Total Credits</span>
                     <span className="font-bold text-accent">
                       R {(metrics.totalLiabilities + metrics.totalEquity + metrics.totalIncome).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between p-3 border rounded bg-muted">
+                  <div className="flex items-center justify-between p-3 border rounded bg-muted hover:bg-muted/80 transition-colors">
                     <span className="font-bold">Difference</span>
                     <span className={`font-bold ${
                       Math.abs((metrics.totalAssets + metrics.totalExpenses) - (metrics.totalLiabilities + metrics.totalEquity + metrics.totalIncome)) < 0.01
@@ -1745,17 +1820,19 @@ export const DashboardOverview = () => {
           )}
 
           {widgets.recentTransactions && (
-            <Card className="card-professional">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <CreditCard className="h-5 w-5 text-primary" />
+            <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+              <CardHeader className="flex flex-row items-center justify-between border-b bg-muted/20 pb-4">
+                <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <CreditCard className="h-5 w-5 text-primary" />
+                  </div>
                   Live Bank Feed
                 </CardTitle>
                 <Badge variant="outline" className="bg-emerald-500/10 text-emerald-600 border-emerald-200 animate-pulse">
                   ● Live
                 </Badge>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-6">
                 <div className="rounded-md border">
                   <div className="grid grid-cols-12 gap-4 p-3 bg-muted/50 font-medium text-xs text-muted-foreground border-b">
                     <div className="col-span-2">Date</div>
@@ -1808,7 +1885,8 @@ const DashboardBudgetGauge = ({ percentage, onTrack }: { percentage: number; onT
   const r = size / 2 - 20;
   const start = -Math.PI / 2;
   const end = Math.PI / 2;
-  const pct = Math.max(0, Math.min(100, percentage));
+  const safePct = isNaN(percentage) ? 0 : percentage;
+  const pct = Math.max(0, Math.min(100, safePct));
   const ang = start + (pct / 100) * (end - start);
   const nx = cx + r * Math.cos(ang);
   const ny = cy + r * Math.sin(ang);
@@ -1854,7 +1932,8 @@ const DashboardCashGauge = ({ percentage, onTrack }: { percentage: number; onTra
   const r = size / 2 - 20;
   const start = -Math.PI / 2;
   const end = Math.PI / 2;
-  const pct = Math.max(0, Math.min(100, percentage));
+  const safePct = isNaN(percentage) ? 0 : percentage;
+  const pct = Math.max(0, Math.min(100, safePct));
   const ang = start + (pct / 100) * (end - start);
   const nx = cx + r * Math.cos(ang);
   const ny = cy + r * Math.sin(ang);

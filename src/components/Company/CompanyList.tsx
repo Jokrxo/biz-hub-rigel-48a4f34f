@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Building2, Globe, Phone, Mail, FileText, Check, Eye, Users, Trash2, UserPlus, Settings, Lock, AlertTriangle } from "lucide-react";
+import { Plus, Building2, Globe, Phone, Mail, FileText, Check, Eye, Users, Trash2, UserPlus, Settings, Lock, AlertTriangle, Activity } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +50,8 @@ const formSchema = z.object({
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
   tax_number: z.string().optional(),
 });
+
+import { FinancialHealthInsight } from "@/components/Dashboard/FinancialHealthInsight";
 
 export const CompanyList = () => {
   const { user } = useAuth();
@@ -478,89 +480,95 @@ export const CompanyList = () => {
         {companies.map((company) => (
           <Card 
             key={company.id} 
-            className={`group relative overflow-hidden transition-all duration-300 hover:shadow-xl border-t-4 ${
+            className={`group relative transition-all duration-200 hover:shadow-md ${
               currentCompanyId === company.id 
-                ? 'border-t-primary shadow-md bg-gradient-to-b from-primary/5 to-transparent' 
-                : 'border-t-muted hover:border-t-primary/50'
+                ? 'border-primary/50 shadow-sm' 
+                : 'hover:border-primary/20'
             }`}
           >
-            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:bg-destructive/10" onClick={(e) => { e.stopPropagation(); handleDeleteClick(company); }}>
+            <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); handleDeleteClick(company); }}>
                 <Trash2 className="h-4 w-4" />
               </Button>
             </div>
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
-              <div className="space-y-1">
-                <CardTitle className="text-xl font-bold flex items-center gap-2">
+            <CardHeader className="flex flex-row items-start space-y-0 pb-2 gap-4">
+              <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                {company.logo_url ? (
+                  <img src={company.logo_url} alt="Logo" className="h-full w-full object-contain p-1" />
+                ) : (
+                  <Building2 className="h-5 w-5 text-muted-foreground" />
+                )}
+              </div>
+              <div className="space-y-1 flex-1">
+                <CardTitle className="text-base font-semibold flex items-center gap-2">
                   {company.name}
                   {currentCompanyId === company.id && (
-                    <Badge variant="default" className="text-[10px] h-5 px-1.5">Active</Badge>
+                    <Badge variant="secondary" className="text-[10px] font-normal h-5 px-1.5">Current</Badge>
                   )}
                 </CardTitle>
-                <CardDescription className="font-mono text-xs opacity-80">
+                <CardDescription className="font-mono text-xs">
                   {company.code}
                 </CardDescription>
               </div>
-              <div className="h-12 w-12 rounded-lg bg-white shadow-sm border p-2 flex items-center justify-center">
-                {company.logo_url ? (
-                  <img src={company.logo_url} alt="Logo" className="h-full w-full object-contain" />
-                ) : (
-                  <Building2 className="h-6 w-6 text-primary/60" />
-                )}
-              </div>
             </CardHeader>
-            <CardContent>
-              <div className="text-sm text-muted-foreground mt-4 space-y-3">
+            <CardContent className="pb-3">
+              <div className="text-sm text-muted-foreground space-y-2">
                 {company.email && (
-                  <div className="flex items-center gap-2.5">
-                    <div className="bg-primary/10 p-1.5 rounded-full">
-                      <Mail className="h-3 w-3 text-primary" />
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <Mail className="h-3.5 w-3.5" />
                     <span className="truncate">{company.email}</span>
                   </div>
                 )}
                 {company.phone && (
-                  <div className="flex items-center gap-2.5">
-                    <div className="bg-primary/10 p-1.5 rounded-full">
-                      <Phone className="h-3 w-3 text-primary" />
-                    </div>
+                  <div className="flex items-center gap-2">
+                    <Phone className="h-3.5 w-3.5" />
                     <span>{company.phone}</span>
                   </div>
                 )}
-                <div className="flex items-center gap-4 mt-4 pt-4 border-t border-dashed">
-                  <div className="text-center">
-                    <div className="text-xs text-muted-foreground uppercase tracking-wider">Currency</div>
-                    <div className="font-semibold text-primary">{company.default_currency || 'ZAR'}</div>
-                  </div>
-                  <div className="w-px h-8 bg-border"></div>
-                  <div className="text-center">
-                    <div className="text-xs text-muted-foreground uppercase tracking-wider">Type</div>
-                    <div className="font-semibold capitalize">{company.business_type?.replace('_', ' ') || 'Company'}</div>
-                  </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t">
+                <div>
+                   <div className="text-[10px] uppercase text-muted-foreground font-medium">Currency</div>
+                   <div className="text-sm font-medium">{company.default_currency || 'ZAR'}</div>
+                </div>
+                <div>
+                   <div className="text-[10px] uppercase text-muted-foreground font-medium">Type</div>
+                   <div className="text-sm font-medium capitalize">{company.business_type?.replace('_', ' ') || 'Company'}</div>
                 </div>
               </div>
             </CardContent>
-            <CardFooter className="flex gap-2 pt-4">
+            <CardFooter className="flex gap-2 pt-0 pb-4 px-6">
                {currentCompanyId !== company.id ? (
                 <Button 
-                  className="flex-1 bg-white hover:bg-gray-50 text-primary border border-input shadow-sm" 
+                  variant="outline"
+                  size="sm"
+                  className="flex-1" 
                   onClick={() => handleSwitchCompany(company.id)}
                 >
                   Switch
                 </Button>
               ) : (
-                <Button className="flex-1" variant="secondary" disabled>
-                  Current
+                <Button size="sm" className="flex-1" variant="secondary" disabled>
+                  Active
                 </Button>
               )}
               <Button 
-                variant="outline" 
+                variant="ghost" 
                 size="icon"
+                className="h-9 w-9 border"
                 onClick={() => handleViewDetails(company)}
                 title="View Details"
               >
-                <Eye className="h-4 w-4" />
+                <Eye className="h-4 w-4 text-muted-foreground" />
               </Button>
+              <FinancialHealthInsight 
+                companyId={company.id}
+                trigger={
+                  <Button variant="ghost" size="icon" className="h-9 w-9 border text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50" title="Financial Health">
+                    <Activity className="h-4 w-4" />
+                  </Button>
+                }
+              />
             </CardFooter>
           </Card>
         ))}
@@ -576,17 +584,17 @@ export const CompanyList = () => {
       {/* Details Dialog */}
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent className="sm:max-w-[600px] p-0 overflow-hidden">
-          <div className="bg-gradient-primary p-6 text-white">
+          <div className="bg-muted p-6 border-b">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-2xl font-bold">{selectedCompany?.name}</h2>
-                <p className="text-white/80 font-mono text-sm mt-1">{selectedCompany?.code}</p>
+                <h2 className="text-2xl font-bold text-foreground">{selectedCompany?.name}</h2>
+                <p className="text-muted-foreground font-mono text-sm mt-1">{selectedCompany?.code}</p>
               </div>
-              <div className="h-16 w-16 rounded-xl bg-white p-2 flex items-center justify-center shadow-lg">
+              <div className="h-16 w-16 rounded-lg bg-white p-2 flex items-center justify-center border shadow-sm">
                 {selectedCompany?.logo_url ? (
                   <img src={selectedCompany.logo_url} alt="Logo" className="h-full w-full object-contain" />
                 ) : (
-                  <Building2 className="h-8 w-8 text-primary" />
+                  <Building2 className="h-8 w-8 text-muted-foreground" />
                 )}
               </div>
             </div>
