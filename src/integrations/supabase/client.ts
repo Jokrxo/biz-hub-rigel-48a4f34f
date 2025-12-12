@@ -40,4 +40,4 @@ export const supabase = createClient<Database>(finalUrl, finalKey, {
   }
 });
 
-export const hasSupabaseEnv = !!(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY) || !!(lsUrl && lsKey);
+export const hasSupabaseEnv = !useFallback;

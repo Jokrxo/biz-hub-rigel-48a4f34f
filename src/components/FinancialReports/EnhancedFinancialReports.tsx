@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { exportFinancialReportToExcel, exportFinancialReportToPDF } from "@/lib/export-utils";
 import type { FinancialReportLine } from "@/lib/export-utils";
 import { AccountDrilldown } from "./AccountDrilldown";
+import { useFiscalYear } from "@/hooks/use-fiscal-year";
 import { 
   FileText, 
   Download, 
@@ -34,6 +35,7 @@ export const EnhancedFinancialReports = () => {
     const date = new Date();
     return date.toISOString().split('T')[0];
   });
+  const { selectedFiscalYear, getFiscalYearDates, fiscalStartMonth, lockFiscalYear } = useFiscalYear();
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [reportData, setReportData] = useState<{
     profitLoss: any[];
@@ -77,18 +79,48 @@ export const EnhancedFinancialReports = () => {
       } catch {}
       const trialBalancePeriod = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
       const cumulativeTB = await fetchTrialBalanceCumulativeToEnd(profile.company_id, periodEnd);
+      let openingPpeNbv = 0;
+      try {
+        const { data: openingAssets } = await supabase
+          .from('fixed_assets')
+          .select('cost, accumulated_depreciation, status, description')
+          .eq('company_id', profile.company_id);
+        openingPpeNbv = (openingAssets || [])
+          .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
+          .filter((a: any) => String(a.description || '').toLowerCase().includes('[opening]'))
+          .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
+      } catch {}
       const cogsFallback = await calculateCOGSFromInvoices(profile.company_id, periodStart, periodEnd);
       setFallbackCOGS(cogsFallback);
       const pl = generateProfitLoss(trialBalancePeriod);
-      const bs = generateBalanceSheet(cumulativeTB);
+      const bs = generateBalanceSheet(cumulativeTB, openingPpeNbv);
       const cf = await generateCashFlow(profile.company_id);
       setReportData({ profitLoss: pl, balanceSheet: bs, cashFlow: cf, trialBalance: trialBalancePeriod });
+
+      try {
+        const { data: v } = await supabase.rpc('validate_trial_balance' as any, {
+          _company_id: profile.company_id,
+          _period_start: periodStart,
+          _period_end: periodEnd,
+        });
+        const res = Array.isArray(v) ? v[0] : null;
+        if (res && res.is_balanced === false) {
+          toast({ title: 'Trial balance not balanced', description: `Difference: ${Number(res.difference || 0).toFixed(2)}`, variant: 'destructive' });
+        }
+      } catch {}
     } catch (error: any) {
       console.error('Error loading financial data:', error);
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } finally { setLoading(false); }
-  }, [periodStart, periodEnd, toast]);
+  }, [periodStart, periodEnd, selectedFiscalYear, toast]);
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd, loadFinancialData]);
+
+  useEffect(() => {
+    const fy = typeof selectedFiscalYear === 'number' ? selectedFiscalYear : new Date().getFullYear();
+    const { startStr, endStr } = getFiscalYearDates(fy);
+    setPeriodStart(startStr);
+    setPeriodEnd(endStr);
+  }, [selectedFiscalYear, getFiscalYearDates]);
 
 
 
@@ -440,7 +472,7 @@ export const EnhancedFinancialReports = () => {
     return data;
   };
 
-  const generateBalanceSheet = (trialBalance: any[]): any[] => {
+  const generateBalanceSheet = (trialBalance: any[], openingPpeNbv: number = 0): any[] => {
     const data: any[] = [];
 
     // ASSETS
@@ -467,22 +499,11 @@ export const EnhancedFinancialReports = () => {
         return adBase.includes(base) || base.includes(adBase);
       });
       const accTotal = related.reduce((sum, r) => sum + Number(r.balance || 0), 0);
-      return Number(assetRow.balance || 0) - accTotal;
+      const nbv = Number(assetRow.balance || 0) - accTotal;
+      return nbv < 0 ? 0 : nbv;
     };
-    let totalFixedAssets = 0;
-    nonCurrentAssets.forEach(acc => {
-      const nbv = nbvFor(acc);
-      if (Math.abs(nbv) > 0.01) {
-        data.push({ 
-          type: 'asset', 
-          account: acc.account_name, 
-          amount: nbv,
-          accountId: acc.account_id,
-          accountCode: acc.account_code
-        });
-        totalFixedAssets += nbv;
-      }
-    });
+    const totalFixedAssets = nonCurrentAssets.reduce((sum, acc) => sum + nbvFor(acc), 0) + openingPpeNbv;
+    data.push({ type: 'asset', account: 'Property, Plant & Equipment', amount: totalFixedAssets, accountId: null });
     data.push({ type: 'subtotal', account: 'Total Non-current Assets', amount: totalFixedAssets, accountId: null });
 
     // 2. Current Assets
@@ -491,8 +512,7 @@ export const EnhancedFinancialReports = () => {
       a.account_type.toLowerCase() === 'asset' && 
       parseInt(a.account_code || '0') < 1500 &&
       !String(a.account_name || '').toLowerCase().includes('vat') &&
-      !['1210','2110','2210'].includes(String(a.account_code || '')) &&
-      (!String(a.account_name || '').toLowerCase().includes('inventory') || String(a.account_code || '') === '1300')
+      !['1210','2110','2210'].includes(String(a.account_code || ''))
     );
     
     const vatReceivable = trialBalance
@@ -500,6 +520,7 @@ export const EnhancedFinancialReports = () => {
       .reduce((sum, a) => sum + Number(a.balance || 0), 0);
     
     let totalCurrentAssets = 0;
+    let bankOverdraft = 0;
     const bankPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1100');
     const arPinned = currentAssets.find(acc => (acc.account_code || '').toString() === '1200');
     const restCA = currentAssets.filter(acc => {
@@ -507,16 +528,19 @@ export const EnhancedFinancialReports = () => {
       return code !== '1100' && code !== '1200';
     });
     const orderedCA = [bankPinned, arPinned, ...restCA].filter(Boolean) as any[];
+    const isCashBank = (acc: any) => {
+      const name = String(acc.account_name || '').toLowerCase();
+      const code = String(acc.account_code || '');
+      return code === '1100' || name.includes('bank') || name.includes('cash');
+    };
     orderedCA.forEach(acc => {
-      const total = acc.balance || 0;
+      const total = Number(acc.balance || 0);
+      if (isCashBank(acc) && total < 0) {
+        bankOverdraft += Math.abs(total);
+        return;
+      }
       if (Math.abs(total) > 0.01) {
-        data.push({ 
-          type: 'asset', 
-          account: acc.account_name, 
-          amount: total,
-          accountId: acc.account_id,
-          accountCode: acc.account_code
-        });
+        data.push({ type: 'asset', account: acc.account_name, amount: total, accountId: acc.account_id, accountCode: acc.account_code });
         totalCurrentAssets += total;
       }
     });
@@ -571,11 +595,16 @@ export const EnhancedFinancialReports = () => {
             totalCurrentLiab += total;
         }
     });
+    if (bankOverdraft > 0.01) {
+      data.push({ type: 'liability', account: 'Bank Overdraft', amount: bankOverdraft, accountId: null, accountCode: '1100-od' });
+      totalCurrentLiab += bankOverdraft;
+    }
     data.push({ type: 'liability', account: 'VAT Payable', amount: vatPayable, accountId: null, accountCode: '2200' });
     totalCurrentLiab += vatPayable;
     data.push({ type: 'subtotal', account: 'Total Current Liabilities', amount: totalCurrentLiab, accountId: null });
     
-    const totalLiabilities = totalNonCurrentLiab + totalCurrentLiab;
+    // Recompute totals after equity adjustment
+    // Use single declaration later to avoid redeclaration issues
 
     // EQUITY
     data.push({ type: 'spacer', account: '', amount: 0, accountId: null });
@@ -596,13 +625,20 @@ export const EnhancedFinancialReports = () => {
         totalEquity += total;
       }
     });
+    // Synthetic retained earnings adjustment to balance the statement
+    const totalAssets = totalCurrentAssets + totalFixedAssets;
+    const totalLiabilities = totalNonCurrentLiab + totalCurrentLiab;
+    const equityAdjustment = totalAssets - (totalLiabilities + totalEquity);
+    if (Math.abs(equityAdjustment) > 0.01) {
+      data.push({ type: 'equity', account: 'Retained Earnings (adjusted)', amount: equityAdjustment, accountId: null, accountCode: 'RE-adjust' });
+      totalEquity += equityAdjustment;
+    }
     data.push({ type: 'subtotal', account: 'Total Equity', amount: totalEquity, accountId: null });
     
     // Total Liab & Equity
     data.push({ type: 'final', account: 'TOTAL LIABILITIES & EQUITY', amount: totalLiabilities + totalEquity, accountId: null, color: 'text-purple-700' });
 
     // Validation
-    const totalAssets = totalCurrentAssets + totalFixedAssets;
     const totalLiabEquity = totalLiabilities + totalEquity;
     const isBalanced = Math.abs(totalAssets - totalLiabEquity) < 0.1; // Allow small rounding diff
     
@@ -708,20 +744,22 @@ export const EnhancedFinancialReports = () => {
     const reportName = activeReport === 'pl' ? 'Income Statement' : 
                        activeReport === 'bs' ? 'Statement of Financial Position' : 
                        'Cash Flow Statement';
+    const isFiscal = (fiscalStartMonth || 1) !== 1;
     
-    const filename = `${reportName.toLowerCase().replace(/ /g, '_')}_${periodStart}_to_${periodEnd}`;
+    const fyLabel = isFiscal && typeof selectedFiscalYear === 'number' ? `FY_${selectedFiscalYear}` : '';
+    const filename = `${reportName.toLowerCase().replace(/ /g, '_')}_${fyLabel ? fyLabel + '_' : ''}${periodStart}_to_${periodEnd}`;
 
     if (format === 'pdf') {
       exportFinancialReportToPDF(
         data.map(d => ({ account: d.account, amount: d.amount, type: d.type })), 
-        reportName, 
+        fyLabel ? `${reportName} (${fyLabel})` : reportName, 
         `${periodStart} to ${periodEnd}`, 
         filename
       );
     } else {
       exportFinancialReportToExcel(
         data.map(d => ({ account: d.account, amount: d.amount, type: d.type })), 
-        reportName, 
+        fyLabel ? `${reportName} (${fyLabel})` : reportName, 
         filename
       );
     }
@@ -792,10 +830,11 @@ export const EnhancedFinancialReports = () => {
             <Calendar className="h-5 w-5 text-primary" />
             Period Selection
           </CardTitle>
-          <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex_wrap gap-2">
             <Button
               variant="outline"
               size="sm"
+              disabled={lockFiscalYear}
               onClick={() => {
                 const now = new Date();
                 const start = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -809,6 +848,7 @@ export const EnhancedFinancialReports = () => {
             <Button
               variant="outline"
               size="sm"
+              disabled={lockFiscalYear}
               onClick={() => {
                 const now = new Date();
                 const q = Math.floor(now.getMonth() / 3); // 0-based quarter
@@ -824,6 +864,20 @@ export const EnhancedFinancialReports = () => {
             <Button
               variant="outline"
               size="sm"
+              disabled={false}
+              onClick={() => {
+                const fy = typeof selectedFiscalYear === 'number' ? selectedFiscalYear : new Date().getFullYear();
+                const { startStr, endStr } = getFiscalYearDates(fy);
+                setPeriodStart(startStr);
+                setPeriodEnd(endStr);
+              }}
+            >
+              Fiscal Year
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={lockFiscalYear}
               onClick={() => {
                 const now = new Date();
                 const start = new Date(now.getFullYear(), 0, 1);

@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp } from "lucide-react";
+import { TrendingUp, Calendar as CalendarIcon } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useFiscalYear } from "@/hooks/use-fiscal-year";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export const RealAnalytics = () => {
+  const { fiscalStartMonth, selectedFiscalYear, setSelectedFiscalYear, getFiscalYearDates, loading: fiscalLoading } = useFiscalYear();
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
+  const [year, setYear] = useState<string>(new Date().getFullYear().toString());
   const [revenueData, setRevenueData] = useState<any[]>([]);
   const [expenseData, setExpenseData] = useState<any[]>([]);
   const [cashFlowData, setCashFlowData] = useState<any[]>([]);
@@ -19,11 +23,18 @@ export const RealAnalytics = () => {
   });
 
   useEffect(() => {
+    if (!fiscalLoading && typeof selectedFiscalYear === 'number') {
+      setYear(String(selectedFiscalYear));
+    }
+  }, [fiscalLoading, selectedFiscalYear]);
+
+  useEffect(() => {
     loadAnalyticsData();
-  }, []);
+  }, [year, fiscalStartMonth]);
 
   const loadAnalyticsData = async () => {
     try {
+      setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
@@ -34,6 +45,8 @@ export const RealAnalytics = () => {
         .single();
 
       if (!profile) return;
+
+      const { startDate: startObj, endDate: endObj, startStr, endStr } = getFiscalYearDates(parseInt(year));
 
       // Load transactions
       const { data: transactions } = await supabase
@@ -48,6 +61,8 @@ export const RealAnalytics = () => {
         `)
         .eq("company_id", profile.company_id)
         .in("status", ["pending", "approved", "posted"]) 
+        .gte("transaction_date", startStr)
+        .lte("transaction_date", endStr)
         .order("transaction_date", { ascending: true });
 
       // Process data for charts
@@ -73,16 +88,24 @@ export const RealAnalytics = () => {
         });
       });
 
+      // Generate all months in fiscal year order for correct sorting
+      const chartMonths: string[] = [];
+      // startObj is already set to the first day of the fiscal year
+      for(let i=0; i<12; i++) {
+         const d = new Date(startObj.getFullYear(), startObj.getMonth() + i, 1);
+         chartMonths.push(d.toLocaleDateString('en-ZA', { month: 'short', year: '2-digit' }));
+      }
+
       // Format for charts
-      const revenueChartData = Object.entries(monthlyRevenue).map(([month, amount]) => ({
+      const revenueChartData = chartMonths.map(month => ({
         month,
-        revenue: amount
+        revenue: monthlyRevenue[month] || 0
       }));
 
-      const expenseChartData = Object.entries(monthlyExpense).map(([month, amount]) => ({
+      const expenseChartData = chartMonths.map(month => ({
         month,
-        amount
-      })).slice(0, 6);
+        amount: monthlyExpense[month] || 0
+      }));
 
       // Cash flow pie chart
       const cashFlow = [
@@ -127,6 +150,22 @@ export const RealAnalytics = () => {
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <Select value={year} onValueChange={(val) => { setYear(val); const y = parseInt(val, 10); setSelectedFiscalYear(y); }}>
+          <SelectTrigger className="w-[180px] bg-background">
+            <CalendarIcon className="mr-2 h-4 w-4" />
+            <SelectValue placeholder="Select Year" />
+          </SelectTrigger>
+          <SelectContent>
+             {[2023, 2024, 2025, 2026, 2027].map(y => (
+                <SelectItem key={y} value={y.toString()}>
+                    {fiscalStartMonth === 1 ? y : `FY ${y}`}
+                </SelectItem>
+             ))}
+          </SelectContent>
+        </Select>
+      </div>
+
       <div className="grid gap-6 md:grid-cols-2">
         <Card className="card-professional">
           <CardHeader>

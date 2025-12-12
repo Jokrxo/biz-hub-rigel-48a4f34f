@@ -44,7 +44,7 @@ export const TransactionManagement = () => {
   const [quickDate, setQuickDate] = useState<string>(new Date().toISOString().slice(0,10));
   const [quickAmount, setQuickAmount] = useState<string>('');
   const [quickDesc, setQuickDesc] = useState<string>('');
-  const [quickPayment, setQuickPayment] = useState<'cash' | 'accrual'>('cash');
+  const [quickPayment, setQuickPayment] = useState<'cash' | 'accrual' | 'asset'>('cash');
   const [quickBankId, setQuickBankId] = useState<string>('');
   const [quickExpenseAccountId, setQuickExpenseAccountId] = useState<string>('');
   const [quickIncomeAccountId, setQuickIncomeAccountId] = useState<string>('');
@@ -1641,7 +1641,7 @@ export const TransactionManagement = () => {
         <CardContent className="p-0">
           <Table>
               <TableHeader className="bg-muted/5">
-                <TableRow>
+                <TableRow className="divide-x divide-muted/20">
                   <TableHead className="w-32 pl-6"><Button variant="ghost" className="gap-1 p-0 h-auto font-medium hover:bg-transparent hover:text-primary">Date <ArrowUpDown className="h-3 w-3" /></Button></TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead className="w-32">Bank</TableHead>
@@ -1661,7 +1661,7 @@ export const TransactionManagement = () => {
                      </TableCell>
                    </TableRow>
                 ) : derived.filtered.map((transaction) => (
-                  <TableRow key={transaction.id} className="hover:bg-muted/40 transition-colors">
+                  <TableRow key={transaction.id} className="hover:bg-muted/40 transition-colors divide-x divide-muted/20">
                     <TableCell className="font-medium pl-6"><div className="flex items-center gap-2"><Calendar className="h-3.5 w-3.5 text-muted-foreground" />{transaction.date}</div></TableCell>
                     <TableCell>
                       <div className="flex flex-col">
@@ -1708,11 +1708,11 @@ export const TransactionManagement = () => {
                           <DropdownMenuContent align="end" className="w-[160px]">
                             {(transaction.statusKey === "pending" || transaction.statusKey === "unposted") && (
                               <>
-                <DropdownMenuItem onClick={() => {
-                  const full = items.find(i => i.id === transaction.id) || null;
-                  setAllocationTx(full);
-                  const amt = Number(full?.total_amount || 0);
-                  const isIncome = amt >= 0;
+                                <DropdownMenuItem onClick={() => {
+                                  const full = items.find(i => i.id === transaction.id) || null;
+                                  setAllocationTx(full);
+                                  const amt = Number(full?.total_amount || 0);
+                                  const isIncome = amt >= 0;
                                   setAllocType(isIncome ? 'income' : 'expense');
                                   setAllocDate(String(full?.transaction_date || new Date().toISOString().slice(0,10)));
                                   const hasBank = Boolean(full?.bank_account_id);
@@ -1723,11 +1723,11 @@ export const TransactionManagement = () => {
                                   setAllocVatOn(vatRate > 0 || vatAmount > 0 ? 'yes' : 'no');
                                   setAllocVatRate(String(vatRate || 0));
                                   setAllocSettlement(isIncome ? 'receivable' : 'payable');
-                  setAllocSettlementAccountId('');
-                  setAllocAccountId('');
-                  setAllocDesc(String(full?.description || ''));
-                  setAllocationOpen(true);
-                }} disabled={posting}>
+                                  setAllocSettlementAccountId('');
+                                  setAllocAccountId('');
+                                  setAllocDesc(String(full?.description || ''));
+                                  setAllocationOpen(true);
+                                }} disabled={posting}>
                                   {posting ? (
                                     <>
                                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1887,7 +1887,7 @@ export const TransactionManagement = () => {
                   <div className="border rounded-md overflow-hidden">
                     <Table>
                       <TableHeader>
-                        <TableRow className="bg-muted/50">
+                        <TableRow className="bg-muted/50 divide-x divide-muted/20">
                           <TableHead>Account</TableHead>
                           <TableHead className="text-right">Debit</TableHead>
                           <TableHead className="text-right">Credit</TableHead>
@@ -1895,7 +1895,7 @@ export const TransactionManagement = () => {
                       </TableHeader>
                       <TableBody>
                         {viewDetailsData.entries.map((e: any, i: number) => (
-                          <TableRow key={i}>
+                          <TableRow key={i} className="divide-x divide-muted/20">
                             <TableCell>{e.chart_of_accounts?.account_name || 'Unknown Account'}</TableCell>
                             <TableCell className="text-right">{Number(e.debit) > 0 ? `R ${Number(e.debit).toFixed(2)}` : '-'}</TableCell>
                             <TableCell className="text-right">{Number(e.credit) > 0 ? `R ${Number(e.credit).toFixed(2)}` : '-'}</TableCell>

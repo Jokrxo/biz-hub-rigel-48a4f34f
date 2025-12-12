@@ -44,6 +44,8 @@ export const SalesInvoices = () => {
   const [services, setServices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [invoiceTypeDialogOpen, setInvoiceTypeDialogOpen] = useState(false);
+  const [invoicePaymentMode, setInvoicePaymentMode] = useState<'cash' | 'credit' | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [yearFilter, setYearFilter] = useState<string>('all');
   const [monthFilter, setMonthFilter] = useState<string>('all');
@@ -357,6 +359,30 @@ export const SalesInvoices = () => {
 
       toast({ title: "Success", description: "Invoice created successfully" });
       setDialogOpen(false);
+      // If cash sale: post issuance (AR/Revenue/VAT & COGS), mark sent, then open payment dialog
+      try {
+        if (invoicePaymentMode === 'cash') {
+          await transactionsApi.postInvoiceSentClient(invoice, formData.invoice_date);
+          await supabase.from('invoices').update({ status: 'sent' }).eq('id', invoice.id);
+          const totalsNow = totals;
+          setPaymentInvoice({ ...invoice, _payment_amount: totalsNow.total, _cash_sale: true });
+          setPaymentDate(todayStr);
+          setPaymentAmount(totalsNow.total);
+          const companyId = await getCompanyId();
+          if (companyId) {
+            const list = await loadBankAccounts(companyId);
+            if (!list || list.length === 0) {
+              toast({ title: "No bank accounts", description: "Add a bank account in the Bank module before posting payment.", variant: "destructive" });
+            } else {
+              setSelectedBankId("");
+              setPaymentDialogOpen(true);
+            }
+          } else {
+            setPaymentDialogOpen(true);
+          }
+        }
+      } catch {}
+      setInvoicePaymentMode(null);
       resetForm();
       loadData();
     } catch (error: any) {
@@ -598,10 +624,10 @@ export const SalesInvoices = () => {
     const editData = {
       id: null,
       transaction_date: payDateStr || todayStr,
-      description: `Payment for invoice ${inv.invoice_number || inv.id}`,
+      description: `${inv._cash_sale ? 'Cash sale ' : ''}Payment for invoice ${inv.invoice_number || inv.id}`,
       reference_number: inv.invoice_number || null,
       transaction_type: 'receipt',
-      payment_method: 'bank',
+      payment_method: inv._cash_sale ? 'cash' : 'bank',
       bank_account_id: bankAccountId || null,
       debit_account_id: bankLedgerId,
       credit_account_id: arId,
@@ -938,7 +964,7 @@ export const SalesInvoices = () => {
             </Select>
             <Button variant="outline" onClick={exportFilteredInvoicesDate}>Export</Button>
             {canEdit && (
-              <Button className="bg-gradient-primary" onClick={() => setDialogOpen(true)}>
+              <Button className="bg-gradient-primary" onClick={() => setInvoiceTypeDialogOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" />
                 New Invoice
               </Button>
@@ -1036,6 +1062,19 @@ export const SalesInvoices = () => {
             </div>
           </>)}
         </CardContent>
+
+        <Dialog open={invoiceTypeDialogOpen} onOpenChange={setInvoiceTypeDialogOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Sale Type</DialogTitle>
+              <DialogDescription>Is this cash or on credit?</DialogDescription>
+            </DialogHeader>
+            <div className="flex items-center justify-center gap-3">
+              <Button variant="outline" onClick={() => { setInvoicePaymentMode('cash'); setInvoiceTypeDialogOpen(false); setDialogOpen(true); }}>Cash</Button>
+              <Button className="bg-gradient-primary" onClick={() => { setInvoicePaymentMode('credit'); setInvoiceTypeDialogOpen(false); setDialogOpen(true); }}>Credit</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">

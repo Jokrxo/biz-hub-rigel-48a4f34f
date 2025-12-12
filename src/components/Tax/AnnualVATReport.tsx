@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { Calendar, Download } from "lucide-react";
 import { exportFinancialReportToPDF } from "@/lib/export-utils";
+import { useFiscalYear } from "@/hooks/use-fiscal-year";
 
 type Position = "VAT Payable" | "VAT Receivable" | "Neutral";
 
@@ -19,10 +20,17 @@ interface AnnualVatRow {
 }
 
 export const AnnualVATReport = () => {
+  const { fiscalStartMonth, selectedFiscalYear, setSelectedFiscalYear, getFiscalYearDates, loading: fiscalLoading } = useFiscalYear();
   const [year, setYear] = useState<string>(new Date().getFullYear().toString());
   const [rows, setRows] = useState<AnnualVatRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState({ output: 0, input: 0, net: 0 });
+
+  useEffect(() => {
+    if (!fiscalLoading && typeof selectedFiscalYear === 'number') {
+      setYear(String(selectedFiscalYear));
+    }
+  }, [fiscalLoading, selectedFiscalYear]);
 
   const months = [
     "January", "February", "March", "April", "May", "June",
@@ -31,7 +39,7 @@ export const AnnualVATReport = () => {
 
   useEffect(() => {
     loadData();
-  }, [year]);
+  }, [year, fiscalStartMonth]);
 
   const loadData = async () => {
     try {
@@ -45,17 +53,16 @@ export const AnnualVATReport = () => {
         .single();
       if (!profile?.company_id) return;
 
-      const startDate = `${year}-01-01`;
-      const endDate = `${year}-12-31`;
+      const { startDate: startObj, endDate: endObj, startStr, endStr } = getFiscalYearDates(parseInt(year));
 
       const { data: txs, error } = await supabase
         .from('transactions')
         .select('transaction_date, transaction_type, vat_rate, vat_inclusive, total_amount, vat_amount, base_amount')
         .eq('company_id', profile.company_id)
         .in('status', ['approved','posted','pending']) // Include pending? Usually approved/posted for reports
-        .gte('transaction_date', startDate)
-        .lte('transaction_date', endDate);
-
+        .gte('transaction_date', startStr)
+        .lte('transaction_date', endStr);
+      
       if (error) throw error;
 
       // Initialize all 12 months with 0
@@ -66,32 +73,38 @@ export const AnnualVATReport = () => {
 
       (txs || []).forEach((t: any) => {
         const d = new Date(t.transaction_date);
-        const m = d.getMonth(); // 0-11
         
-        const type = String(t.transaction_type || '').toLowerCase();
-        const isIncome = ['income','sales','receipt'].includes(type);
-        const isPurchase = ['expense','purchase','bill','product_purchase'].includes(type);
-        const rate = Number(t.vat_rate || 0);
-        const total = Number(t.total_amount || 0);
-        const base = Number(t.base_amount || 0);
-        const inclusive = Boolean(t.vat_inclusive);
-        
-        let vat = Number(t.vat_amount || 0);
+        // Ensure date is within range (though API filtered, good to be safe)
+        if (d >= startObj && d <= endObj) {
+            const m = d.getMonth() + 1; // 1-12
+            // Map to fiscal index (0-11)
+            const fiscalIndex = (m - fiscalStartMonth + 12) % 12;
 
-        // Calculate VAT if not stored or if 0 but rate > 0
-        if (vat === 0 && rate > 0) {
-            if (inclusive) {
-                const net = base > 0 ? base : total / (1 + rate / 100);
-                vat = total - net;
-            } else {
-                vat = total - (base > 0 ? base : total);
+            const type = String(t.transaction_type || '').toLowerCase();
+            const isIncome = ['income','sales','receipt'].includes(type);
+            const isPurchase = ['expense','purchase','bill','product_purchase'].includes(type);
+            const rate = Number(t.vat_rate || 0);
+            const total = Number(t.total_amount || 0);
+            const base = Number(t.base_amount || 0);
+            const inclusive = Boolean(t.vat_inclusive);
+            
+            let vat = Number(t.vat_amount || 0);
+
+            // Calculate VAT if not stored or if 0 but rate > 0
+            if (vat === 0 && rate > 0) {
+                if (inclusive) {
+                    const net = base > 0 ? base : total / (1 + rate / 100);
+                    vat = total - net;
+                } else {
+                    vat = total - (base > 0 ? base : total);
+                }
             }
-        }
 
-        if (isIncome) {
-            monthlyData[m].out += Math.max(0, vat);
-        } else if (isPurchase) {
-            monthlyData[m].inn += Math.max(0, vat);
+            if (isIncome) {
+                monthlyData[fiscalIndex].out += Math.max(0, vat);
+            } else if (isPurchase) {
+                monthlyData[fiscalIndex].inn += Math.max(0, vat);
+            }
         }
       });
 
@@ -102,9 +115,11 @@ export const AnnualVATReport = () => {
         const net = d.inn - d.out;
         totOut += d.out;
         totIn += d.inn;
+        // Calculate month name
+        const monthIndex = (fiscalStartMonth - 1 + i) % 12;
         return {
             monthIndex: i,
-            monthName: months[i],
+            monthName: months[monthIndex],
             vatOutput: d.out,
             vatInput: d.inn,
             net: net,
@@ -165,13 +180,15 @@ export const AnnualVATReport = () => {
             <p className="text-sm text-muted-foreground">Yearly summary of Output and Input VAT</p>
         </div>
         <div className="flex items-center gap-2">
-            <Select value={year} onValueChange={setYear}>
+            <Select value={year} onValueChange={(val) => { setYear(val); const y = parseInt(val, 10); setSelectedFiscalYear(y); }}>
                 <SelectTrigger className="w-[120px] bg-background">
                     <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                     {[2023, 2024, 2025, 2026, 2027].map(y => (
-                        <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                        <SelectItem key={y} value={y.toString()}>
+                            {fiscalStartMonth === 1 ? y : `FY ${y}`}
+                        </SelectItem>
                     ))}
                 </SelectContent>
             </Select>

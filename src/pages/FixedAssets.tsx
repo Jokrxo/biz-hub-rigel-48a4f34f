@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Download, Trash2, Package, Search, Info, Menu, Loader2, Building2, TrendingUp, Calculator } from "lucide-react";
+import { Plus, Download, Trash2, Package, Search, Info, Menu, Loader2, Building2, TrendingUp, Calculator, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import * as XLSX from "xlsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -53,6 +54,7 @@ export default function FixedAssetsPage() {
   const [deprPosting, setDeprPosting] = useState<boolean>(false);
   const [purchaseDialogOpen, setPurchaseDialogOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [deprMonthStatus, setDeprMonthStatus] = useState<{ posted: boolean; count: number; label: string } | null>(null);
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
@@ -110,7 +112,35 @@ export default function FixedAssetsPage() {
         .eq("company_id", profile.company_id)
         .order("purchase_date", { ascending: false });
       if (error) throw error;
-      setAssets(data || []);
+      const rows = data || [];
+      const updated = await Promise.all(rows.map(async (a: any) => {
+        const dep = calculateDepreciation(Number(a.cost || 0), String(a.purchase_date || new Date().toISOString().split('T')[0]), Number(a.useful_life_years || 5));
+        const curr = Number(a.accumulated_depreciation || 0);
+        const next = Number(dep.accumulatedDepreciation.toFixed(2));
+        const isDisposed = String(a.status || 'active').toLowerCase() === 'disposed';
+        if (!isDisposed && Math.abs(next - curr) > 0.01) {
+          try { await updateAssetDepreciation(supabase, a.id, next); } catch {}
+          return { ...a, accumulated_depreciation: next };
+        }
+        return a;
+      }));
+      setAssets(updated);
+
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const startStr = start.toISOString().slice(0, 10);
+      const nextStr = nextMonth.toISOString().slice(0, 10);
+      const { data: depsThisMonth } = await supabase
+        .from("transactions")
+        .select("id")
+        .eq("company_id", profile.company_id)
+        .eq("transaction_type", "depreciation")
+        .gte("transaction_date", startStr)
+        .lt("transaction_date", nextStr);
+      const count = (depsThisMonth || []).length;
+      const label = `${start.toLocaleString(undefined, { month: 'long' })} ${start.getFullYear()}`;
+      setDeprMonthStatus({ posted: count > 0, count, label });
 
       const { data: faAccounts } = await supabase
         .from("chart_of_accounts")
@@ -211,7 +241,7 @@ export default function FixedAssetsPage() {
       return;
     }
 
-    try {
+  try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
@@ -227,11 +257,51 @@ export default function FixedAssetsPage() {
         useful_life_years: parseInt(formData.useful_life_years),
         accumulated_depreciation: Number(dep.accumulatedDepreciation.toFixed(2)),
         status: "active",
+        asset_account_id: formData.asset_account_id || null,
       });
 
       if (error) throw error;
 
-      
+      const companyId = String((profile as any)?.company_id || '');
+      const nbv = Number((parseFloat(formData.cost) - Number(dep.accumulatedDepreciation)).toFixed(2));
+      if (nbv > 0 && companyId) {
+        const { data: coas } = await supabase
+          .from('chart_of_accounts')
+          .select('id, account_code, account_name, account_type, is_active, normal_balance')
+          .eq('company_id', companyId)
+          .eq('is_active', true);
+        const lower = (coas || []).map((a: any) => ({ id: String(a.id), account_code: String(a.account_code||''), account_name: String(a.account_name||'').toLowerCase(), account_type: String(a.account_type||'').toLowerCase() }));
+        const ensureEquity = async (name: string, code: string) => {
+          const found = lower.find(a => a.account_type === 'equity' && (a.account_name.includes(name.toLowerCase()) || a.account_code === code));
+          if (found) return found.id;
+          const { data: created } = await supabase
+            .from('chart_of_accounts')
+            .insert({ company_id: companyId, account_code: code, account_name: name, account_type: 'equity', is_active: true, normal_balance: 'credit' } as any)
+            .select('id')
+            .single();
+          return String((created as any)?.id || '');
+        };
+        const equityId = await ensureEquity('Opening Equity', '3100');
+        const assetAccId = String(formData.asset_account_id || '');
+        if (equityId && assetAccId) {
+          const { data: tx } = await supabase
+            .from('transactions' as any)
+            .insert({ company_id: companyId, user_id: user!.id, transaction_date: formData.purchase_date, description: `Opening Fixed Asset - ${formData.description}`, reference_number: `OPEN-FA-${formData.purchase_date}`, total_amount: nbv, transaction_type: 'opening_balance', status: 'pending' } as any)
+            .select('id')
+            .single();
+          const txId = (tx as any)?.id;
+          if (txId) {
+            const rows = [
+              { transaction_id: txId, account_id: assetAccId, debit: nbv, credit: 0, description: `Opening PPE (NBV) - ${formData.description}`, status: 'approved' },
+              { transaction_id: txId, account_id: equityId, debit: 0, credit: nbv, description: `Opening Equity - ${formData.description}`, status: 'approved' },
+            ];
+            await supabase.from('transaction_entries' as any).insert(rows as any);
+            const ledgerRows = rows.map(e => ({ company_id: companyId, account_id: e.account_id, entry_date: formData.purchase_date, description: e.description, debit: e.debit, credit: e.credit, reference_id: txId, transaction_id: txId }));
+            await supabase.from('ledger_entries' as any).insert(ledgerRows as any);
+            await supabase.from('transactions' as any).update({ status: 'posted' }).eq('id', txId);
+          }
+        }
+      }
 
       try { await supabase.rpc('refresh_afs_cache', { _company_id: profile!.company_id }); } catch {}
       toast({ title: "Success", description: "Opening asset added successfully" });
@@ -244,7 +314,7 @@ export default function FixedAssetsPage() {
   };
 
   const calculateNetBookValue = (asset: FixedAsset) => {
-    return asset.cost - asset.accumulated_depreciation;
+    return (asset.cost || 0) - (asset.accumulated_depreciation || 0);
   };
 
   const isOpeningAsset = (asset: FixedAsset) => {
@@ -423,7 +493,9 @@ export default function FixedAssetsPage() {
   };
 
   const monthStartsBetween = (startIso: string, endIso: string): string[] => {
-    const s = new Date(startIso.slice(0, 7) + "-01");
+    const start = new Date(startIso);
+    const sDay = start.getDate();
+    const s = new Date(start.getFullYear(), start.getMonth() + (sDay > 15 ? 1 : 0), 1);
     const e = new Date(endIso.slice(0, 7) + "-01");
     const out: string[] = [];
     const cur = new Date(s);
@@ -619,11 +691,11 @@ export default function FixedAssetsPage() {
                   </Button>
                 </div>
               </div>
-            </SheetContent>
-          </Sheet>
+          </SheetContent>
+        </Sheet>
 
-          {/* Modern Metrics Grid */}
-          <div className="grid gap-4 md:grid-cols-3">
+        {/* Modern Metrics Grid */}
+        <div className="grid gap-4 md:grid-cols-3">
              <Card className="border-none shadow-md bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-background">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Opening Book Value</CardTitle>
@@ -768,6 +840,32 @@ export default function FixedAssetsPage() {
                               }}
                             >
                               Dispose
+                            </Button>
+                          )}
+                          {asset.status === 'active' && canEdit && (
+                            <Button 
+                              size="sm" 
+                              variant="outline" 
+                              className="h-7 text-xs ml-2"
+                              onClick={() => {
+                                const annualDep = Number(asset.cost || 0) / Number(asset.useful_life_years || 1);
+                                const monthly = annualDep / 12;
+                                toast({
+                                  title: `Monthly Depreciation: ${asset.description}`,
+                                  description: (
+                                    <div className="space-y-1">
+                                      <div>Cost: R {Number(asset.cost).toLocaleString()}</div>
+                                      <div>Useful Life: {asset.useful_life_years} years</div>
+                                      <div>Monthly Depr: R {monthly.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                      <div>Acc. Depr: R {Number(asset.accumulated_depreciation).toLocaleString()}</div>
+                                      <div className="font-bold border-t pt-1 mt-1">Net Book Value: R {(Number(asset.cost) - Number(asset.accumulated_depreciation)).toLocaleString()}</div>
+                                    </div>
+                                  ),
+                                  duration: 8000
+                                });
+                              }}
+                            >
+                              Monthly
                             </Button>
                           )}
                         </TableCell>
@@ -1438,22 +1536,43 @@ export default function FixedAssetsPage() {
                       };
                       const depExpenseId = await findOrCreate('expense','7400','Depreciation Expense');
                       const accumDepId = await findOrCreate('asset','1540','Accumulated Depreciation');
-                      let totalAdded = 0;
+                      
+                      // Calculate existing posted depreciation to handle opening balances correctly
+                      const descriptionPattern = `Depreciation - ${deprSelectedAsset.description}`;
+                      const { data: existingTx } = await supabase
+                        .from('transactions')
+                        .select('total_amount')
+                        .eq('company_id', companyId)
+                        .eq('transaction_type', 'depreciation')
+                        .ilike('description', `%${descriptionPattern}%`);
+                      
+                      const totalPosted = (existingTx || []).reduce((sum, t) => sum + Number(t.total_amount||0), 0);
+                      let currentAccumulated = Number(deprSelectedAsset.accumulated_depreciation || 0);
+                      let openingBuffer = Math.max(0, currentAccumulated - totalPosted);
+                      
+                      let totalAddedToDb = 0;
+                      const assetCost = Number(deprSelectedAsset.cost || 0);
+
                       for (const ms of monthsToPost) {
+                        const remaining = Math.max(0, assetCost - currentAccumulated);
+                        const amt = Math.min(monthlyAmount, remaining);
+                        if (amt <= 0) break;
+
                         const mStart = new Date(ms);
                         const mNext = new Date(ms);
                         mNext.setMonth(mNext.getMonth() + 1);
                         const mStartStr = mStart.toISOString().slice(0,10);
                         const mNextStr = mNext.toISOString().slice(0,10);
+                        const description = `Depreciation - ${deprSelectedAsset.description}`;
                         const { data: dup } = await supabase
                           .from('transactions')
                           .select('id')
                           .eq('company_id', companyId)
                           .eq('transaction_type', 'depreciation')
                           .gte('transaction_date', mStartStr)
-                          .lt('transaction_date', mNextStr);
+                          .lt('transaction_date', mNextStr)
+                          .ilike('description', `%${description}%`);
                         if ((dup || []).length > 0) continue;
-                        const description = `Depreciation - ${deprSelectedAsset.description}`;
                         const { data: tx, error: txErr } = await supabase
                           .from('transactions')
                           .insert({
@@ -1462,10 +1581,10 @@ export default function FixedAssetsPage() {
                             transaction_date: ms,
                             description,
                             reference_number: null,
-                            total_amount: monthlyAmount,
+                            total_amount: amt,
                             vat_rate: null,
                             vat_amount: null,
-                            base_amount: monthlyAmount,
+                            base_amount: amt,
                             vat_inclusive: false,
                             bank_account_id: null,
                             transaction_type: 'depreciation',
@@ -1475,8 +1594,8 @@ export default function FixedAssetsPage() {
                           .single();
                         if (txErr) throw txErr;
                         const entries = [
-                          { transaction_id: tx.id, account_id: depExpenseId, debit: monthlyAmount, credit: 0, description, status: 'approved' },
-                          { transaction_id: tx.id, account_id: accumDepId, debit: 0, credit: monthlyAmount, description, status: 'approved' }
+                          { transaction_id: tx.id, account_id: depExpenseId, debit: amt, credit: 0, description, status: 'approved' },
+                          { transaction_id: tx.id, account_id: accumDepId, debit: 0, credit: amt, description, status: 'approved' }
                         ];
                         const { error: entErr } = await supabase.from('transaction_entries').insert(entries as any);
                         if (entErr) throw entErr;
@@ -1493,15 +1612,27 @@ export default function FixedAssetsPage() {
                         const { error: ledErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
                         if (ledErr) throw ledErr;
                         await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id);
-                        totalAdded += monthlyAmount;
+                        
+                        // Smart update logic:
+                        // If we have an opening buffer (accum dep that exists without transactions),
+                        // we consume that buffer first before increasing the DB field.
+                        if (openingBuffer >= amt) {
+                          openingBuffer -= amt;
+                          // DB field already accounts for this amount (it was opening balance)
+                        } else {
+                          const remainder = amt - openingBuffer;
+                          openingBuffer = 0;
+                          currentAccumulated += remainder;
+                          totalAddedToDb += remainder;
+                        }
                       }
-                      if (totalAdded > 0) {
-                        const newAccum = Number(deprSelectedAsset.accumulated_depreciation || 0) + totalAdded;
-                        await updateAssetDepreciation(supabase, deprSelectedAsset.id, newAccum);
+                      if (totalAddedToDb > 0) {
+                        await updateAssetDepreciation(supabase, deprSelectedAsset.id, currentAccumulated);
                       }
 
                       try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
-                      toast({ title: 'Depreciation Posted', description: `${deprSelectedAsset.description} backfill complete` });
+                      const monthsBackfilled = totalAddedToDb > 0 ? monthsToPost.length : 0;
+                      toast({ title: 'Depreciation Posted', description: `${deprSelectedAsset.description} backfill complete. Checked ${monthsToPost.length} months.` });
                       setDeprDialogOpen(false);
                       setDeprSelectedAsset(null);
                       setDeprAmount('');
@@ -1646,6 +1777,31 @@ export default function FixedAssetsPage() {
             </DialogContent>
           </Dialog>
         </div>
+
+        {(() => {
+          const anyActive = assets.some(a => String(a.status || 'active').toLowerCase() === 'active');
+          if (!anyActive || !deprMonthStatus) return null;
+          return deprMonthStatus.posted ? (
+            <Alert className="mt-4 border-emerald-300 bg-emerald-50/40">
+              <CheckCircle2 className="h-5 w-5" />
+              <AlertTitle>Depreciation posted</AlertTitle>
+              <AlertDescription>
+                Depreciation journals exist for {deprMonthStatus.label}. Entries: {deprMonthStatus.count}.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <Alert variant="destructive" className="mt-4">
+              <AlertTriangle className="h-5 w-5" />
+              <AlertTitle>Monthly depreciation not posted</AlertTitle>
+              <AlertDescription className="flex items-center justify-between gap-2">
+                <span>Post depreciation for {deprMonthStatus.label} to keep asset values accurate.</span>
+                {canEdit && (
+                  <Button size="sm" variant="outline" onClick={() => setDeprDialogOpen(true)}>Post Now</Button>
+                )}
+              </AlertDescription>
+            </Alert>
+          );
+        })()}
       </DashboardLayout>
     </>
   );

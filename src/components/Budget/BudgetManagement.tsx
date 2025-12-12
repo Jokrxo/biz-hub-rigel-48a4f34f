@@ -17,6 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
+import { useFiscalYear } from "@/hooks/use-fiscal-year";
 import { CommandDialog, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
 
 interface Budget {
@@ -35,6 +36,7 @@ interface Budget {
 interface AccountOpt { id: string; account_name: string; account_type: string; normal_balance?: string }
 
 export const BudgetManagement = () => {
+  const { fiscalStartMonth, selectedFiscalYear, setSelectedFiscalYear, getCalendarYearForFiscalPeriod, loading: fiscalLoading } = useFiscalYear();
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [accounts, setAccounts] = useState<AccountOpt[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,12 @@ export const BudgetManagement = () => {
   const [selectedYear, setSelectedYear] = useState(currentYear.toString());
   const [selectedMonth, setSelectedMonth] = useState(currentMonth.toString());
 
+  useEffect(() => {
+    if (!fiscalLoading && typeof selectedFiscalYear === 'number') {
+      setSelectedYear(String(selectedFiscalYear));
+    }
+  }, [fiscalLoading, selectedFiscalYear]);
+
   const loadBudgets = useCallback(async () => {
     try {
       const { data: profile } = await supabase
@@ -78,11 +86,14 @@ export const BudgetManagement = () => {
         .eq("user_id", user?.id)
         .maybeSingle();
       if (!profile) return;
+      
+      const calendarYear = getCalendarYearForFiscalPeriod(parseInt(selectedYear), parseInt(selectedMonth));
+      
       const { data, error } = await supabase
         .from("budgets")
         .select("id, account_id, budget_name, budget_year, budget_month, category, budgeted_amount, actual_amount, variance, status, notes")
         .eq("company_id", profile.company_id)
-        .eq("budget_year", parseInt(selectedYear))
+        .eq("budget_year", calendarYear)
         .eq("budget_month", parseInt(selectedMonth))
         .order("budget_name");
       if (error) throw error;
@@ -93,11 +104,11 @@ export const BudgetManagement = () => {
         .eq("is_active", true);
       const acctAll = (accs || []).map((a: any) => ({ id: a.id, account_name: a.account_name, account_type: a.account_type, normal_balance: a.normal_balance }));
       setAccounts(acctAll);
-      const start = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-01`;
-      const y = parseInt(selectedYear);
+      const start = `${calendarYear}-${String(selectedMonth).padStart(2,'0')}-01`;
+      const y = calendarYear;
       const m = parseInt(selectedMonth);
       const lastDay = new Date(y, m, 0).getDate();
-      const end = `${selectedYear}-${String(selectedMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+      const end = `${calendarYear}-${String(selectedMonth).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
       const { data: te, error: teError } = await supabase
         .from("transaction_entries")
         .select("account_id, debit, credit, status, transactions!inner(transaction_date, company_id, status)")
@@ -196,10 +207,11 @@ export const BudgetManagement = () => {
   };
 
   const resetForm = () => {
+    const calendarYear = getCalendarYearForFiscalPeriod(parseInt(selectedYear), parseInt(selectedMonth));
     setFormData({
       budget_name: "",
-      budget_year: currentYear.toString(),
-      budget_month: currentMonth.toString(),
+      budget_year: calendarYear.toString(),
+      budget_month: selectedMonth,
       account_id: "",
       category: "",
       budgeted_amount: "",
@@ -275,7 +287,8 @@ export const BudgetManagement = () => {
     try {
       const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user?.id).maybeSingle();
       if (!profile?.company_id) return;
-      const q: any = (supabase as any).from('budgets').select('id').eq('company_id', profile.company_id).eq('budget_year', parseInt(selectedYear)).eq('budget_month', parseInt(selectedMonth));
+      const calendarYear = getCalendarYearForFiscalPeriod(parseInt(selectedYear), parseInt(selectedMonth));
+      const q: any = (supabase as any).from('budgets').select('id').eq('company_id', profile.company_id).eq('budget_year', calendarYear).eq('budget_month', parseInt(selectedMonth));
       if (opts.accountId) q.eq('account_id', opts.accountId); else q.is('account_id', null).eq('category', opts.category || '');
       const { data: existing } = await q;
       if ((existing || []).length > 0) {
@@ -286,7 +299,7 @@ export const BudgetManagement = () => {
           company_id: profile.company_id,
           user_id: user!.id,
           budget_name: opts.accountId ? (accounts.find(a => a.id === opts.accountId)?.account_name || '') : (opts.category || ''),
-          budget_year: parseInt(selectedYear),
+          budget_year: calendarYear,
           budget_month: parseInt(selectedMonth),
           account_id: opts.accountId || null,
           category: opts.accountId ? String(opts.accountId) : String(opts.category || ''),
@@ -369,17 +382,30 @@ export const BudgetManagement = () => {
           <p className="text-muted-foreground mt-1">Track performance, manage allocations, and monitor variances.</p>
         </div>
         <div className="flex items-center gap-2 bg-muted/40 p-1.5 rounded-xl border">
-            <Select value={selectedYear} onValueChange={setSelectedYear}>
-              <SelectTrigger className="h-9 w-[100px] bg-background border-none shadow-sm"><SelectValue /></SelectTrigger>
+            <Select value={selectedYear} onValueChange={(val) => { setSelectedYear(val); const y = parseInt(val, 10); setSelectedFiscalYear(y); }}>
+              <SelectTrigger className="h-9 w-[120px] bg-background border-none shadow-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {[currentYear - 1, currentYear, currentYear + 1].map(year => (<SelectItem key={year} value={year.toString()}>{year}</SelectItem>))}
+                {[parseInt(selectedYear) - 1, parseInt(selectedYear), parseInt(selectedYear) + 1].map(year => (
+                  <SelectItem key={year} value={year.toString()}>
+                    {fiscalStartMonth === 1 ? year : `FY ${year}`}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <div className="h-6 w-px bg-border" />
             <Select value={selectedMonth} onValueChange={setSelectedMonth}>
               <SelectTrigger className="h-9 w-[140px] bg-background border-none shadow-sm"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {months.map((month, index) => (<SelectItem key={index + 1} value={(index + 1).toString()}>{month}</SelectItem>))}
+                {Array.from({ length: 12 }, (_, i) => {
+                  const monthIndex = (fiscalStartMonth - 1 + i) % 12;
+                  const monthNum = monthIndex + 1;
+                  const date = new Date(2000, monthIndex, 1);
+                  return (
+                    <SelectItem key={monthNum} value={monthNum.toString()}>
+                      {date.toLocaleString('default', { month: 'long' })}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
         </div>

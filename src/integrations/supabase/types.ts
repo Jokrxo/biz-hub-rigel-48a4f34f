@@ -1470,6 +1470,8 @@ export type Database = {
           theme: string
           date_format: string
           fiscal_year_start: number
+          fiscal_default_year: number | null
+          fiscal_lock_year: boolean | null
           enable_notifications: boolean
           enable_auto_backup: boolean
           language: string
@@ -1481,6 +1483,8 @@ export type Database = {
           theme?: string
           date_format?: string
           fiscal_year_start?: number
+          fiscal_default_year?: number | null
+          fiscal_lock_year?: boolean | null
           enable_notifications?: boolean
           enable_auto_backup?: boolean
           language?: string
@@ -1492,6 +1496,8 @@ export type Database = {
           theme?: string
           date_format?: string
           fiscal_year_start?: number
+          fiscal_default_year?: number | null
+          fiscal_lock_year?: boolean | null
           enable_notifications?: boolean
           enable_auto_backup?: boolean
           language?: string

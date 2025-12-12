@@ -233,6 +233,15 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
 
     // Reminder Check
     const checkReminders = async () => {
+      // Check last reminder time to prevent spamming on every page load
+      const lastReminderTime = localStorage.getItem('rigel_last_reminder_check');
+      const now = Date.now();
+      const FOUR_HOURS = 4 * 60 * 60 * 1000;
+
+      if (lastReminderTime && (now - parseInt(lastReminderTime) < FOUR_HOURS)) {
+        return; // Skip if checked recently
+      }
+
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
@@ -246,6 +255,8 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
           
         if (!profile?.company_id) return;
         const cid = profile.company_id;
+
+        let hasNotification = false;
 
         // 1. Check for Unallocated Transactions (pending/unposted)
         const { count: unallocatedCount, error: txError } = await supabase
@@ -262,6 +273,7 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
             description: msg,
             action: <Button variant="outline" size="sm" onClick={() => navigate('/transactions')}>View</Button>,
           });
+          hasNotification = true;
         }
 
         // 2. Check for Unpaid/Overdue Invoices
@@ -282,7 +294,12 @@ export const DashboardHeader = ({ onMenuClick }: DashboardHeaderProps) => {
             variant: "destructive",
             action: <Button variant="outline" size="sm" className="bg-white text-black hover:bg-gray-100 border-none" onClick={() => navigate('/sales?tab=invoices')}>View</Button>,
           });
+          hasNotification = true;
         }
+
+        // Update timestamp only if we actually ran the checks
+        localStorage.setItem('rigel_last_reminder_check', now.toString());
+
       } catch (e) {
         console.error("Reminder check failed", e);
       }

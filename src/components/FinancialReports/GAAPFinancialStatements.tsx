@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
-import { RefreshCw, Download, Eye, Calendar, FileDown, Scale, Activity, ArrowLeftRight, History, PieChart, BarChart3, Filter, CheckCircle2, AlertTriangle, FileText, Info } from "lucide-react";
+import { RefreshCw, Download, Eye, Calendar, FileDown, Scale, Activity, ArrowLeftRight, History, PieChart, BarChart3, Filter, CheckCircle2, AlertTriangle, FileText, Info, Star } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
@@ -15,6 +15,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { systemOverview, accountingPrimer } from "@/components/Stella/knowledge";
 import StellaAdvisor from "@/components/Stella/StellaAdvisor";
+import { PPEStatement } from "./PPEStatement";
+import { calculateTotalPPEAsOf, calculateDepreciationExpenseForPeriod, calculateAccumulatedDepreciationAsOf } from "@/components/FixedAssets/DepreciationCalculator";
+import { useFiscalYear } from "@/hooks/use-fiscal-year";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface TrialBalanceRow {
   account_id: string;
@@ -41,6 +45,7 @@ export const GAAPFinancialStatements = () => {
   const [periodMode, setPeriodMode] = useState<'monthly' | 'annual'>('annual');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0,7)); // YYYY-MM
   const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
+  const { fiscalStartMonth: fyStart, selectedFiscalYear, setSelectedFiscalYear, loading: fyLoading, getFiscalYearDates, lockFiscalYear, defaultFiscalYear } = useFiscalYear();
   const [activeTab, setActiveTab] = useState<string>('balance-sheet');
   const [periodStart, setPeriodStart] = useState(() => {
     const date = new Date();
@@ -53,6 +58,10 @@ export const GAAPFinancialStatements = () => {
   const [trialBalance, setTrialBalance] = useState<TrialBalanceRow[]>([]);
   const [drilldownAccount, setDrilldownAccount] = useState<string | null>(null);
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
+  const [traceResolved, setTraceResolved] = useState<TrialBalanceRow | null>(null);
+  const [traceCFMonthly, setTraceCFMonthly] = useState<Record<string, number> | null>(null);
+  const [traceCFLoading, setTraceCFLoading] = useState(false);
+  const [traceLabel, setTraceLabel] = useState<string | null>(null);
   const [accountingEquation, setAccountingEquation] = useState<{
     is_valid: boolean;
     total_assets: number;
@@ -75,6 +84,9 @@ export const GAAPFinancialStatements = () => {
     closing_cash_balance: number;
     net_change_in_cash: number;
   } | null>(null);
+  const [depExpensePeriod, setDepExpensePeriod] = useState<number>(0);
+  const [compDepCurr, setCompDepCurr] = useState<number>(0);
+  const [compDepPrev, setCompDepPrev] = useState<number>(0);
   const [cashFlowPrev, setCashFlowPrev] = useState<{
     operating_inflows: number;
     operating_outflows: number;
@@ -134,6 +146,8 @@ export const GAAPFinancialStatements = () => {
   const [monthlyAFSError, setMonthlyAFSError] = useState<string | null>(null);
   const [monthlyAFSData, setMonthlyAFSData] = useState<any[]>([]);
   const [monthlyAFSLoading, setMonthlyAFSLoading] = useState(false);
+  const [ppeValueFromModule, setPpeValueFromModule] = useState<number>(0);
+  const [fiscalStartMonth, setFiscalStartMonth] = useState<number>(1);
 
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd]);
 
@@ -146,12 +160,25 @@ export const GAAPFinancialStatements = () => {
       setPeriodStart(start.toISOString().split('T')[0]);
       setPeriodEnd(end.toISOString().split('T')[0]);
     } else {
-      const start = new Date(selectedYear, 0, 1);
-      const end = new Date(selectedYear, 11, 31);
+      const start = new Date(selectedYear, (fyStart || fiscalStartMonth) - 1, 1);
+      const end = new Date(selectedYear + ((fyStart || fiscalStartMonth) === 1 ? 0 : 1), (fyStart || fiscalStartMonth) - 1, 0);
       setPeriodStart(start.toISOString().split('T')[0]);
       setPeriodEnd(end.toISOString().split('T')[0]);
     }
   }, [periodMode, selectedMonth, selectedYear]);
+
+  useEffect(() => {
+    if (!fyLoading) {
+      setFiscalStartMonth(fyStart || 1);
+      if (typeof selectedFiscalYear === 'number') {
+        setSelectedYear(selectedFiscalYear);
+      }
+      if (lockFiscalYear && typeof defaultFiscalYear === 'number') {
+        setSelectedFiscalYear(defaultFiscalYear);
+        setSelectedYear(defaultFiscalYear);
+      }
+    }
+  }, [fyLoading, fyStart, selectedFiscalYear, lockFiscalYear, defaultFiscalYear]);
 
   // Load cash flow whenever cash-flow tab is active or period changes
   useEffect(() => { if (activeTab === 'cash-flow') { loadCashFlow(); } }, [activeTab, periodStart, periodEnd]);
@@ -161,7 +188,44 @@ export const GAAPFinancialStatements = () => {
       loadComparativeData();
     }
   }, [activeTab, periodMode, selectedYear]);
-  useEffect(() => { loadMonthlyAFS(); }, [selectedYear]);
+  useEffect(() => { loadMonthlyAFS(); }, [selectedYear, fiscalStartMonth]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!periodStart || !periodEnd) return;
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        const companyId = (profile as any)?.company_id;
+        if (!companyId) return;
+        const { data: v } = await supabase.rpc('validate_trial_balance' as any, {
+          _company_id: companyId,
+          _period_start: periodStart,
+          _period_end: periodEnd,
+        });
+        const res = Array.isArray(v) ? v[0] : null;
+        if (res && res.is_balanced === false) {
+          toast({ title: 'Trial balance not balanced', description: `Difference: ${Number(res.difference || 0).toFixed(2)}`, variant: 'destructive' });
+        }
+      } catch {}
+    })();
+  }, [periodStart, periodEnd]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setFiscalStartMonth(fyStart || 1);
+        if (typeof selectedFiscalYear === 'number') {
+          setSelectedYear(selectedFiscalYear);
+        }
+      } catch {}
+    })();
+  }, [selectedFiscalYear, fyStart]);
 
   useEffect(() => {
     const toLower = (s: string) => String(s || '').toLowerCase();
@@ -268,9 +332,17 @@ export const GAAPFinancialStatements = () => {
       
       setLoadingProgress(40);
 
-      const totalRevPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'revenue' || String(r.account_type || '').toLowerCase() === 'income').reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
-      const totalExpPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat')).reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
-      setNetProfitPeriod(totalRevPeriod - totalExpPeriod);
+      const revRowsPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'revenue' || String(r.account_type || '').toLowerCase() === 'income');
+      const expRowsPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat'));
+      const cogsRowsPeriod = expRowsPeriod.filter((r: any) => String(r.account_name || '').toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+      const opexRowsPeriod = expRowsPeriod
+        .filter((r: any) => !cogsRowsPeriod.includes(r))
+        .filter((r: any) => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
+      const totalRevenuePeriod = revRowsPeriod.reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+      const totalCOGSPeriod = cogsRowsPeriod.reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+      const grossProfitPeriod = totalRevenuePeriod - totalCOGSPeriod;
+      const totalOpexPeriod = opexRowsPeriod.reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+      setNetProfitPeriod(grossProfitPeriod - totalOpexPeriod);
 
       setLoadingProgress(60);
 
@@ -301,7 +373,9 @@ export const GAAPFinancialStatements = () => {
       
       if (periodMode === 'monthly') {
         const startObj = new Date(periodStart);
-        const ytdStartObj = new Date(startObj.getFullYear(), 0, 1);
+        const base = fiscalStartMonth - 1;
+        const ytdYear = startObj.getMonth() < base ? startObj.getFullYear() - 1 : startObj.getFullYear();
+        const ytdStartObj = new Date(ytdYear, base, 1);
         const prevEndObj = new Date(startObj);
         prevEndObj.setDate(prevEndObj.getDate() - 1);
         prevEndObj.setHours(23, 59, 59, 999);
@@ -343,7 +417,8 @@ export const GAAPFinancialStatements = () => {
         const accTotal = related.reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
         return Number(assetRow.balance || 0) - accTotal;
       };
-      const ppeSum = nonCurrentAssetsAsOf.reduce((sum: number, a: any) => sum + nbvForAsOf(a), 0);
+      const ppeSum = await calculateTotalPPEAsOf(supabase, companyProfile.company_id, periodEnd);
+      setPpeValueFromModule(ppeSum);
       setPpeBookValue(ppeSum);
 
       // Aggregate opening balances into 3900: Opening Balance Equity
@@ -417,9 +492,10 @@ export const GAAPFinancialStatements = () => {
       const proceeds = (disposals || [])
         .reduce((sum: number, t: any) => sum + Math.max(0, Number(t.total_amount || 0)), 0);
       setPpeDisposalProceeds(proceeds);
-
-      // Equation validated locally based on selected period and current filters
-
+      const depExp = await calculateDepreciationExpenseForPeriod(supabase, companyProfile.company_id, periodStart, periodEnd);
+      setDepExpensePeriod(depExp);
+      setNetProfitPeriod(grossProfitPeriod - (totalOpexPeriod + Number(depExp || 0)));
+      
     } catch (error: any) {
       console.error('Error loading financial data:', error);
       toast({
@@ -446,10 +522,8 @@ export const GAAPFinancialStatements = () => {
         .eq('user_id', user.id)
         .single();
       if (!companyProfile?.company_id) return;
-      const yAStart = new Date(comparativeYearA, 0, 1).toISOString().split('T')[0];
-      const yAEnd = new Date(comparativeYearA, 11, 31).toISOString().split('T')[0];
-      const yBStart = new Date(comparativeYearB, 0, 1).toISOString().split('T')[0];
-      const yBEnd = new Date(comparativeYearB, 11, 31).toISOString().split('T')[0];
+      const { startStr: yAStart, endStr: yAEnd } = getFiscalYearDates(comparativeYearA);
+      const { startStr: yBStart, endStr: yBEnd } = getFiscalYearDates(comparativeYearB);
       const tbYearBPeriod = await fetchTrialBalanceForPeriod(companyProfile.company_id, yBStart, yBEnd);
       const normalizedPrev = (tbYearBPeriod || []).map((r: any) => ({
         account_id: String(r.account_id || ''),
@@ -507,6 +581,12 @@ export const GAAPFinancialStatements = () => {
       setCashFlowCurrComparative(cfYearA);
       setCompCFYearB(cfYearB);
       setCompCFYearA(cfYearA);
+      try {
+        const depPrev = await calculateDepreciationExpenseForPeriod(supabase, companyProfile.company_id, yBStart, yBEnd);
+        const depCurr = await calculateDepreciationExpenseForPeriod(supabase, companyProfile.company_id, yAStart, yAEnd);
+        setCompDepPrev(depPrev);
+        setCompDepCurr(depCurr);
+      } catch {}
       try {
         const { data: invPrevPurch } = await supabase
           .from('transactions')
@@ -651,11 +731,14 @@ export const GAAPFinancialStatements = () => {
     }
   };
 
-  const buildMonthlyRanges = (year: number) => {
-    const labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    return labels.map((label, idx) => {
-      const start = new Date(year, idx, 1);
-      const end = new Date(year, idx + 1, 0);
+  const buildMonthlyRanges = (year: number, startMonth: number) => {
+    const base = startMonth - 1;
+    return Array.from({ length: 12 }, (_, i) => {
+      const mi = (base + i) % 12;
+      const y = year + (mi < base ? 1 : 0);
+      const start = new Date(y, mi, 1);
+      const end = new Date(y, mi + 1, 0);
+      const label = start.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
       return {
         label,
         start: start.toISOString().split('T')[0],
@@ -677,14 +760,29 @@ export const GAAPFinancialStatements = () => {
         .single();
       if (!companyProfile?.company_id) throw new Error('Company not found');
 
-      const ranges = buildMonthlyRanges(selectedYear);
+      const ranges = buildMonthlyRanges(selectedYear, fiscalStartMonth);
       const rows = await Promise.all(ranges.map(async (r) => {
-        const [tbPeriod, tbAsOf, cogs, cf] = await Promise.all([
+        const [tbPeriod, tbAsOf, cogs, cf, ppeSum, depMonth, accDepClose] = await Promise.all([
           fetchTrialBalanceForPeriod(companyProfile.company_id, r.start, r.end),
           fetchTrialBalanceAsOf(companyProfile.company_id, r.end),
           calculateCOGSFromInvoices(companyProfile.company_id, r.start, r.end),
           getCashFlowForPeriod(companyProfile.company_id, r.start, r.end),
+          calculateTotalPPEAsOf(supabase, companyProfile.company_id, r.end),
+          calculateDepreciationExpenseForPeriod(supabase, companyProfile.company_id, r.start, r.end),
+          calculateAccumulatedDepreciationAsOf(supabase, companyProfile.company_id, r.end)
         ]);
+        const startObj = new Date(r.start);
+        const base = fiscalStartMonth - 1;
+        const ytdYear = startObj.getMonth() < base ? startObj.getFullYear() - 1 : startObj.getFullYear();
+        const ytdStartObj = new Date(ytdYear, base, 1);
+        const prevEndObj = new Date(startObj);
+        prevEndObj.setDate(prevEndObj.getDate() - 1);
+        const ytdStartForMonth = ytdStartObj.toISOString().split('T')[0];
+        const prevEndForMonth = prevEndObj.toISOString().split('T')[0];
+        const tbYTDForMonth = await fetchTrialBalanceForPeriod(companyProfile.company_id, ytdStartForMonth, prevEndForMonth);
+        const totalRevYTDForMonth = (tbYTDForMonth || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'revenue' || String(x.account_type || '').toLowerCase() === 'income').reduce((s: number, x: any) => s + Number(x.balance || 0), 0);
+        const totalExpYTDForMonth = (tbYTDForMonth || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'expense' && !String(x.account_name || '').toLowerCase().includes('vat')).reduce((s: number, x: any) => s + Number(x.balance || 0), 0);
+        const openingREForMonth = totalRevYTDForMonth - totalExpYTDForMonth;
         const toLower = (s: string) => String(s || '').toLowerCase();
         
         // Define filters for assets
@@ -706,8 +804,8 @@ export const GAAPFinancialStatements = () => {
           .filter(isCurrentAsset)
           .map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) }));
 
-        const nonCurrentAssetsAll = (tbAsOf || [])
-            .filter((x: any) => toLower(x.account_type) === 'asset' && !isCurrentAsset(x) && !toLower(x.account_name).includes('vat'));
+      const nonCurrentAssetsAll = (tbAsOf || [])
+          .filter((x: any) => toLower(x.account_type) === 'asset' && !isCurrentAsset(x) && !toLower(x.account_name).includes('vat'));
         
         const accDepRows = nonCurrentAssetsAll.filter((r: any) => String(r.account_name || '').toLowerCase().includes('accumulated'));
         const nonCurrentAssets = nonCurrentAssetsAll.filter((r: any) => !String(r.account_name || '').toLowerCase().includes('accumulated'));
@@ -721,10 +819,19 @@ export const GAAPFinancialStatements = () => {
             const accTotal = related.reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
             return Number(assetRow.balance || 0) - accTotal;
         };
+        const isInvestmentName = (name: string) => {
+          const n = String(name || '').toLowerCase();
+          return n.includes('investment') || n.includes('fixed deposit') || n.includes('term deposit') || n.includes('bond');
+        };
+        const invBase = nonCurrentAssets.filter((x: any) => isInvestmentName(x.account_name));
 
-        const nonCurrentAssetsItems = nonCurrentAssets.map((x: any) => ({
-            label: `${x.account_code} - ${x.account_name}`,
-            amount: nbvFor(x)
+        const nonCurrentAssetsItems = [
+           { label: 'Property, Plant and Equipment', amount: ppeSum }
+        ];
+        
+        const longTermInvestmentItems = invBase.map((x: any) => ({
+          label: `${x.account_code} - ${x.account_name}`,
+          amount: Number(x.balance || 0)
         }));
 
         const vatReceivableItem = {
@@ -775,18 +882,21 @@ export const GAAPFinancialStatements = () => {
         if (retainedIndex >= 0) {
             equityItems[retainedIndex].amount += ytdNetProfit;
         } else {
-            equityItems.push({ label: 'Retained Earnings', amount: ytdNetProfit });
+            equityItems.push({ label: 'Retained Earnings', amount: openingREForMonth + ytdNetProfit });
         }
 
         const revenueRows = (tbPeriod || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'revenue' || String(x.account_type || '').toLowerCase() === 'income');
         const expenseRows = (tbPeriod || []).filter((x: any) => String(x.account_type || '').toLowerCase() === 'expense');
         const costOfSalesRows = expenseRows.filter((x: any) => String(x.account_name || '').toLowerCase().includes('cost of') || String(x.account_code || '').startsWith('50'));
-        const opexRows = expenseRows.filter((x: any) => !costOfSalesRows.includes(x)).filter((x: any) => !String(x.account_name || '').toLowerCase().includes('vat'));
+        const opexRows = expenseRows
+          .filter((x: any) => !costOfSalesRows.includes(x))
+          .filter((x: any) => !String(x.account_name || '').toLowerCase().includes('vat'))
+          .filter((x: any) => !(String(x.account_code || '') === '5600' || String(x.account_name || '').toLowerCase().includes('depreciation')));
         const revenue = sum(revenueRows);
         const costOfSalesRaw = sum(costOfSalesRows);
         const costOfSales = costOfSalesRaw > 0 ? costOfSalesRaw : cogs;
         const grossProfit = revenue - costOfSales;
-        const opex = sum(opexRows);
+        const opex = sum(opexRows) + Number(depMonth || 0);
         const netProfit = grossProfit - opex;
         const bs = bsGroups(tbAsOf || []);
         bs.totalEquity += ytdNetProfit;
@@ -795,6 +905,7 @@ export const GAAPFinancialStatements = () => {
           bs,
           bsDetail: {
             nonCurrentAssetsItems,
+            longTermInvestmentItems,
             currentAssetsItems: [...currentAssetsItems, vatReceivableItem],
             currentLiabilitiesItems: [...currentLiabilitiesItems, vatPayableItem],
             nonCurrentLiabilitiesItems,
@@ -816,6 +927,8 @@ export const GAAPFinancialStatements = () => {
                  if (toLower(x.account_name).includes('accumulated')) return false;
                  // Exclude VAT accounts as they are aggregated
                  if (toLower(x.account_name).includes('vat')) return false;
+                 // Exclude PPE accounts as they are sourced from module now
+                 if (toLower(x.account_type) === 'asset' && parseInt(String(x.account_code || '0'), 10) >= 1500 && parseInt(String(x.account_code || '0'), 10) < 2000 && !toLower(x.account_name).includes('investment')) return false;
                  
                  return !used.has(label) && Math.abs(Number(x.balance || 0)) > 0.01;
              }).map((x: any) => ({
@@ -826,18 +939,22 @@ export const GAAPFinancialStatements = () => {
              })),
              tbBalance: sum(tbAsOf || []),
              retainedEarningsCalcs: {
-                 ytdRevenue,
-                 ytdExpenses,
-                 ytdNetProfit,
-                 retainedOpeningYTD: periodMode === 'monthly' ? retainedOpeningYTD : 0
+                ytdRevenue,
+                ytdExpenses,
+                ytdNetProfit,
+                retainedOpeningYTD: openingREForMonth
              }
           },
           pl: { revenue, costOfSales, grossProfit, opex, netProfit },
           plDetail: {
             revenueItems: (revenueRows || []).map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) })),
             cogsItems: (costOfSalesRows || []).map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) })),
-            opexItems: (opexRows || []).map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) })),
+            opexItems: [
+              ...(opexRows || []).map((x: any) => ({ label: `${x.account_code} - ${x.account_name}`, amount: Number(x.balance || 0) })),
+              { label: 'Monthly Depreciation', amount: Number(depMonth || 0) }
+            ],
           },
+        
           cf: {
             netOperating: Number(cf?.net_cash_from_operations || 0),
             netInvesting: Number(cf?.net_cash_from_investing || 0),
@@ -856,7 +973,7 @@ export const GAAPFinancialStatements = () => {
     }
   };
 
-  const handleStatementExport = (report: 'bs' | 'pl' | 'cf', type: 'pdf' | 'excel') => {
+  const handleStatementExport = async (report: 'bs' | 'pl' | 'cf', type: 'pdf' | 'excel') => {
     try {
       if (report === 'bs') {
         const currentAssets = trialBalance
@@ -888,6 +1005,12 @@ export const GAAPFinancialStatements = () => {
           const accTotal = related.reduce((sum: number, r: any) => sum + r.balance, 0);
           return assetRow.balance - accTotal;
         };
+        const isInvestmentName = (name: string) => {
+          const n = String(name || '').toLowerCase();
+          return n.includes('investment') || n.includes('fixed deposit') || n.includes('term deposit') || n.includes('bond');
+        };
+        const ppeBase = nonCurrentAssets.filter((x: any) => !isInvestmentName(x.account_name));
+        const invBase = nonCurrentAssets.filter((x: any) => isInvestmentName(x.account_name));
     const currentLiabilitiesBase = trialBalance.filter(r => {
       const isLiab = r.account_type.toLowerCase() === 'liability';
       const name = r.account_name.toLowerCase();
@@ -909,9 +1032,15 @@ export const GAAPFinancialStatements = () => {
         const equity = trialBalance.filter(r => r.account_type.toLowerCase() === 'equity');
         const revenueRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
         const expenseRows = trialBalance.filter(r => r.account_type.toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat'));
+        const costOfSalesRows = expenseRows.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+        const operatingExpenseRows = expenseRows
+          .filter(r => !costOfSalesRows.includes(r))
+          .filter(r => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
         const totalRevenue = revenueRows.reduce((sum, r) => sum + r.balance, 0);
-        const totalExpenses = expenseRows.reduce((sum, r) => sum + r.balance, 0);
-        const netProfitForPeriod = totalRevenue - totalExpenses;
+        const totalCostOfSales = costOfSalesRows.reduce((sum, r) => sum + r.balance, 0);
+        const grossProfit = totalRevenue - totalCostOfSales;
+        const opexBase = operatingExpenseRows.reduce((sum, r) => sum + r.balance, 0);
+        const netProfitForPeriod = grossProfit - (opexBase + Number(depExpensePeriod || 0));
         let equityDisplay: any[] = [...equity];
         if (periodMode === 'monthly') {
           equityDisplay = equityDisplay.filter(r => !String(r.account_name || '').toLowerCase().includes('retained earning'));
@@ -928,7 +1057,9 @@ export const GAAPFinancialStatements = () => {
           }
         }
         const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0) + vatReceivableAsOf;
-        const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + nbvFor(r), 0);
+        const totalFixedAssetsNBV = ppeBase.reduce((sum: number, r: any) => sum + nbvFor(r), 0);
+        const totalLongTermInvestments = invBase.reduce((sum: number, r: any) => sum + r.balance, 0);
+        const totalNonCurrentAssets = totalFixedAssetsNBV + totalLongTermInvestments;
         const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
         const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0) + vatPayableAsOf;
         const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
@@ -941,8 +1072,10 @@ export const GAAPFinancialStatements = () => {
           { account: 'VAT Receivable', amount: vatReceivableAsOf, type: 'asset' },
           { account: 'Total Current Assets', amount: totalCurrentAssets, type: 'subtotal' },
           { account: 'Non-current Assets', amount: 0, type: 'subheader' },
-          ...nonCurrentAssets.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: nbvFor(r), type: 'asset' })),
-          { account: 'Total Fixed Assets (NBV)', amount: totalNonCurrentAssets, type: 'asset' },
+          ...ppeBase.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: nbvFor(r), type: 'asset' })),
+          { account: 'Fixed Assets (PPE) - NBV', amount: totalFixedAssetsNBV, type: 'asset' },
+          ...invBase.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'asset' })),
+          { account: 'Long-term Investments', amount: totalLongTermInvestments, type: 'asset' },
           { account: 'Total Non-current Assets', amount: totalNonCurrentAssets, type: 'subtotal' },
           { account: 'TOTAL ASSETS', amount: totalAssets, type: 'total' },
           { account: 'LIABILITIES', amount: 0, type: 'header' },
@@ -970,17 +1103,28 @@ export const GAAPFinancialStatements = () => {
         return;
       }
       if (report === 'pl') {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data: companyProfile } = await supabase
+          .from('profiles')
+          .select('company_id')
+          .eq('user_id', user.id)
+          .single();
+        if (!companyProfile?.company_id) return;
         const revenue = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
         const expenses = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
         const costOfSales = expenses.filter(r => r.account_name.toLowerCase().includes('cost of') || r.account_code.startsWith('50'));
         const operatingExpenses = expenses
           .filter(r => !costOfSales.includes(r))
-          .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
+          .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'))
+          .filter(r => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
         const totalRevenue = revenue.reduce((sum, r) => sum + r.balance, 0);
         const totalCostOfSales = costOfSales.reduce((sum, r) => sum + r.balance, 0);
         const grossProfit = totalRevenue - totalCostOfSales;
         const totalOperatingExpenses = operatingExpenses.reduce((sum, r) => sum + r.balance, 0);
-        const netProfit = grossProfit - totalOperatingExpenses;
+        const depExp = await calculateDepreciationExpenseForPeriod(supabase, companyProfile.company_id, periodStart, periodEnd);
+        const totalOperatingExpensesWithDep = totalOperatingExpenses + Number(depExp || 0);
+        const netProfit = grossProfit - totalOperatingExpensesWithDep;
         const data = [
           { account: 'REVENUE', amount: 0, type: 'header' },
           ...revenue.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'income' })),
@@ -991,7 +1135,8 @@ export const GAAPFinancialStatements = () => {
           { account: 'GROSS PROFIT', amount: grossProfit, type: 'subtotal' },
           { account: 'OPERATING EXPENSES', amount: 0, type: 'header' },
           ...operatingExpenses.map(r => ({ account: `${r.account_code} - ${r.account_name}`, amount: r.balance, type: 'expense' })),
-          { account: 'Total Operating Expenses', amount: totalOperatingExpenses, type: 'subtotal' },
+          { account: 'Monthly Depreciation', amount: Number(depExp || 0), type: 'expense' },
+          { account: 'Total Operating Expenses', amount: totalOperatingExpensesWithDep, type: 'subtotal' },
           { account: 'NET PROFIT/(LOSS)', amount: netProfit, type: 'final' }
         ];
         const reportName = 'Income Statement';
@@ -1161,6 +1306,62 @@ export const GAAPFinancialStatements = () => {
     }
   };
 
+  const openTrace = (label: string) => {
+    setTraceLabel(label);
+  };
+
+  const resolveAccountFromLabel = (lab: string): TrialBalanceRow | null => {
+    const parts = String(lab || '').split(' - ');
+    if (parts.length < 2) return null;
+    const code = parts[0].trim();
+    const name = parts.slice(1).join(' - ').trim();
+    const findIn = (arr: TrialBalanceRow[]) => arr.find(r => String(r.account_code || '') === code && String(r.account_name || '') === name) || null;
+    return findIn(trialBalanceAsOf) || findIn(trialBalance) || null;
+  };
+
+  const loadTraceCFMonthlyByAccount = async (accountId: string) => {
+    try {
+      setTraceCFLoading(true);
+      const ranges = buildMonthlyRanges(selectedYear, fiscalStartMonth);
+      const start = ranges[0]?.start;
+      const end = ranges[ranges.length - 1]?.end;
+      if (!start || !end) { setTraceCFMonthly(null); setTraceCFLoading(false); return; }
+      const { data, error } = await supabase
+        .from('ledger_entries')
+        .select('entry_date,debit,credit')
+        .eq('account_id', accountId)
+        .gte('entry_date', start)
+        .lte('entry_date', end);
+      if (error) throw error;
+      const vals: Record<string, number> = {};
+      ranges.forEach(r => { vals[r.label] = 0; });
+      (data || []).forEach((e: any) => {
+        const d = new Date(String(e.entry_date || '')); const mi = d.getMonth();
+        const lab = ranges[mi]?.label; if (!lab) return;
+        const debit = Number(e.debit || 0); const credit = Number(e.credit || 0);
+        const net = debit - credit;
+        vals[lab] = (vals[lab] || 0) + net;
+      });
+      setTraceCFMonthly(vals);
+    } catch (e: any) {
+      toast({ title: 'Trace error', description: e.message || 'Could not load monthly movements', variant: 'destructive' });
+      setTraceCFMonthly(null);
+    } finally {
+      setTraceCFLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!traceLabel) { setTraceResolved(null); setTraceCFMonthly(null); return; }
+    const r = resolveAccountFromLabel(traceLabel);
+    setTraceResolved(r);
+    if (r?.account_id) {
+      loadTraceCFMonthlyByAccount(r.account_id);
+    } else {
+      setTraceCFMonthly(null);
+    }
+  }, [traceLabel, selectedYear, trialBalanceAsOf, trialBalance]);
+
   // GAAP Statement of Financial Position (Balance Sheet)
   const renderStatementOfFinancialPosition = () => {
     const currentAssets = trialBalanceAsOf.filter(r =>
@@ -1266,8 +1467,21 @@ export const GAAPFinancialStatements = () => {
     const vatPayable = Math.max(0, vatPayableAsOf);
     const vatReceivable = Math.max(0, vatReceivableAsOf);
     const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0) + vatReceivable;
-    const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + nbvFor(r), 0);
-    const totalAssets = totalCurrentAssets + totalNonCurrentAssets;
+    // const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + nbvFor(r), 0);
+
+    // Split non-current assets into Investments and Fixed Assets
+    const longTermInvestmentRows = nonCurrentAssets.filter(r => 
+      r.account_name.toLowerCase().includes('investment')
+    );
+    const totalLongTermInvestments = longTermInvestmentRows.reduce((sum, r) => sum + nbvFor(r), 0);
+    
+    // Sourced from Fixed Assets Module
+    const totalFixedAssetsNBV = ppeValueFromModule;
+    
+    // Recalculate Total Non-Current Assets using the module value for PPE
+    const totalNonCurrentAssetsCalc = totalFixedAssetsNBV + totalLongTermInvestments;
+
+    const totalAssets = totalCurrentAssets + totalNonCurrentAssetsCalc;
     
     const totalCurrentLiabilities = currentLiabilities.reduce((sum, r) => sum + r.balance, 0);
     const totalNonCurrentLiabilities = nonCurrentLiabilities.reduce((sum, r) => sum + r.balance, 0);
@@ -1333,9 +1547,9 @@ export const GAAPFinancialStatements = () => {
         <div className="space-y-4">
           <h3 className="text-xl font-bold border-b-2 pb-2">ASSETS</h3>
           
-          {/* Non-current Assets - MOVED FIRST */}
+          {/* Fixed Assets (PPE) - MOVED FIRST */}
           <div className="pl-4">
-            <h4 className="font-semibold text-lg mb-2">Non-current Assets</h4>
+            <h4 className="font-semibold text-lg mb-2">Fixed Assets (PPE)</h4>
             <div className="grid grid-cols-[1fr_80px_150px] py-1 px-2 items-center hover:bg-accent/50 rounded">
               <span>Total Fixed Assets (NBV)</span>
               <span 
@@ -1344,12 +1558,17 @@ export const GAAPFinancialStatements = () => {
               >
                 2
               </span>
-              <span className="font-mono text-right">R {totalNonCurrentAssets.toLocaleString()}</span>
+              <span className="font-mono text-right">R {totalFixedAssetsNBV.toLocaleString()}</span>
+            </div>
+            <div className="grid grid-cols-[1fr_80px_150px] py-1 px-2 items-center hover:bg-accent/50 rounded">
+              <span>Long-term Investments</span>
+              <span></span>
+              <span className="font-mono text-right">R {totalLongTermInvestments.toLocaleString()}</span>
             </div>
             <div className="grid grid-cols-[1fr_80px_150px] py-2 font-semibold border-t mt-2">
               <span>Total Non-current Assets</span>
               <span></span>
-              <span className="font-mono text-right">R {totalNonCurrentAssets.toLocaleString()}</span>
+              <span className="font-mono text-right">R {totalNonCurrentAssetsCalc.toLocaleString()}</span>
             </div>
           </div>
 
@@ -1946,12 +2165,20 @@ export const GAAPFinancialStatements = () => {
       const accTotal = related.reduce((sum, r) => sum + r.balance, 0);
       return assetRow.balance - accTotal;
     };
+    const isInvestment = (row: Pick<TrialBalanceRow, 'account_id' | 'account_code' | 'account_name' | 'account_type' | 'balance'>) => {
+      const n = String(row.account_name || '').toLowerCase();
+      return n.includes('investment') || n.includes('fixed deposit') || n.includes('term deposit') || n.includes('bond');
+    };
+    const ppeAssets = nonCurrentAssets.filter(r => !isInvestment(r));
+    const longTermInvestments = nonCurrentAssets.filter(r => isInvestment(r));
     const vatInputAsAssets = tb.filter(r => (String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable')));
     const vatPayableRows = tb.filter(r => r.account_type.toLowerCase() === 'liability' && String(r.account_name || '').toLowerCase().includes('vat'));
     const vatReceivable = vatInputAsAssets.reduce((s, r) => s + r.balance, 0);
     const vatPayable = vatPayableRows.reduce((s, r) => s + r.balance, 0);
     const totalCurrentAssets = currentAssets.reduce((sum, r) => sum + r.balance, 0) + vatReceivable;
-    const totalNonCurrentAssets = nonCurrentAssets.reduce((sum, r) => sum + nbvFor(r), 0);
+    const totalFixedAssetsNBV = ppeAssets.reduce((sum, r) => sum + nbvFor(r), 0);
+    const totalLongTermInvestments = longTermInvestments.reduce((sum, r) => sum + r.balance, 0);
+    const totalNonCurrentAssets = totalFixedAssetsNBV + totalLongTermInvestments;
     const liabilitiesExVat = tb.filter(r => r.account_type.toLowerCase() === 'liability' && !String(r.account_name || '').toLowerCase().includes('vat') && !['2100','2200'].includes(String(r.account_code || '')));
     const currentLiabilities = liabilitiesExVat.filter(r => {
       const name = String(r.account_name || '').toLowerCase();
@@ -1973,6 +2200,8 @@ export const GAAPFinancialStatements = () => {
     return {
       totalCurrentAssets,
       totalNonCurrentAssets,
+      totalFixedAssetsNBV,
+      totalLongTermInvestments,
       totalAssets,
       totalCurrentLiabilities,
       totalNonCurrentLiabilities,
@@ -2117,19 +2346,29 @@ export const GAAPFinancialStatements = () => {
     return (
       <div className="space-y-4">
         <h3 className="text-xl font-bold">Comparative Statement of Financial Position</h3>
-        <div className="grid grid-cols-4 gap-2 text-sm">
-          <div className="font-semibold">Item</div>
-          <div className="font-semibold text-right">{y}</div>
-          <div className="font-semibold text-right">{py}</div>
-          <div className="font-semibold text-right">% Change</div>
-          {rows.map((r, i) => (
-            <React.Fragment key={`bs-comp-${i}-${r.label}`}>
-              <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
-              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
-              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
-              <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
-            </React.Fragment>
-          ))}
+        <div className="rounded-md border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                <th className="p-2 text-left font-semibold">Item</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">% Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`bs-comp-${i}-${r.label}`} className="border-b hover:bg-muted/50">
+                  <td className={`p-2 ${r.bold ? 'font-semibold' : ''}`}>{r.label}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'font-semibold' : ''}`}>
+                    {percentChange(r.curr, r.prev).toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -2144,8 +2383,14 @@ export const GAAPFinancialStatements = () => {
     const expensesPrev = trialBalancePrev.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
     const costOfSalesCurr = expensesCurr.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
     const costOfSalesPrev = expensesPrev.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
-    const operatingExpensesCurr = expensesCurr.filter(r => !costOfSalesCurr.includes(r)).filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
-    const operatingExpensesPrev = expensesPrev.filter(r => !costOfSalesPrev.includes(r)).filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
+    const operatingExpensesCurr = expensesCurr
+      .filter(r => !costOfSalesCurr.includes(r))
+      .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'))
+      .filter(r => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
+    const operatingExpensesPrev = expensesPrev
+      .filter(r => !costOfSalesPrev.includes(r))
+      .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'))
+      .filter(r => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
     const sum = (arr: TrialBalanceRow[]) => arr.reduce((s, r) => s + r.balance, 0);
     const totalRevenueCurr = sum(revenueCurr);
     const totalRevenuePrev = sum(revenuePrev);
@@ -2155,8 +2400,8 @@ export const GAAPFinancialStatements = () => {
     const totalCostOfSalesPrev = totalCostOfSalesPrevRaw > 0 ? totalCostOfSalesPrevRaw : fallbackCOGSPrev;
     const grossProfitCurr = totalRevenueCurr - totalCostOfSalesCurr;
     const grossProfitPrev = totalRevenuePrev - totalCostOfSalesPrev;
-    const totalOperatingExpensesCurr = sum(operatingExpensesCurr);
-    const totalOperatingExpensesPrev = sum(operatingExpensesPrev);
+    const totalOperatingExpensesCurr = sum(operatingExpensesCurr) + Number(compDepCurr || 0);
+    const totalOperatingExpensesPrev = sum(operatingExpensesPrev) + Number(compDepPrev || 0);
     const netProfitCurr = grossProfitCurr - totalOperatingExpensesCurr;
     const netProfitPrev = grossProfitPrev - totalOperatingExpensesPrev;
     const rows: Array<{ label: string; curr: number; prev: number; bold?: boolean }> = [];
@@ -2178,24 +2423,35 @@ export const GAAPFinancialStatements = () => {
       const prevMatch = operatingExpensesPrev.find(p => p.account_code === r.account_code);
       rows.push({ label: `${r.account_code} - ${r.account_name}`, curr: r.balance, prev: prevMatch ? prevMatch.balance : 0 });
     });
+    rows.push({ label: 'Monthly Depreciation', curr: Number(compDepCurr || 0), prev: Number(compDepPrev || 0) });
     rows.push({ label: 'Total Operating Expenses', curr: totalOperatingExpensesCurr, prev: totalOperatingExpensesPrev, bold: true });
     rows.push({ label: 'NET PROFIT/(LOSS)', curr: netProfitCurr, prev: netProfitPrev, bold: true });
     return (
       <div className="space-y-4">
         <h3 className="text-xl font-bold">Comparative Income Statement</h3>
-        <div className="grid grid-cols-4 gap-2 text-sm">
-          <div className="font-semibold">Item</div>
-          <div className="font-semibold text-right">{y}</div>
-          <div className="font-semibold text-right">{py}</div>
-          <div className="font-semibold text-right">% Change</div>
-          {rows.map((r, i) => (
-            <React.Fragment key={`cf-comp-${i}-${r.label}`}>
-              <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
-              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
-              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
-              <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
-            </React.Fragment>
-          ))}
+        <div className="rounded-md border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                <th className="p-2 text-left font-semibold">Item</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">% Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`cf-comp-${i}-${r.label}`} className="border-b hover:bg-muted/50">
+                  <td className={`p-2 ${r.bold ? 'font-semibold' : ''}`}>{r.label}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'font-semibold' : ''}`}>
+                    {percentChange(r.curr, r.prev).toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -2323,21 +2579,243 @@ export const GAAPFinancialStatements = () => {
     return (
       <div className="space-y-4">
         <h3 className="text-xl font-bold">Comparative Cash Flow Statement</h3>
-        <div className="grid grid-cols-4 gap-2 text-sm">
-          <div className="font-semibold">Item</div>
-          <div className="font-semibold text-right">{y}</div>
-          <div className="font-semibold text-right">{py}</div>
-          <div className="font-semibold text-right">% Change</div>
-          {rows.map((r, i) => (
-            <React.Fragment key={`pl-comp-${i}-${r.label}`}>
-              <div className={`${r.bold ? 'font-semibold mt-2' : ''}`}>{r.label}</div>
-              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</div>
-              <div className={`text-right ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</div>
-              <div className={`${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'text-right font-semibold' : ''}`}>{percentChange(r.curr, r.prev).toFixed(1)}%</div>
-            </React.Fragment>
-          ))}
+        <div className="rounded-md border">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                <th className="p-2 text-left font-semibold">Item</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">% Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={`pl-comp-${i}-${r.label}`} className="border-b hover:bg-muted/50">
+                  <td className={`p-2 ${r.bold ? 'font-semibold' : ''}`}>{r.label}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</td>
+                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'font-semibold' : ''}`}>
+                    {percentChange(r.curr, r.prev).toFixed(1)}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
+    );
+  };
+
+  const renderComparativeRetainedEarnings = () => {
+    const y = comparativeYearA;
+    const py = comparativeYearB;
+    const formatCurrency = (amount: number) => new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(amount);
+    const sum = (arr: TrialBalanceRow[]) => arr.reduce((s, r) => s + Number(r.balance || 0), 0);
+
+    // Calculate Net Profit for Year A
+    const revenueCurr = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+    const expensesCurr = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
+    const costOfSalesCurr = expensesCurr.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+    const operatingExpensesCurr = expensesCurr
+      .filter(r => !costOfSalesCurr.includes(r))
+      .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'))
+      .filter(r => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
+    
+    const totalRevenueCurr = sum(revenueCurr);
+    const totalCostOfSalesCurrRaw = sum(costOfSalesCurr);
+    const totalCostOfSalesCurr = totalCostOfSalesCurrRaw > 0 ? totalCostOfSalesCurrRaw : fallbackCOGS;
+    const grossProfitCurr = totalRevenueCurr - totalCostOfSalesCurr;
+    const totalOperatingExpensesCurr = sum(operatingExpensesCurr);
+    const netProfitCurr = grossProfitCurr - totalOperatingExpensesCurr;
+
+    // Calculate Net Profit for Year B
+    const revenuePrev = trialBalancePrev.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
+    const expensesPrev = trialBalancePrev.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
+    const costOfSalesPrev = expensesPrev.filter(r => r.account_name.toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+    const operatingExpensesPrev = expensesPrev
+      .filter(r => !costOfSalesPrev.includes(r))
+      .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'))
+      .filter(r => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
+
+    const totalRevenuePrev = sum(revenuePrev);
+    const totalCostOfSalesPrevRaw = sum(costOfSalesPrev);
+    const totalCostOfSalesPrev = totalCostOfSalesPrevRaw > 0 ? totalCostOfSalesPrevRaw : fallbackCOGSPrev;
+    const grossProfitPrev = totalRevenuePrev - totalCostOfSalesPrev;
+    const totalOperatingExpensesPrev = sum(operatingExpensesPrev);
+    const netProfitPrev = grossProfitPrev - totalOperatingExpensesPrev;
+
+    // Dividends & Drawings
+    const getDividends = (tb: TrialBalanceRow[]) => tb
+      .filter(r => String(r.account_type || '').toLowerCase() === 'equity' && (String(r.account_code || '') === '3500' || String(r.account_name || '').toLowerCase().includes('dividend')))
+      .reduce((sum, r) => sum + Math.abs(Number(r.balance || 0)), 0);
+    
+    const getDrawings = (tb: TrialBalanceRow[]) => tb
+      .filter(r => String(r.account_type || '').toLowerCase() === 'equity' && (String(r.account_code || '') === '3400' || String(r.account_name || '').toLowerCase().includes('drawings')))
+      .reduce((sum, r) => sum + Math.abs(Number(r.balance || 0)), 0);
+
+    const dividendsCurr = getDividends(trialBalance);
+    const drawingsCurr = getDrawings(trialBalance);
+    const dividendsPrev = getDividends(trialBalancePrev);
+    const drawingsPrev = getDrawings(trialBalancePrev);
+
+    // Opening Retained Earnings logic:
+    // If periodMode is monthly, we use retainedOpeningYTD for current year.
+    // For Previous Year in monthly mode, it's harder to get exact opening without full history.
+    // However, usually: Opening = Closing (from BS) - Net Profit + Dividends + Drawings
+    
+    // Let's rely on Closing RE from Balance Sheet As Of end date
+    const getClosingRE = (tbAsOf: TrialBalanceRow[]) => {
+        const row = tbAsOf.find(r => String(r.account_type || '').toLowerCase() === 'equity' && String(r.account_name || '').toLowerCase().includes('retained earning'));
+        return Number(row?.balance || 0);
+    };
+
+    const closingRECurr = getClosingRE(trialBalanceCompAsOfA);
+    const closingREPrev = getClosingRE(trialBalanceCompAsOfB);
+
+    // Back-calculate Opening RE to ensure the statement flows correctly
+    const openingRECurr = closingRECurr - netProfitCurr + dividendsCurr + drawingsCurr;
+    const openingREPrev = closingREPrev - netProfitPrev + dividendsPrev + drawingsPrev;
+
+    const rows = [
+        { label: 'Opening Retained Earnings', curr: openingRECurr, prev: openingREPrev },
+        { label: 'Add: Net Profit/(Loss) for the period', curr: netProfitCurr, prev: netProfitPrev },
+        { label: 'Less: Dividends Declared', curr: -dividendsCurr, prev: -dividendsPrev },
+        { label: 'Less: Drawings', curr: -drawingsCurr, prev: -drawingsPrev },
+        { label: 'Closing Retained Earnings', curr: closingRECurr, prev: closingREPrev, bold: true, borderTop: true }
+    ];
+
+    return (
+        <div className="space-y-4">
+            <h3 className="text-xl font-bold">Comparative Statement of Changes in Equity (Retained Earnings)</h3>
+            <div className="rounded-md border">
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr className="border-b bg-muted/50">
+                            <th className="p-2 text-left font-semibold">Item</th>
+                            <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
+                            <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((r, i) => (
+                            <tr key={`re-comp-${i}`} className={`border-b hover:bg-muted/50 ${r.borderTop ? 'border-t-2' : ''}`}>
+                                <td className={`p-2 ${r.bold ? 'font-bold' : ''}`}>{r.label}</td>
+                                <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-bold' : ''}`}>{formatCurrency(r.curr)}</td>
+                                <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-bold' : ''}`}>{formatCurrency(r.prev)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+  };
+
+  const renderComparativeNotes = () => {
+    const y = comparativeYearA;
+    const py = comparativeYearB;
+    const formatCurrency = (amount: number) => new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(amount);
+    const sum = (arr: TrialBalanceRow[]) => arr.reduce((s, r) => s + Number(r.balance || 0), 0);
+    const toLower = (s: string) => String(s || '').toLowerCase();
+
+    // Helper to get rows for a specific year
+    const getData = (tbAsOf: TrialBalanceRow[], tbMovement: TrialBalanceRow[]) => {
+        const nonCurrentAssets = tbAsOf.filter(r => toLower(r.account_type) === 'asset' && parseInt(String(r.account_code || '0'), 10) >= 1500);
+        const ppeItems = nonCurrentAssets.filter(r => !toLower(r.account_name).includes('accumulated') && !toLower(r.account_name).includes('intangible') && !toLower(r.account_name).includes('investment'));
+        const accDepItems = nonCurrentAssets.filter(r => toLower(r.account_name).includes('accumulated'));
+        
+        const inventoryItems = tbAsOf.filter(r => toLower(r.account_type) === 'asset' && toLower(r.account_name).includes('inventory'));
+
+        const tradeReceivables = tbAsOf.filter(r => toLower(r.account_type) === 'asset' && (toLower(r.account_name).includes('trade receivable') || toLower(r.account_name).includes('accounts receivable')));
+        const impairment = tbAsOf.filter(r => toLower(r.account_type) === 'asset' && toLower(r.account_name).includes('impairment'));
+        const otherReceivables = tbAsOf.filter(r => toLower(r.account_type) === 'asset' && !tradeReceivables.includes(r) && !inventoryItems.includes(r) && !ppeItems.includes(r) && !toLower(r.account_name).includes('bank') && !toLower(r.account_name).includes('cash') && parseInt(String(r.account_code || '0'), 10) < 1500);
+
+        const cashItems = tbAsOf.filter(r => toLower(r.account_type) === 'asset' && (toLower(r.account_name).includes('cash') || toLower(r.account_name).includes('bank')));
+        
+        const tradePayables = tbAsOf.filter(r => toLower(r.account_type) === 'liability' && (toLower(r.account_name).includes('trade payable') || toLower(r.account_name).includes('accounts payable')));
+        const otherPayables = tbAsOf.filter(r => toLower(r.account_type) === 'liability' && !tradePayables.includes(r) && !toLower(r.account_name).includes('tax') && !toLower(r.account_name).includes('vat'));
+
+        const revenueItems = tbMovement.filter(r => toLower(r.account_type) === 'revenue' || toLower(r.account_type) === 'income');
+        
+        const cogsItems = tbMovement.filter(r => (String(r.account_code || '')).startsWith('50') || toLower(r.account_name).includes('cost of') || toLower(r.account_name).includes('purchases'));
+
+        const expenseItems = tbMovement.filter(r => toLower(r.account_type) === 'expense' && !cogsItems.includes(r) && !toLower(r.account_name).includes('tax'));
+
+        const taxItems = tbMovement.filter(r => toLower(r.account_type) === 'expense' && toLower(r.account_name).includes('tax'));
+
+        const equityItems = tbAsOf.filter(r => toLower(r.account_type) === 'equity');
+
+        return { ppeItems, accDepItems, inventoryItems, tradeReceivables, impairment, otherReceivables, cashItems, tradePayables, otherPayables, revenueItems, cogsItems, expenseItems, taxItems, equityItems };
+    };
+
+    const dataA = getData(trialBalanceCompAsOfA, trialBalance);
+    const dataB = getData(trialBalanceCompAsOfB, trialBalancePrev);
+
+    const renderTable = (title: string, itemsA: TrialBalanceRow[], itemsB: TrialBalanceRow[], totalLabel: string) => {
+        const allCodes = Array.from(new Set([...itemsA.map(i => i.account_code), ...itemsB.map(i => i.account_code)]));
+        const rows = allCodes.map(code => {
+            const itemA = itemsA.find(i => i.account_code === code);
+            const itemB = itemsB.find(i => i.account_code === code);
+            const name = itemA?.account_name || itemB?.account_name || 'Unknown Account';
+            const valA = itemA?.balance || 0;
+            const valB = itemB?.balance || 0;
+            return { code, name, valA, valB };
+        }).sort((a, b) => a.code.localeCompare(b.code));
+
+        const totalA = rows.reduce((s, r) => s + r.valA, 0);
+        const totalB = rows.reduce((s, r) => s + r.valB, 0);
+
+        return (
+            <div className="space-y-4 break-inside-avoid">
+                <h3 className="text-lg font-semibold">{title}</h3>
+                <div className="rounded-md border">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="border-b bg-muted/50">
+                                <th className="p-2 text-left font-semibold">Description</th>
+                                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
+                                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map(row => (
+                                <tr key={row.code} className="border-b hover:bg-muted/50">
+                                    <td className="p-2">{row.name}</td>
+                                    <td className="p-2 text-right border-l border-muted-foreground/20">{formatCurrency(Math.abs(row.valA))}</td>
+                                    <td className="p-2 text-right border-l border-muted-foreground/20">{formatCurrency(Math.abs(row.valB))}</td>
+                                </tr>
+                            ))}
+                            <tr className="bg-muted/50 font-bold">
+                                <td className="p-2">{totalLabel}</td>
+                                <td className="p-2 text-right border-l border-muted-foreground/20">{formatCurrency(Math.abs(totalA))}</td>
+                                <td className="p-2 text-right border-l border-muted-foreground/20">{formatCurrency(Math.abs(totalB))}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+    };
+
+    return (
+        <div className="space-y-8 p-4 mt-8 border-t-4 border-double pt-8">
+            <div className="border-b pb-4">
+                <h2 className="text-2xl font-bold text-center">Notes to the Comparative Financial Statements</h2>
+                <p className="text-center text-muted-foreground">Detailed breakdown for {y} and {py}</p>
+            </div>
+
+            {renderTable('1. Property, Plant & Equipment', dataA.ppeItems, dataB.ppeItems, 'Total PPE')}
+            {renderTable('2. Inventory', dataA.inventoryItems, dataB.inventoryItems, 'Total Inventory')}
+            {renderTable('3. Trade Receivables', dataA.tradeReceivables, dataB.tradeReceivables, 'Total Trade Receivables')}
+            {renderTable('4. Cash & Cash Equivalents', dataA.cashItems, dataB.cashItems, 'Total Cash & Equivalents')}
+            {renderTable('5. Trade Payables', dataA.tradePayables, dataB.tradePayables, 'Total Trade Payables')}
+            {renderTable('6. Revenue', dataA.revenueItems, dataB.revenueItems, 'Total Revenue')}
+            {renderTable('7. Cost of Sales', dataA.cogsItems, dataB.cogsItems, 'Total Cost of Sales')}
+            {renderTable('8. Operating Expenses', dataA.expenseItems, dataB.expenseItems, 'Total Operating Expenses')}
+            {renderTable('9. Taxation', dataA.taxItems, dataB.taxItems, 'Total Taxation')}
+            {renderTable('10. Equity', dataA.equityItems, dataB.equityItems, 'Total Equity')}
+        </div>
     );
   };
 
@@ -2392,14 +2870,16 @@ export const GAAPFinancialStatements = () => {
     const costOfSales = trialBalance.filter(r => (String(r.account_code || '')).startsWith('50') || (String(r.account_name || '').toLowerCase().includes('cost of')));
     const operatingExpenses = trialBalance
       .filter(r => (String(r.account_type || '').toLowerCase() === 'expense') && !costOfSales.includes(r))
-      .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'));
+      .filter(r => !String(r.account_name || '').toLowerCase().includes('vat'))
+      .filter(r => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
 
     const totalRevenue = revenue.reduce((sum, r) => sum + r.balance, 0);
     const totalCostOfSales = costOfSales.reduce((sum, r) => sum + r.balance, 0);
     const cogsValue = totalCostOfSales > 0 ? totalCostOfSales : fallbackCOGS;
     const grossProfit = totalRevenue - cogsValue;
     const totalOperatingExpenses = operatingExpenses.reduce((sum, r) => sum + r.balance, 0);
-    const netProfit = grossProfit - totalOperatingExpenses;
+    const totalOperatingExpensesWithDep = totalOperatingExpenses + Number(depExpensePeriod || 0);
+    const netProfit = grossProfit - totalOperatingExpensesWithDep;
 
     return (
       <div className="space-y-6">
@@ -2465,18 +2945,22 @@ export const GAAPFinancialStatements = () => {
 
           <h3 className="text-xl font-bold border-b-2 pb-2">OPERATING EXPENSES</h3>
           <div className="pl-4">
-            {operatingExpenses.map(row => (
-              <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
-                   onClick={() => handleDrilldown(row.account_id, row.account_name)}>
-                <span>{row.account_code} - {row.account_name}</span>
-                <span className="font-mono">(R {row.balance.toLocaleString()})</span>
-              </div>
-            ))}
-            <div className="flex justify-between py-2 font-semibold border-t mt-2">
-              <span>Total Operating Expenses</span>
-              <span className="font-mono">(R {totalOperatingExpenses.toLocaleString()})</span>
+          {operatingExpenses.map(row => (
+            <div key={row.account_id} className="flex justify-between py-1 hover:bg-accent/50 px-2 rounded cursor-pointer"
+                 onClick={() => handleDrilldown(row.account_id, row.account_name)}>
+              <span>{row.account_code} - {row.account_name}</span>
+              <span className="font-mono">(R {row.balance.toLocaleString()})</span>
             </div>
+          ))}
+          <div className="flex justify-between py-1 px-2">
+            <span>Monthly Depreciation</span>
+            <span className="font-mono">(R {Number(depExpensePeriod || 0).toLocaleString()})</span>
           </div>
+          <div className="flex justify-between py-2 font-semibold border-t mt-2">
+            <span>Total Operating Expenses</span>
+            <span className="font-mono">(R {totalOperatingExpensesWithDep.toLocaleString()})</span>
+          </div>
+        </div>
 
           <div className={`flex justify-between py-3 text-xl font-bold border-t-2 border-b-2 ${netProfit >= 0 ? 'bg-green-100 dark:bg-green-900/20' : 'bg-red-100 dark:bg-red-900/20'}`}>
             <span>NET PROFIT/(LOSS)</span>
@@ -2919,14 +3403,29 @@ export const GAAPFinancialStatements = () => {
                   />
                 ) : (
                   <div className="relative">
-                    <Input 
-                      type="number" 
-                      min={2000} 
-                      max={2100} 
-                      value={selectedYear} 
-                      onChange={e => setSelectedYear(parseInt(e.target.value || `${new Date().getFullYear()}`, 10))}
-                      className="bg-background border-muted-foreground/20 focus:border-primary h-10 pl-10" 
-                    />
+                    {lockFiscalYear ? (
+                      <div className="h-10 pl-10 flex items-center bg-muted/40 rounded-md border border-muted-foreground/20">
+                        <span className="text-sm">{(fyStart || fiscalStartMonth) === 1 ? (defaultFiscalYear || selectedFiscalYear) : `FY ${(defaultFiscalYear || selectedFiscalYear)}`}</span>
+                      </div>
+                    ) : (
+                      (() => {
+                        const years = Array.from({ length: 7 }, (_, i) => (selectedFiscalYear || new Date().getFullYear()) - 3 + i);
+                        return (
+                          <Select value={String(selectedYear)} onValueChange={(val: string) => { const y = parseInt(val, 10); setSelectedYear(y); setSelectedFiscalYear(y); }}>
+                            <SelectTrigger className="h-10 pl-10 bg-background border-muted-foreground/20 focus:border-primary">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {years.map(y => (
+                                <SelectItem key={y} value={String(y)}>
+                                  {(fyStart || fiscalStartMonth) === 1 ? y : `FY ${y}`}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        );
+                      })()
+                    )}
                     <Calendar className="absolute left-3 top-2.5 h-5 w-5 text-muted-foreground" />
                   </div>
                 )}
@@ -2969,6 +3468,10 @@ export const GAAPFinancialStatements = () => {
             <TabsTrigger value="retained-earnings" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
               <PieChart className="h-4 w-4" />
               Retained Earnings
+            </TabsTrigger>
+            <TabsTrigger value="ppe" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              PPE Schedule
             </TabsTrigger>
             <TabsTrigger value="monthly-report" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
               <BarChart3 className="h-4 w-4" />
@@ -3072,12 +3575,18 @@ export const GAAPFinancialStatements = () => {
                       </div>
                     </div>
                   )}
+
                   {renderComparativeBalanceSheet()}
                   {renderComparativeIncomeStatement()}
+                  {renderComparativeRetainedEarnings()}
                   {renderComparativeCashFlow()}
-                </div>
+                  {renderComparativeNotes()}
+                  </div>
             </CardContent>
           </Card>
+        </TabsContent>
+        <TabsContent value="ppe">
+          <PPEStatement selectedYear={selectedYear} />
         </TabsContent>
         <TabsContent value="monthly-report">
           <Card>
@@ -3090,97 +3599,154 @@ export const GAAPFinancialStatements = () => {
                 <div className="space-y-8">
                   <div>
                     <h3 className="text-lg font-bold mb-2">Statement of Financial Position</h3>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-[1000px] w-full text-sm border-collapse">
-                        <thead>
+                    <div className="overflow-x-auto rounded-lg border border-muted-foreground/20">
+                      <table className="min-w-[1100px] w-full text-sm border-collapse">
+                        <thead className="sticky top-0 z-20 bg-background">
                           <tr>
-                            <th className="text-left py-2 border-b sticky left-0 bg-background z-10">Item</th>
+                            <th className="text-left px-3 py-2 border-b sticky left-0 bg-background z-20 text-xs uppercase tracking-wide text-muted-foreground">Item</th>
                             {monthlyAFSData.map((m: any, i: number) => (
-                              <th key={`bs-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                              <th key={`bs-h-${m.label}`} className={`text-right px-3 py-2 border-b text-xs uppercase tracking-wide text-muted-foreground ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
-                          {/* Non-current Assets */}
-                          <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Non-current Assets</td>
-                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-nca-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          {/* Fixed Assets (PPE) */}
+                          <tr className="bg-muted/30">
+                            <td className="px-3 py-2 font-semibold sticky left-0 bg-background z-10">Fixed Assets (PPE)</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-nca-h-${m.label}-${i}`} className={`px-3 py-2 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
                           </tr>
                           {(() => {
                             const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.nonCurrentAssetsItems || []).map((i: any) => i.label))));
                             return labels.map((lab) => (
-                              <tr key={`bs-nca-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                              <tr key={`bs-nca-${lab}`} className="border-b hover:bg-muted/20">
+                                <td className="px-3 py-2 sticky left-0 bg-background z-10">
+                                  <div className="flex items-center justify-between">
+                                    <span>{lab}</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                                      <Star className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
                                 {monthlyAFSData.map((m: any, i: number) => {
                                   const found = (m.bsDetail?.nonCurrentAssetsItems || []).find((x: any) => x.label === lab);
                                   const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`bs-nca-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  return (<td key={`bs-nca-${lab}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                })}
+                              </tr>
+                            ));
+                          })()}
+                          {/* Removed explicit Total Fixed Assets (NBV) row to avoid confusion.
+                              Carrying value is shown via PPE (NBV) line items above. */}
+
+                          {/* Long-term Investments */}
+                          <tr className="bg-muted/30">
+                            <td className="px-3 py-2 font-semibold sticky left-0 bg-background z-10">Long-term Investments</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-lti-h-${m.label}-${i}`} className={`px-3 py-2 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          </tr>
+                          {(() => {
+                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.longTermInvestmentItems || []).map((i: any) => i.label))));
+                            return labels.map((lab) => (
+                              <tr key={`bs-lti-${lab}`} className="border-b hover:bg-muted/20">
+                                <td className="px-3 py-2 sticky left-0 bg-background z-10">
+                                  <div className="flex items-center justify-between">
+                                    <span>{lab}</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                                      <Star className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
+                                {monthlyAFSData.map((m: any, i: number) => {
+                                  const found = (m.bsDetail?.longTermInvestmentItems || []).find((x: any) => x.label === lab);
+                                  const f = formatAccounting(Number(found?.amount || 0));
+                                  return (<td key={`bs-lti-${lab}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
                                 })}
                               </tr>
                             ));
                           })()}
                           {[
-                            { key: 'Total Fixed Assets (NBV)', get: (m: any) => m.bs.totalNonCurrentAssets },
-                            { key: 'Total Non-current Assets', get: (m: any) => m.bs.totalNonCurrentAssets },
+                            { key: 'Total Long-term Investments', get: (m: any) => m.bs.totalLongTermInvestments },
+                            { key: 'Total Non-current Assets', get: (m: any) => {
+                              const ppeNbv = (m.bsDetail?.nonCurrentAssetsItems || []).reduce((s: number, x: any) => s + Number(x.amount || 0), 0);
+                              return ppeNbv + Number(m.bs.totalLongTermInvestments || 0);
+                            } },
                           ].map((row) => (
                             <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
-                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              <td className="px-3 py-2 font-medium sticky left-0 bg-background z-10">{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
-                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                  <td key={`bs-${row.key}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
                                 );
                               })}
                             </tr>
                           ))}
 
                           {/* Current Assets */}
-                          <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Current Assets</td>
-                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ca-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          <tr className="bg-muted/30">
+                            <td className="px-3 py-2 font-semibold sticky left-0 bg-background z-10">Current Assets</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ca-h-${m.label}-${i}`} className={`px-3 py-2 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
                           </tr>
                           {(() => {
                             const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.currentAssetsItems || []).map((i: any) => i.label))));
                             return labels.map((lab) => (
-                              <tr key={`bs-ca-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                              <tr key={`bs-ca-${lab}`} className="border-b hover:bg-muted/20">
+                                <td className="px-3 py-2 sticky left-0 bg-background z-10">
+                                  <div className="flex items-center justify-between">
+                                    <span>{lab}</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                                      <Star className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
                                 {monthlyAFSData.map((m: any, i: number) => {
                                   const found = (m.bsDetail?.currentAssetsItems || []).find((x: any) => x.label === lab);
                                   const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`bs-ca-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  return (<td key={`bs-ca-${lab}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
                                 })}
                               </tr>
                             ));
                           })()}
                           {[
-                            { key: 'Total Current Assets', get: (m: any) => m.bs.totalCurrentAssets },
-                            { key: 'TOTAL ASSETS', get: (m: any) => m.bs.totalAssets, bold: true, color: 'text-emerald-700 bg-emerald-50/50' },
+                            { key: 'Total Current Assets', get: (m: any) => (m.bsDetail?.currentAssetsItems || []).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'TOTAL ASSETS', get: (m: any) => {
+                              const curr = (m.bsDetail?.currentAssetsItems || []).reduce((s: number, x: any) => s + Number(x.amount || 0), 0);
+                              const ppeNbv = (m.bsDetail?.nonCurrentAssetsItems || []).reduce((s: number, x: any) => s + Number(x.amount || 0), 0);
+                              const lti = (m.bsDetail?.longTermInvestmentItems || []).reduce((s: number, x: any) => s + Number(x.amount || 0), 0);
+                              return curr + ppeNbv + lti;
+                            }, bold: true, color: 'text-emerald-700 bg-emerald-50/50' },
                           ].map((row) => (
                             <tr key={`bs-${row.key}`} className={`border-b odd:bg-muted/40 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>
-                              <td className={`py-1 sticky left-0 bg-background z-10 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>{row.key}</td>
+                              <td className={`px-3 py-2 sticky left-0 bg-background z-10 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
-                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                  <td key={`bs-${row.key}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
                                 );
                               })}
                             </tr>
                           ))}
 
                           {/* Non-current Liabilities */}
-                          <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Non-current Liabilities</td>
-                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ncl-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          <tr className="bg-muted/30">
+                            <td className="px-3 py-2 font-semibold sticky left-0 bg-background z-10">Non-current Liabilities</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-ncl-h-${m.label}-${i}`} className={`px-3 py-2 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
                           </tr>
                           {(() => {
                             const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.nonCurrentLiabilitiesItems || []).map((i: any) => i.label))));
                             return labels.map((lab) => (
-                              <tr key={`bs-ncl-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                              <tr key={`bs-ncl-${lab}`} className="border-b hover:bg-muted/20">
+                                <td className="px-3 py-2 sticky left-0 bg-background z-10">
+                                  <div className="flex items-center justify-between">
+                                    <span>{lab}</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                                      <Star className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
                                 {monthlyAFSData.map((m: any, i: number) => {
                                   const found = (m.bsDetail?.nonCurrentLiabilitiesItems || []).find((x: any) => x.label === lab);
                                   const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`bs-ncl-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  return (<td key={`bs-ncl-${lab}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
                                 })}
                               </tr>
                             ));
@@ -3189,30 +3755,37 @@ export const GAAPFinancialStatements = () => {
                             { key: 'Total Non-current Liabilities', get: (m: any) => m.bs.totalNonCurrentLiabilities },
                           ].map((row) => (
                             <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
-                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              <td className="px-3 py-2 font-medium sticky left-0 bg-background z-10">{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
-                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                  <td key={`bs-${row.key}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
                                 );
                               })}
                             </tr>
                           ))}
 
                           {/* Current Liabilities */}
-                          <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Current Liabilities</td>
-                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-cl-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          <tr className="bg-muted/30">
+                            <td className="px-3 py-2 font-semibold sticky left-0 bg-background z-10">Current Liabilities</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-cl-h-${m.label}-${i}`} className={`px-3 py-2 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
                           </tr>
                           {(() => {
                             const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.currentLiabilitiesItems || []).map((i: any) => i.label))));
                             return labels.map((lab) => (
-                              <tr key={`bs-cl-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                              <tr key={`bs-cl-${lab}`} className="border-b hover:bg-muted/20">
+                                <td className="px-3 py-2 sticky left-0 bg-background z-10">
+                                  <div className="flex items-center justify-between">
+                                    <span>{lab}</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                                      <Star className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
                                 {monthlyAFSData.map((m: any, i: number) => {
                                   const found = (m.bsDetail?.currentLiabilitiesItems || []).find((x: any) => x.label === lab);
                                   const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`bs-cl-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  return (<td key={`bs-cl-${lab}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
                                 })}
                               </tr>
                             ));
@@ -3222,30 +3795,37 @@ export const GAAPFinancialStatements = () => {
                             { key: 'Total Liabilities', get: (m: any) => m.bs.totalLiabilities },
                           ].map((row) => (
                             <tr key={`bs-${row.key}`} className="border-b odd:bg-muted/40">
-                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              <td className="px-3 py-2 font-medium sticky left-0 bg-background z-10">{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
-                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                  <td key={`bs-${row.key}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
                                 );
                               })}
                             </tr>
                           ))}
 
                           {/* Equity */}
-                          <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Equity</td>
-                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-eq-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
+                          <tr className="bg-muted/30">
+                            <td className="px-3 py-2 font-semibold sticky left-0 bg-background z-10">Equity</td>
+                            {monthlyAFSData.map((m: any, i: number) => (<td key={`bs-eq-h-${m.label}-${i}`} className={`px-3 py-2 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
                           </tr>
                           {(() => {
                             const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.bsDetail?.equityItems || []).map((i: any) => i.label))));
                             return labels.map((lab) => (
-                              <tr key={`bs-eq-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                              <tr key={`bs-eq-${lab}`} className="border-b hover:bg-muted/20">
+                                <td className="px-3 py-2 sticky left-0 bg-background z-10">
+                                  <div className="flex items-center justify-between">
+                                    <span>{lab}</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                                      <Star className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
                                 {monthlyAFSData.map((m: any, i: number) => {
                                   const found = (m.bsDetail?.equityItems || []).find((x: any) => x.label === lab);
                                   const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`bs-eq-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  return (<td key={`bs-eq-${lab}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
                                 })}
                               </tr>
                             ));
@@ -3255,24 +3835,24 @@ export const GAAPFinancialStatements = () => {
                             { key: 'TOTAL LIABILITIES & EQUITY', get: (m: any) => m.bs.totalLiabilities + m.bs.totalEquity, bold: true, color: 'text-purple-700 bg-purple-50/50' },
                           ].map((row) => (
                             <tr key={`bs-${row.key}`} className={`border-b odd:bg-muted/40 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>
-                              <td className={`py-1 sticky left-0 bg-background z-10 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>{row.key}</td>
+                              <td className={`px-3 py-2 sticky left-0 bg-background z-10 ${row.bold ? 'font-bold ' + (row.color || '') : ''}`}>{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
-                                  <td key={`bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                  <td key={`bs-${row.key}-${m.label}`} className={`px-3 py-2 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : 'text-foreground'} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
                                 );
                               })}
                             </tr>
                           ))}
 
                           {/* Balance Check */}
-                          <tr>
-                             <td className="py-1 font-bold sticky left-0 bg-background z-10">Balance Check</td>
+                          <tr className="bg-muted/30">
+                             <td className="px-3 py-2 font-semibold sticky left-0 bg-background z-10">Balance Check</td>
                              {monthlyAFSData.map((m: any, i: number) => {
                                  const diff = m.bs.totalAssets - (m.bs.totalLiabilities + m.bs.totalEquity);
                                  const isBalanced = Math.abs(diff) < 0.1;
                                  return (
-                                     <td key={`bs-check-${m.label}`} className={`py-1 text-right ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>
+                                     <td key={`bs-check-${m.label}`} className={`px-3 py-2 text-right ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>
                                          {isBalanced ? (
                                              <CheckCircle2 className="h-4 w-4 text-emerald-500 inline-block" />
                                          ) : (
@@ -3372,30 +3952,37 @@ export const GAAPFinancialStatements = () => {
 
                   <div>
                     <h3 className="text-lg font-bold mb-2">Income Statement</h3>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto rounded-lg border border-muted-foreground/20">
                       <table className="min-w-[1000px] w-full text-sm border-collapse">
-                        <thead>
+                        <thead className="sticky top-0 z-20 bg-background">
                           <tr>
-                            <th className="text-left py-2 border-b sticky left-0 bg-background z-10">Item</th>
+                            <th className="text-left px-3 py-2 border-b sticky left-0 bg-background z-20 text-xs uppercase tracking-wide text-muted-foreground border-r">Item</th>
                             {monthlyAFSData.map((m: any, i: number) => (
-                              <th key={`pl-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                              <th key={`pl-h-${m.label}`} className={`text-right px-3 py-2 border-b text-xs uppercase tracking-wide text-muted-foreground ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
                             ))}
                           </tr>
                         </thead>
                         <tbody>
                           <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Revenue</td>
+                            <td className="px-3 py-1 font-bold sticky left-0 bg-background z-10 border-r">Revenue</td>
                             {monthlyAFSData.map((m: any, i: number) => (<td key={`pl-rev-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
                           </tr>
                           {(() => {
                             const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.plDetail?.revenueItems || []).map((i: any) => i.label))));
                             return labels.map((lab) => (
-                              <tr key={`pl-rev-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                              <tr key={`pl-rev-${lab}`} className="border-b hover:bg-muted/20">
+                                <td className="px-3 py-1 sticky left-0 bg-background z-10 border-r">
+                                  <div className="flex items-center justify-between">
+                                    <span>{lab}</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                                      <Star className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
                                 {monthlyAFSData.map((m: any, i: number) => {
                                   const found = (m.plDetail?.revenueItems || []).find((x: any) => x.label === lab);
                                   const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`pl-rev-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  return (<td key={`pl-rev-${lab}-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
                                 })}
                               </tr>
                             ));
@@ -3404,7 +3991,7 @@ export const GAAPFinancialStatements = () => {
                             { key: 'Total Revenue', get: (m: any) => m.pl.revenue },
                           ].map((row) => (
                             <tr key={`pl-${row.key}`} className="border-b odd:bg-muted/40">
-                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              <td className="px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r">{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
@@ -3414,18 +4001,25 @@ export const GAAPFinancialStatements = () => {
                             </tr>
                           ))}
                           <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Cost of Sales</td>
+                            <td className="px-3 py-1 font-bold sticky left-0 bg-background z-10 border-r">Cost of Sales</td>
                             {monthlyAFSData.map((m: any, i: number) => (<td key={`pl-cogs-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
                           </tr>
                           {(() => {
                             const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.plDetail?.cogsItems || []).map((i: any) => i.label))));
                             return labels.map((lab) => (
-                              <tr key={`pl-cogs-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
+                              <tr key={`pl-cogs-${lab}`} className="border-b hover:bg-muted/20">
+                                <td className="px-3 py-1 sticky left-0 bg-background z-10 border-r">
+                                  <div className="flex items-center justify-between">
+                                    <span>{lab}</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                                      <Star className="h-4 w-4" />
+                                    </Button>
+                                  </div>
+                                </td>
                                 {monthlyAFSData.map((m: any, i: number) => {
                                   const found = (m.plDetail?.cogsItems || []).find((x: any) => x.label === lab);
                                   const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`pl-cogs-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  return (<td key={`pl-cogs-${lab}-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
                                 })}
                               </tr>
                             ));
@@ -3434,7 +4028,7 @@ export const GAAPFinancialStatements = () => {
                             { key: 'GROSS PROFIT', get: (m: any) => m.pl.grossProfit },
                           ].map((row) => (
                             <tr key={`pl-${row.key}`} className="border-b odd:bg-muted/40">
-                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                              <td className="px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r">{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
@@ -3444,49 +4038,57 @@ export const GAAPFinancialStatements = () => {
                             </tr>
                           ))}
                           <tr>
-                            <td className="py-1 font-bold sticky left-0 bg-background z-10">Operating Expenses</td>
+                            <td className="px-3 py-1 font-bold sticky left-0 bg-background z-10 border-r">Operating Expenses</td>
                             {monthlyAFSData.map((m: any, i: number) => (<td key={`pl-opex-h-${m.label}-${i}`} className={`py-1 ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}></td>))}
                           </tr>
-                          {(() => {
-                            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.plDetail?.opexItems || []).map((i: any) => i.label))));
-                            return labels.map((lab) => (
-                              <tr key={`pl-opex-${lab}`} className="border-b">
-                                <td className="py-1 sticky left-0 bg-background z-10">{lab}</td>
-                                {monthlyAFSData.map((m: any, i: number) => {
-                                  const found = (m.plDetail?.opexItems || []).find((x: any) => x.label === lab);
-                                  const f = formatAccounting(Number(found?.amount || 0));
-                                  return (<td key={`pl-opex-${lab}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
-                                })}
-                              </tr>
-                            ));
-                          })()}
+          {(() => {
+            const labels = Array.from(new Set(monthlyAFSData.flatMap((m: any) => (m.plDetail?.opexItems || []).map((i: any) => i.label))));
+            const rows = labels.map((lab) => (
+              <tr key={`pl-opex-${lab}`} className="border-b hover:bg-muted/20">
+                <td className="px-3 py-1 sticky left-0 bg-background z-10 border-r">
+                  <div className="flex items-center justify-between">
+                    <span>{lab}</span>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openTrace(lab)}>
+                      <Star className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </td>
+                {monthlyAFSData.map((m: any, i: number) => {
+                  const found = (m.plDetail?.opexItems || []).find((x: any) => x.label === lab);
+                  const f = formatAccounting(Number(found?.amount || 0));
+                  return (<td key={`pl-opex-${lab}-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                })}
+              </tr>
+            ));
+            return rows;
+          })()}
                           {[
                             { key: 'NET PROFIT/(LOSS)', get: (m: any) => m.pl.netProfit },
                           ].map((row) => (
-                            <tr key={`pl-${row.key}`} className="border-b odd:bg-muted/40">
-                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                            <tr key={`pl-${row.key}`} className={`border-b odd:bg-muted/40 ${row.key === 'GROSS PROFIT' ? 'font-bold text-emerald-700 bg-emerald-50/50' : ''} ${row.key === 'NET PROFIT/(LOSS)' ? 'font-bold text-purple-700 bg-purple-50/50' : ''}`}> 
+                              <td className={`px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r ${row.key === 'GROSS PROFIT' ? 'font-bold text-emerald-700 bg-emerald-50/50' : ''} ${row.key === 'NET PROFIT/(LOSS)' ? 'font-bold text-purple-700 bg-purple-50/50' : ''}`}>{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
-                                  <td key={`pl-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                  <td key={`pl-${row.key}-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
                                 );
                               })}
                             </tr>
                           ))}
-                        </tbody>
+                      </tbody>
                       </table>
                     </div>
                   </div>
 
                   <div>
                     <h3 className="text-lg font-bold mb-2">Cash Flow Statement</h3>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto rounded-lg border border-muted-foreground/20">
                       <table className="min-w-[1000px] w-full text-sm border-collapse">
-                        <thead>
+                        <thead className="sticky top-0 z-20 bg-background">
                           <tr>
-                            <th className="text-left py-2 border-b sticky left-0 bg-background z-10">Item</th>
+                            <th className="text-left px-3 py-2 border-b sticky left-0 bg-background z-20 text-xs uppercase tracking-wide text-muted-foreground border-r">Item</th>
                             {monthlyAFSData.map((m: any, i: number) => (
-                              <th key={`cf-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                              <th key={`cf-h-${m.label}`} className={`text-right px-3 py-2 border-b text-xs uppercase tracking-wide text-muted-foreground ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
                             ))}
                           </tr>
                         </thead>
@@ -3499,12 +4101,113 @@ export const GAAPFinancialStatements = () => {
                             { key: 'Opening cash balance', get: (m: any) => m.cf.opening },
                             { key: 'Closing cash balance', get: (m: any) => m.cf.closing },
                           ].map((row) => (
-                            <tr key={`cf-${row.key}`} className="border-b odd:bg-muted/40">
-                              <td className="py-1 font-medium sticky left-0 bg-background z-10">{row.key}</td>
+                            <tr key={`cf-${row.key}`} className="border-b hover:bg-muted/20 odd:bg-muted/40">
+                              <td className="px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r">{row.key}</td>
                               {monthlyAFSData.map((m: any, i: number) => {
                                 const f = formatAccounting(row.get(m));
                                 return (
-                                  <td key={`cf-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                  <td key={`cf-${row.key}-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold mb-2">Retained Earnings Movement</h3>
+                    <div className="overflow-x-auto rounded-lg border border-muted-foreground/20">
+                      <table className="min-w-[1000px] w-full text-sm border-collapse">
+                        <thead className="sticky top-0 z-20 bg-background">
+                          <tr>
+                            <th className="text-left px-3 py-2 border-b sticky left-0 bg-background z-20 text-xs uppercase tracking-wide text-muted-foreground border-r">Item</th>
+                            {monthlyAFSData.map((m: any, i: number) => (
+                              <th key={`re-h-${m.label}`} className={`text-right px-3 py-2 border-b text-xs uppercase tracking-wide text-muted-foreground ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const closings = monthlyAFSData.map((m: any) => {
+                              const re = (m.bsDetail?.equityItems || []).find((x: any) => String(x.label || '').toLowerCase().includes('retained earning'));
+                              return Number(re?.amount || 0);
+                            });
+                            return (
+                              <>
+                                <tr className="border-b hover:bg-muted/20 odd:bg-muted/40">
+                                  <td className="px-3 py-1 font-bold sticky left-0 bg-background z-10 border-r">Opening Retained Earnings</td>
+                                  {monthlyAFSData.map((m: any, i: number) => {
+                                    const opening = i === 0 ? Number(m.audit?.retainedEarningsCalcs?.retainedOpeningYTD || 0) : closings[i - 1];
+                                    const f = formatAccounting(opening);
+                                    return (<td key={`re-open-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  })}
+                                </tr>
+                                <tr className="border-b hover:bg-muted/20 odd:bg-muted/40">
+                                  <td className="px-3 py-1 font-bold sticky left-0 bg-background z-10 border-r">Add: Net Profit/(Loss)</td>
+                                  {monthlyAFSData.map((m: any, i: number) => {
+                                    const f = formatAccounting(Number(m.pl?.netProfit || 0));
+                                    return (<td key={`re-during-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  })}
+                                </tr>
+                                <tr className="border-b hover:bg-muted/20 odd:bg-muted/40">
+                                  <td className="px-3 py-1 font-bold sticky left-0 bg-background z-10 border-r">Less: Distributions</td>
+                                  {monthlyAFSData.map((m: any, i: number) => {
+                                    const opening = i === 0 ? Number(m.audit?.retainedEarningsCalcs?.retainedOpeningYTD || 0) : closings[i - 1];
+                                    const during = Number(m.pl?.netProfit || 0);
+                                    const dist = opening + during - closings[i];
+                                    const f = formatAccounting(dist);
+                                    return (<td key={`re-dist-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  })}
+                                </tr>
+                                <tr className="border-b hover:bg-muted/20 odd:bg-muted/40">
+                                  <td className="px-3 py-1 font-bold sticky left-0 bg-background z-10 border-r">Closing Retained Earnings</td>
+                                  {monthlyAFSData.map((m: any, i: number) => {
+                                    const f = formatAccounting(closings[i]);
+                                    return (<td key={`re-close-${m.label}`} className={`px-3 py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>);
+                                  })}
+                                </tr>
+                              </>
+                            );
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-lg font-bold mb-2">Notes to Financial Statements (IFRS)</h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-[1000px] w-full text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="text-left px-3 py-2 border-b sticky left-0 bg-background z-10 border-r text-xs uppercase tracking-wide text-muted-foreground">Item</th>
+                            {monthlyAFSData.map((m: any, i: number) => (
+                              <th key={`notes-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {[
+                            { key: 'Property, plant and equipment (NBV)', get: (m: any) => (m.bsDetail?.nonCurrentAssetsItems || []).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'Inventory', get: (m: any) => (m.bsDetail?.currentAssetsItems || []).filter((x: any) => String(x.label || '').toLowerCase().includes('inventory')).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'Trade receivables', get: (m: any) => (m.bsDetail?.currentAssetsItems || []).filter((x: any) => { const l = String(x.label || '').toLowerCase(); return l.includes('trade receivable') || l.includes('accounts receivable'); }).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'Impairment of receivables', get: (m: any) => (m.bsDetail?.currentAssetsItems || []).filter((x: any) => String(x.label || '').toLowerCase().includes('impairment')).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'Other receivables', get: (m: any) => (m.bsDetail?.currentAssetsItems || []).filter((x: any) => { const lab = String(x.label || '').toLowerCase(); const parts = String(x.label || '').split(' - '); const code = parseInt(String(parts[0] || '0'), 10); const isCash = lab.includes('cash') || lab.includes('bank'); const isInv = lab.includes('inventory'); const isAR = lab.includes('trade receivable') || lab.includes('accounts receivable'); return !isCash && !isInv && !isAR && (code < 1500 || isNaN(code)); }).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'Cash and cash equivalents', get: (m: any) => (m.bsDetail?.currentAssetsItems || []).filter((x: any) => { const l = String(x.label || '').toLowerCase(); return l.includes('cash') || l.includes('bank'); }).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'Trade payables', get: (m: any) => (m.bsDetail?.currentLiabilitiesItems || []).filter((x: any) => { const l = String(x.label || '').toLowerCase(); return l.includes('trade payable') || l.includes('accounts payable'); }).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'Other payables', get: (m: any) => (m.bsDetail?.currentLiabilitiesItems || []).filter((x: any) => { const l = String(x.label || '').toLowerCase(); return !l.includes('trade payable') && !l.includes('accounts payable') && !l.includes('tax') && !l.includes('vat'); }).reduce((s: number, x: any) => s + Number(x.amount || 0), 0) },
+                            { key: 'Revenue', get: (m: any) => Number(m.pl?.revenue || 0) },
+                            { key: 'Cost of sales', get: (m: any) => Number(m.pl?.costOfSales || 0) },
+                            { key: 'Operating expenses', get: (m: any) => Number(m.pl?.opex || 0) },
+                          ].map((row) => (
+                            <tr key={`notes-${row.key}`} className="border-b odd:bg-muted/40">
+                              <td className="px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r">{row.key}</td>
+                              {monthlyAFSData.map((m: any, i: number) => {
+                                const f = formatAccounting(row.get(m));
+                                return (
+                                  <td key={`notes-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
                                 );
                               })}
                             </tr>
@@ -3567,6 +4270,170 @@ export const GAAPFinancialStatements = () => {
                 ))}
               </div>
             )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Trace modal */}
+      <Dialog open={!!traceLabel} onOpenChange={(open) => !open && setTraceLabel(null)}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <DialogTitle>Trace: {traceLabel}</DialogTitle>
+              {traceResolved && (
+                <Button size="sm" variant="outline" onClick={() => { handleDrilldown(String(traceResolved.account_id), `${traceResolved.account_code} - ${traceResolved.account_name}`); setTraceLabel(null); }}>
+                  Open Ledger Entries
+                </Button>
+              )}
+            </div>
+            <DialogDescription>
+              Monthly impact across Balance Sheet and Income Statement
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6">
+            <Card>
+              <CardHeader className="py-2"><CardTitle className="text-sm">Balance Sheet</CardTitle></CardHeader>
+              <CardContent className="py-2">
+                <div className="overflow-x-auto">
+                  <table className="min-w-[900px] w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-left px-3 py-2 border-b sticky left-0 bg-background z-10 border-r">Section</th>
+                        {monthlyAFSData.map((m: any, i: number) => (
+                          <th key={`trace-bs-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        { key: 'Non-current Assets', get: (m: any) => {
+                          const found = (m.bsDetail?.nonCurrentAssetsItems || []).find((x: any) => x.label === traceLabel);
+                          return Number(found?.amount || 0);
+                        }},
+                        { key: 'Current Assets', get: (m: any) => {
+                          const found = (m.bsDetail?.currentAssetsItems || []).find((x: any) => x.label === traceLabel);
+                          return Number(found?.amount || 0);
+                        }},
+                        { key: 'Non-current Liabilities', get: (m: any) => {
+                          const found = (m.bsDetail?.nonCurrentLiabilitiesItems || []).find((x: any) => x.label === traceLabel);
+                          return Number(found?.amount || 0);
+                        }},
+                        { key: 'Current Liabilities', get: (m: any) => {
+                          const found = (m.bsDetail?.currentLiabilitiesItems || []).find((x: any) => x.label === traceLabel);
+                          return Number(found?.amount || 0);
+                        }},
+                        { key: 'Equity', get: (m: any) => {
+                          const found = (m.bsDetail?.equityItems || []).find((x: any) => x.label === traceLabel || String(x.label || '').toLowerCase().includes('retained earning'));
+                          return Number(found?.amount || 0);
+                        }},
+                      ].map((row) => (
+                        <tr key={`trace-bs-${row.key}`} className="border-b odd:bg-muted/40">
+                          <td className="px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r">{row.key}</td>
+                          {monthlyAFSData.map((m: any, i: number) => {
+                            const f = formatAccounting(row.get(m));
+                            return (
+                              <td key={`trace-bs-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="py-2"><CardTitle className="text-sm">Income Statement</CardTitle></CardHeader>
+              <CardContent className="py-2">
+                <div className="overflow-x-auto">
+                  <table className="min-w-[900px] w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-left px-3 py-2 border-b sticky left-0 bg-background z-10 border-r">Section</th>
+                        {monthlyAFSData.map((m: any, i: number) => (
+                          <th key={`trace-pl-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        { key: 'Revenue', get: (m: any) => {
+                          const found = (m.plDetail?.revenueItems || []).find((x: any) => x.label === traceLabel);
+                          return Number(found?.amount || 0);
+                        }},
+                        { key: 'Cost of sales', get: (m: any) => {
+                          const found = (m.plDetail?.cogsItems || []).find((x: any) => x.label === traceLabel);
+                          return Number(found?.amount || 0);
+                        }},
+                        { key: 'Operating expenses', get: (m: any) => {
+                          const found = (m.plDetail?.opexItems || []).find((x: any) => x.label === traceLabel);
+                          return Number(found?.amount || 0);
+                        }},
+                      ].map((row) => (
+                        <tr key={`trace-pl-${row.key}`} className="border-b odd:bg-muted/40">
+                          <td className="px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r">{row.key}</td>
+                          {monthlyAFSData.map((m: any, i: number) => {
+                            const f = formatAccounting(row.get(m));
+                            return (
+                              <td key={`trace-pl-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="py-2"><CardTitle className="text-sm">Cash Flow</CardTitle></CardHeader>
+              <CardContent className="py-2">
+                <div className="overflow-x-auto">
+                  <table className="min-w-[900px] w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-left px-3 py-2 border-b sticky left-0 bg-background z-10 border-r">Section</th>
+                        {monthlyAFSData.map((m: any, i: number) => (
+                          <th key={`trace-cf-h-${m.label}`} className={`text-right py-2 border-b ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{m.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[
+                        { key: 'Net cash from operating activities', get: (m: any) => m.cf.netOperating },
+                        { key: 'Net cash from investing activities', get: (m: any) => m.cf.netInvesting },
+                        { key: 'Net cash from financing activities', get: (m: any) => m.cf.netFinancing },
+                        { key: 'Net change in cash', get: (m: any) => m.cf.netChange },
+                      ].map((row) => (
+                        <tr key={`trace-cf-${row.key}`} className="border-b odd:bg-muted/40">
+                          <td className="px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r">{row.key}</td>
+                          {monthlyAFSData.map((m: any, i: number) => {
+                            const f = formatAccounting(row.get(m));
+                            return (
+                              <td key={`trace-cf-${row.key}-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>{f.display}</td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                      <tr className="border-b odd:bg-muted/40">
+                        <td className="px-3 py-1 font-medium sticky left-0 bg-background z-10 border-r">Account net movement (Dr - Cr)</td>
+                        {monthlyAFSData.map((m: any, i: number) => {
+                          const val = traceCFMonthly ? Number(traceCFMonthly[m.label] || 0) : 0;
+                          const f = formatAccounting(val);
+                          return (
+                            <td key={`trace-cf-net-${m.label}`} className={`py-1 text-right font-mono ${f.negative ? 'text-red-600 dark:text-red-400' : ''} ${i < monthlyAFSData.length - 1 ? 'border-r' : ''}`}>
+                              {traceCFLoading && !traceCFMonthly ? '…' : f.display}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </DialogContent>
       </Dialog>
@@ -3900,13 +4767,11 @@ const fetchTrialBalanceAsOf = async (companyId: string, end: string) => {
     const naturalDebit = type === 'asset' || type === 'expense';
     let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
-    if (acc.account_code === '1300') {
+    if (false) {
       balance = inventoryValueAsOf;
     }
 
-    const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
-    const isPrimaryInventory = acc.account_code === '1300';
-    const shouldShow = Math.abs(balance) > 0.01 && (!isInventoryName || isPrimaryInventory);
+    const shouldShow = Math.abs(balance) > 0.01;
     if (shouldShow) {
       trialBalance.push({
         account_id: acc.id,

@@ -104,7 +104,7 @@ export const GeneralSettings = () => {
       setSettings(next);
       applyTheme(next.theme);
     } catch {}
-  }, [settings, user?.id]);
+  }, [user?.id]);
   useEffect(() => { init(); }, [init]);
 
   return (

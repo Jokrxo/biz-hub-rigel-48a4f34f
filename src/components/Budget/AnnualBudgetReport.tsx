@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { Calendar, Download } from "lucide-react";
 import { exportFinancialReportToPDF } from "@/lib/export-utils";
+import { useFiscalYear } from "@/hooks/use-fiscal-year";
 
 interface AnnualBudgetRow {
   monthIndex: number; // 0-11
@@ -17,10 +18,17 @@ interface AnnualBudgetRow {
 }
 
 export const AnnualBudgetReport = () => {
+  const { fiscalStartMonth, selectedFiscalYear, setSelectedFiscalYear, getFiscalYearDates, loading: fiscalLoading } = useFiscalYear();
   const [year, setYear] = useState<string>(new Date().getFullYear().toString());
   const [rows, setRows] = useState<AnnualBudgetRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [totals, setTotals] = useState({ budgeted: 0, actual: 0, variance: 0 });
+
+  useEffect(() => {
+    if (!fiscalLoading && typeof selectedFiscalYear === 'number') {
+      setYear(String(selectedFiscalYear));
+    }
+  }, [fiscalLoading, selectedFiscalYear]);
 
   const months = [
     "January", "February", "March", "April", "May", "June",
@@ -29,7 +37,7 @@ export const AnnualBudgetReport = () => {
 
   useEffect(() => {
     loadData();
-  }, [year]);
+  }, [year, fiscalStartMonth]);
 
   const loadData = async () => {
     try {
@@ -39,15 +47,15 @@ export const AnnualBudgetReport = () => {
       const { data: profile } = await supabase.from("profiles").select("company_id").eq("user_id", user.id).single();
       if (!profile?.company_id) return;
 
-      const startDate = `${year}-01-01`;
-      const endDate = `${year}-12-31`;
+      const { startDate: startObj, endDate: endObj, startStr, endStr } = getFiscalYearDates(parseInt(year));
 
       // 1. Fetch Budgets for the whole year
       const { data: budgets, error: budgetError } = await supabase
         .from('budgets')
-        .select('budget_month, budgeted_amount')
+        .select('budget_month, budgeted_amount, budget_year')
         .eq('company_id', profile.company_id)
-        .eq('budget_year', parseInt(year));
+        .gte('budget_year', startObj.getFullYear())
+        .lte('budget_year', endObj.getFullYear());
       
       if (budgetError) throw budgetError;
 
@@ -74,22 +82,41 @@ export const AnnualBudgetReport = () => {
         .select('account_id, debit, credit, transactions!inner(transaction_date, status)')
         .eq('transactions.company_id', profile.company_id)
         .eq('transactions.status', 'posted') // Only posted/approved? The main module uses approved/posted
-        .gte('transactions.transaction_date', startDate)
-        .lte('transactions.transaction_date', endDate);
+        .gte('transactions.transaction_date', startStr)
+        .lte('transactions.transaction_date', endStr);
         
       if (entryError) throw entryError;
 
       // Process Data
+      // We want to order rows by Fiscal Month (starting from fiscalStartMonth)
       const monthlyData = Array.from({ length: 12 }, (_, i) => ({
         budgeted: 0,
         actual: 0
       }));
 
       // Aggregate Budgets
+      // We need to filter budgets that fall within our fiscal range.
+      // A budget has (year, month).
+      // If FY starts June (6) 2024.
+      // June 2024 -> Year 2024, Month 6.
+      // Jan 2025 -> Year 2025, Month 1.
+      
+      const isBudgetInPeriod = (bYear: number, bMonth: number) => {
+        // Construct a date and check if it falls in [startObj, endObj]
+        // Use day 15 to avoid timezone edge cases
+        const d = new Date(bYear, bMonth - 1, 15);
+        return d >= startObj && d <= endObj;
+      };
+
       (budgets || []).forEach((b: any) => {
-        const m = (b.budget_month || 1) - 1;
-        if (m >= 0 && m < 12) {
-            monthlyData[m].budgeted += Number(b.budgeted_amount || 0);
+        const bYear = Number(b.budget_year);
+        const bMonth = Number(b.budget_month); // 1-12
+        if (isBudgetInPeriod(bYear, bMonth)) {
+             // Map calendar month to fiscal index (0-11)
+             // If start is June (6). June is index 0.
+             // (Month - Start + 12) % 12
+             const fiscalIndex = (bMonth - fiscalStartMonth + 12) % 12;
+             monthlyData[fiscalIndex].budgeted += Number(b.budgeted_amount || 0);
         }
       });
 
@@ -120,15 +147,18 @@ export const AnnualBudgetReport = () => {
       // We need budget account_ids. The previous fetch didn't get them. Let's re-fetch with account_id.
        const { data: expenseBudgets } = await supabase
         .from('budgets')
-        .select('budget_month, budgeted_amount, account_id')
+        .select('budget_month, budgeted_amount, account_id, budget_year')
         .eq('company_id', profile.company_id)
-        .eq('budget_year', parseInt(year));
+        .gte('budget_year', startObj.getFullYear())
+        .lte('budget_year', endObj.getFullYear());
 
        (expenseBudgets || []).forEach((b: any) => {
            if (expenseAccountIds.has(b.account_id)) {
-               const m = (b.budget_month || 1) - 1;
-               if (m >= 0 && m < 12) {
-                   monthlyExpenses[m].budgeted += Number(b.budgeted_amount || 0);
+               const bYear = Number(b.budget_year);
+               const bMonth = Number(b.budget_month);
+               if (isBudgetInPeriod(bYear, bMonth)) {
+                   const fiscalIndex = (bMonth - fiscalStartMonth + 12) % 12;
+                   monthlyExpenses[fiscalIndex].budgeted += Number(b.budgeted_amount || 0);
                }
            }
        });
@@ -136,10 +166,13 @@ export const AnnualBudgetReport = () => {
        (entries || []).forEach((e: any) => {
            if (expenseAccountIds.has(e.account_id)) {
                const d = new Date(e.transactions.transaction_date);
-               const m = d.getMonth();
-               // Expense is Debit normal: Debit - Credit
-               const val = Number(e.debit || 0) - Number(e.credit || 0);
-               monthlyExpenses[m].actual += val;
+               if (d >= startObj && d <= endObj) {
+                   const m = d.getMonth() + 1; // 1-12
+                   const fiscalIndex = (m - fiscalStartMonth + 12) % 12;
+                   // Expense is Debit normal: Debit - Credit
+                   const val = Number(e.debit || 0) - Number(e.credit || 0);
+                   monthlyExpenses[fiscalIndex].actual += val;
+               }
            }
        });
 
@@ -149,9 +182,11 @@ export const AnnualBudgetReport = () => {
        const results: AnnualBudgetRow[] = monthlyExpenses.map((d, i) => {
            totBud += d.budgeted;
            totAct += d.actual;
+           // Calculate month name based on fiscal start
+           const monthIndex = (fiscalStartMonth - 1 + i) % 12;
            return {
                monthIndex: i,
-               monthName: months[i],
+               monthName: months[monthIndex],
                totalBudgeted: d.budgeted,
                totalActual: d.actual,
                variance: d.budgeted - d.actual,
@@ -200,13 +235,15 @@ export const AnnualBudgetReport = () => {
             <p className="text-sm text-muted-foreground">Yearly tracking of budgeted vs actual expenses</p>
         </div>
         <div className="flex items-center gap-2">
-            <Select value={year} onValueChange={setYear}>
+            <Select value={year} onValueChange={(val) => { setYear(val); const y = parseInt(val, 10); setSelectedFiscalYear(y); }}>
                 <SelectTrigger className="w-[120px] bg-background">
                     <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                     {[2023, 2024, 2025, 2026, 2027].map(y => (
-                        <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                        <SelectItem key={y} value={y.toString()}>
+                            {fiscalStartMonth === 1 ? y : `FY ${y}`}
+                        </SelectItem>
                     ))}
                 </SelectContent>
             </Select>

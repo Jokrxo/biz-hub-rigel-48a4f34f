@@ -13,10 +13,11 @@ import { OpeningBalancesAdjustments } from "@/components/Settings/OpeningBalance
 import { CommunicationSettings } from "@/components/Settings/CommunicationSettings";
 import { TaxAndInvoicingSettings } from "@/components/Settings/TaxAndInvoicingSettings";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Info, Building2, Settings2, Users, Database, Shield, Palette, Scale, ChevronRight, Calculator, Mail } from "lucide-react";
+import { Info, Building2, Settings2, Users, Database, Shield, Palette, Scale, ChevronRight, Calculator, Mail, Calendar } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { FiscalSettings } from "@/components/Settings/FiscalSettings";
 
 export default function SettingsPage() {
   const [tutorialOpen, setTutorialOpen] = useState(false);
@@ -36,6 +37,7 @@ export default function SettingsPage() {
   const tabs = [
     { id: "company", label: "Company Profile", icon: Building2, desc: "Manage business details & branding" },
     { id: "general", label: "Preferences", icon: Settings2, desc: "System defaults & localization" },
+    { id: "fiscal", label: "Fiscal", icon: Calendar, desc: "Fiscal year and period settings" },
     { id: "tax_invoice", label: "Tax & Invoicing", icon: Calculator, desc: "VAT rates, currency & prefixes" },
     { id: "communication", label: "Email & Templates", icon: Mail, desc: "Notifications & document emails" },
     { id: "administration", label: "Team & Roles", icon: Users, desc: "Manage users and permissions" },
@@ -124,6 +126,10 @@ export default function SettingsPage() {
                   
                   <TabsContent value="general" className="mt-0">
                     <GeneralSettings />
+                  </TabsContent>
+                  
+                  <TabsContent value="fiscal" className="mt-0">
+                    <FiscalSettings />
                   </TabsContent>
                   
                   <TabsContent value="tax_invoice" className="mt-0">

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import { useAuth } from "@/context/useAuth";
 import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import SEO from "@/components/SEO";
@@ -30,6 +31,8 @@ const schema = z
     companyName: z.string().trim().min(2, "Enter company name"),
     companyAddress: z.string().trim().min(5, "Enter company address"),
     companyPhone: z.string().trim().min(10, "Phone number must be 10 digits").max(20, "Phone number too long").refine((v) => v.replace(/\D/g, '').length === 10, "Phone number must be 10 digits"),
+    fiscalStartMonth: z.string().regex(/^([1-9]|1[0-2])$/, "Select a month"),
+    fiscalDefaultYear: z.string().regex(/^\d{4}$/, "Select a year"),
     termsAccepted: z.boolean().refine((v) => v === true, "You must accept the Terms & Conditions"),
   })
   .refine((data) => data.password === data.confirm, { message: "Passwords do not match", path: ["confirm"] });
@@ -48,7 +51,7 @@ export default function Signup() {
     if (user) navigate("/", { replace: true });
   }, [user, navigate]);
 
-  const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: "", email: "", password: "", confirm: "", companyName: "", companyAddress: "", companyPhone: "", termsAccepted: false } });
+  const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: "", email: "", password: "", confirm: "", companyName: "", companyAddress: "", companyPhone: "", fiscalStartMonth: String(new Date().getMonth() + 1), fiscalDefaultYear: String(new Date().getFullYear()), termsAccepted: false } });
 
   // Helper function to format error messages
   const formatErrorMessage = (error: any): string => {
@@ -85,17 +88,46 @@ export default function Signup() {
             .maybeSingle();
           const companyId = profile?.company_id || null;
           if (companyId) {
-            await supabase.from('companies').update({ name: values.companyName, address: values.companyAddress, phone: values.companyPhone }).eq('id', companyId);
-            try { await supabase.from('profiles').update({ terms_accepted_at: new Date().toISOString() as any }).eq('user_id', user.id); } catch {}
+            await supabase.from('companies').update({ name: values.companyName, address: values.companyAddress, phone: values.companyPhone } as any).eq('id', companyId);
+            try { await supabase.from('profiles').update({ terms_accepted_at: new Date().toISOString() } as any).eq('user_id', user.id); } catch {}
+            try {
+              const payload = {
+                company_id: companyId,
+                fiscal_year_start: parseInt(values.fiscalStartMonth),
+                fiscal_default_year: parseInt(values.fiscalDefaultYear),
+                fiscal_lock_year: true,
+                updated_at: new Date().toISOString(),
+              } as any;
+              const { data: existing } = await supabase
+                .from('app_settings')
+                .select('id')
+                .eq('company_id', companyId)
+                .maybeSingle();
+              if (existing?.id) {
+                await supabase.from('app_settings').update(payload).eq('id', existing.id);
+              } else {
+                await supabase.from('app_settings').insert(payload);
+              }
+            } catch {}
           } else {
             const { data: createdCompany } = await supabase
               .from('companies')
-              .insert({ name: values.companyName, address: values.companyAddress, phone: values.companyPhone, default_currency: 'ZAR' })
+              .insert({ name: values.companyName, address: values.companyAddress, phone: values.companyPhone, default_currency: 'ZAR', code: `CMP-${Date.now()}` } as any)
               .select('id')
               .single();
             if (createdCompany?.id) {
-              await supabase.from('profiles').update({ company_id: createdCompany.id, terms_accepted_at: new Date().toISOString() as any }).eq('user_id', user.id);
+              await supabase.from('profiles').update({ company_id: createdCompany.id, terms_accepted_at: new Date().toISOString() } as any).eq('user_id', user.id);
               await supabase.from('user_roles').upsert({ user_id: user.id, company_id: createdCompany.id, role: 'administrator' });
+              try {
+                const payload = {
+                  company_id: createdCompany.id,
+                  fiscal_year_start: parseInt(values.fiscalStartMonth),
+                  fiscal_default_year: parseInt(values.fiscalDefaultYear),
+                  fiscal_lock_year: true,
+                  updated_at: new Date().toISOString(),
+                } as any;
+                await supabase.from('app_settings').insert(payload);
+              } catch {}
             }
           }
         }
@@ -106,20 +138,25 @@ export default function Signup() {
           const { data: { user } } = await supabase.auth.getUser();
           if (user) {
             const { data: inv } = await supabase
-              .from('invites')
+              .from('invites' as any)
               .select('company_id, role, token')
               .eq('token', invite)
               .maybeSingle();
-            if (inv?.company_id) {
-              await supabase.from('profiles').upsert({ user_id: user.id, company_id: inv.company_id }).throwOnError();
-              await supabase.from('user_roles').upsert({ user_id: user.id, company_id: inv.company_id, role: inv.role }).throwOnError();
-              await supabase.from('invites').delete().eq('token', invite);
+            if ((inv as any)?.company_id) {
+              await supabase.from('profiles').upsert({ user_id: user.id, company_id: (inv as any).company_id }).throwOnError();
+              await supabase.from('user_roles').upsert({ user_id: user.id, company_id: (inv as any).company_id, role: (inv as any).role }).throwOnError();
+              await supabase.from('invites' as any).delete().eq('token', invite);
             }
           }
         } catch {}
         try { localStorage.removeItem('pendingInvite'); } catch {}
       }
-      try { await supabase.auth.signOut({ scope: 'local' as any }); } catch {}
+      try {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (currentSession) {
+          await supabase.auth.signOut({ scope: 'local' as any });
+        }
+      } catch {}
       toast({ title: "Account created", description: "Please sign in to your new account", });
       navigate("/login?signup=success", { replace: true });
     } catch (e: any) {
@@ -189,64 +226,7 @@ export default function Signup() {
                 )}
               />
 
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
-                    <FormControl>
-                      <Input 
-                        type="password" 
-                        autoComplete="new-password" 
-                        placeholder="••••••••" 
-                        {...field}
-                        onChange={(e) => {
-                          field.onChange(e);
-                          setPassword(e.target.value);
-                        }}
-                      />
-                    </FormControl>
-                    <div className="space-y-1 text-xs mt-2">
-                      <div className={`flex items-center gap-2 ${passwordChecks.minLength ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                        <span>{passwordChecks.minLength ? '✓' : '○'}</span>
-                        <span>At least 8 characters</span>
-                      </div>
-                      <div className={`flex items-center gap-2 ${passwordChecks.hasLowercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                        <span>{passwordChecks.hasLowercase ? '✓' : '○'}</span>
-                        <span>One lowercase letter (a-z)</span>
-                      </div>
-                      <div className={`flex items-center gap-2 ${passwordChecks.hasUppercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                        <span>{passwordChecks.hasUppercase ? '✓' : '○'}</span>
-                        <span>One uppercase letter (A-Z)</span>
-                      </div>
-                      <div className={`flex items-center gap-2 ${passwordChecks.hasNumber ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                        <span>{passwordChecks.hasNumber ? '✓' : '○'}</span>
-                        <span>One number (0-9)</span>
-                      </div>
-                      <div className={`flex items-center gap-2 ${passwordChecks.hasSpecial ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                        <span>{passwordChecks.hasSpecial ? '✓' : '○'}</span>
-                        <span>One special character</span>
-                      </div>
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="confirm"
-                render={({ field }) => (
-                  <FormItem>
-                  <FormLabel>Confirm password</FormLabel>
-                  <FormControl>
-                    <Input type="password" autoComplete="new-password" placeholder="••••••••" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+              
 
             <FormField
               control={form.control}
@@ -291,6 +271,54 @@ export default function Signup() {
               )}
             />
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                control={form.control}
+                name="fiscalStartMonth"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Financial Year Start Month</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger className="h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 12 }, (_, i) => (
+                          <SelectItem key={i + 1} value={String(i + 1)}>
+                            {new Date(2000, i, 1).toLocaleString('default', { month: 'long' })}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="fiscalDefaultYear"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Financial Year (Start Year)</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger className="h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i).map(y => (
+                          <SelectItem key={y} value={String(y)}>
+                            {parseInt(form.getValues('fiscalStartMonth')) === 1 ? y : `FY ${y}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
             <FormField
               control={form.control}
               name="termsAccepted"
@@ -301,6 +329,65 @@ export default function Signup() {
                     <FormLabel htmlFor="terms">I accept the Terms & Conditions</FormLabel>
                     <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => setTermsOpen(true)}>View Terms</Button>
                   </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="password"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Password</FormLabel>
+                  <FormControl>
+                    <Input 
+                      type="password" 
+                      autoComplete="new-password" 
+                      placeholder="••••••••" 
+                      {...field}
+                      onChange={(e) => {
+                        field.onChange(e);
+                        setPassword(e.target.value);
+                      }}
+                    />
+                  </FormControl>
+                  <div className="space-y-1 text-xs mt-2">
+                    <div className={`flex items-center gap-2 ${passwordChecks.minLength ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                      <span>{passwordChecks.minLength ? '✓' : '○'}</span>
+                      <span>At least 8 characters</span>
+                    </div>
+                    <div className={`flex items-center gap-2 ${passwordChecks.hasLowercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                      <span>{passwordChecks.hasLowercase ? '✓' : '○'}</span>
+                      <span>One lowercase letter (a-z)</span>
+                    </div>
+                    <div className={`flex items-center gap-2 ${passwordChecks.hasUppercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                      <span>{passwordChecks.hasUppercase ? '✓' : '○'}</span>
+                      <span>One uppercase letter (A-Z)</span>
+                    </div>
+                    <div className={`flex items-center gap-2 ${passwordChecks.hasNumber ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                      <span>{passwordChecks.hasNumber ? '✓' : '○'}</span>
+                      <span>One number (0-9)</span>
+                    </div>
+                    <div className={`flex items-center gap-2 ${passwordChecks.hasSpecial ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
+                      <span>{passwordChecks.hasSpecial ? '✓' : '○'}</span>
+                      <span>One special character</span>
+                    </div>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="confirm"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Confirm password</FormLabel>
+                  <FormControl>
+                    <Input type="password" autoComplete="new-password" placeholder="••••••••" {...field} />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

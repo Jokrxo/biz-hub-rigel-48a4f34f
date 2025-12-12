@@ -24,6 +24,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { exportFinancialReportToExcel, exportFinancialReportToPDF } from "@/lib/export-utils";
 import type { FinancialReportLine } from "@/lib/export-utils";
+import { useFiscalYear } from "@/hooks/use-fiscal-year";
 
 export const FinancialReports = () => {
   const [loading, setLoading] = useState(true);
@@ -32,12 +33,12 @@ export const FinancialReports = () => {
   const [cashFlowData, setCashFlowData] = useState<FinancialReportLine[]>([]);
   const [activeReport, setActiveReport] = useState<'pl' | 'bs' | 'cf'>('pl');
   const { toast } = useToast();
+  const { selectedFiscalYear, getFiscalYearDates } = useFiscalYear();
 
   async function generateCashFlow(companyId: string) {
     try {
-      const currentYear = new Date().getFullYear();
-      const periodStart = `${currentYear}-01-01`;
-      const periodEnd = `${currentYear}-12-31`;
+      const fy = typeof selectedFiscalYear === 'number' ? selectedFiscalYear : new Date().getFullYear();
+      const { startStr: periodStart, endStr: periodEnd } = getFiscalYearDates(fy);
 
       const { data, error } = await supabase
         .rpc('generate_cash_flow', {
@@ -53,9 +54,8 @@ export const FinancialReports = () => {
         const startDateObj = new Date(periodStart);
         const endDateObj = new Date(periodEnd);
         endDateObj.setHours(23, 59, 59, 999);
-        const prevYear = (new Date(periodStart).getFullYear()) - 1;
-        const prevStart = `${prevYear}-01-01`;
-        const prevEnd = `${prevYear}-12-31`;
+        const prevFy = fy - 1;
+        const { startStr: prevStart, endStr: prevEnd } = getFiscalYearDates(prevFy);
         const buildTrialBalance = async (start: string, end: string) => {
           const { data: accounts } = await supabase
             .from('chart_of_accounts')
@@ -244,9 +244,8 @@ export const FinancialReports = () => {
         .eq('user_id', user.id)
         .single();
       if (!profile?.company_id) return;
-      const now = new Date();
-      const periodStart = `${now.getFullYear()}-01-01`;
-      const periodEnd = now.toISOString().split('T')[0];
+      const fy = typeof selectedFiscalYear === 'number' ? selectedFiscalYear : new Date().getFullYear();
+      const { startStr: periodStart, endStr: periodEnd } = getFiscalYearDates(fy);
       const trialBalancePeriod = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
       const trialBalanceAsOfEnd = await fetchTrialBalanceCumulativeToEnd(profile.company_id, periodEnd);
       generateProfitLoss(trialBalancePeriod);
@@ -256,7 +255,7 @@ export const FinancialReports = () => {
       console.error('Error loading financial data:', error);
       toast({ title: "Error", description: "Failed to load financial reports", variant: "destructive" });
     } finally { setLoading(false); }
-  }, [toast]);
+  }, [toast, selectedFiscalYear, getFiscalYearDates]);
   useEffect(() => { loadFinancialData(); }, [loadFinancialData]);
 
 

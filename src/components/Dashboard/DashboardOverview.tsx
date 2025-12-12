@@ -27,6 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/context/useAuth";
 import { DashboardCalendar } from "./DashboardCalendar";
 import { FinancialHealthInsight } from "./FinancialHealthInsight";
+import { useFiscalYear } from "@/hooks/use-fiscal-year";
 
 export const DashboardOverview = () => {
   const { toast } = useToast();
@@ -41,7 +42,9 @@ export const DashboardOverview = () => {
     totalIncome: 0,
     totalExpenses: 0,
     operatingExpenses: 0,
-    bankBalance: 0
+    bankBalance: 0,
+    currentAssets: 0,
+    currentLiabilities: 0
   });
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
@@ -74,10 +77,19 @@ export const DashboardOverview = () => {
   const [companyId, setCompanyId] = useState<string>("");
   const [chartMonths, setChartMonths] = useState<number>(12);
   const loadingRef = useRef(false);
+  const { fiscalStartMonth, selectedFiscalYear, setSelectedFiscalYear, getCalendarYearForFiscalPeriod, loading: fiscalLoading } = useFiscalYear();
   
   // Date filter state
   const [selectedMonth, setSelectedMonth] = useState<number>(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+
+  useEffect(() => {
+    if (!fiscalLoading && typeof selectedFiscalYear === 'number') {
+      setSelectedYear(selectedFiscalYear);
+      const nextMonth = fiscalStartMonth === 12 ? 1 : (fiscalStartMonth + 1);
+      setSelectedMonth(nextMonth);
+    }
+  }, [fiscalLoading, selectedFiscalYear, fiscalStartMonth]);
   
   // Widget visibility settings
   const [widgets, setWidgets] = useState(() => {
@@ -152,10 +164,12 @@ export const DashboardOverview = () => {
         debit,
         credit,
         transactions!inner (
-          transaction_date
+          transaction_date,
+          status
         )
       `)
       .eq('transactions.company_id', companyId)
+      .eq('transactions.status', 'posted')
       .gte('transactions.transaction_date', startDateObj.toISOString())
       .lte('transactions.transaction_date', endDateObj.toISOString());
     if (txError) throw txError;
@@ -181,10 +195,7 @@ export const DashboardOverview = () => {
       const type = (acc.account_type || '').toLowerCase();
       const naturalDebit = type === 'asset' || type === 'expense';
       let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
-      if (acc.account_code === '1300') { balance = totalInventoryValue; }
-      const isInventoryName = (acc.account_name || '').toLowerCase().includes('inventory');
-      const isPrimaryInventory = acc.account_code === '1300';
-      const shouldShow = Math.abs(balance) > 0.01 && (!isInventoryName || isPrimaryInventory);
+      const shouldShow = Math.abs(balance) > 0.01;
       if (shouldShow) { trialBalance.push({ account_id: acc.id, account_code: acc.account_code, account_name: acc.account_name, account_type: acc.account_type, balance }); }
     });
     return trialBalance;
@@ -203,13 +214,13 @@ export const DashboardOverview = () => {
       if (loadingRef.current) return;
       loadingRef.current = true;
       const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) { setLoading(false); return; }
+      if (authError || !user) { setLoading(false); loadingRef.current = false; reloadErrorCountRef.current += 1; toast({ title: "Session expired", description: "Please sign in again" }); navigate("/login?session=expired", { replace: true }); return; }
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("company_id, first_name, last_name")
         .eq("user_id", user.id)
         .single();
-      if (profileError || !profile) { setLoading(false); return; }
+      if (profileError || !profile) { setLoading(false); loadingRef.current = false; reloadErrorCountRef.current += 1; return; }
       setCompanyId(String(profile.company_id));
       try {
         const todoKey = `dashboard_todo_${String(profile.company_id)}`;
@@ -235,10 +246,15 @@ export const DashboardOverview = () => {
       } catch {}
       const fullName = [String(profile.first_name || '').trim(), String(profile.last_name || '').trim()].filter(Boolean).join(' ');
       setUserName(fullName || (user.user_metadata?.name as string) || user.email || "");
-      const startDate = new Date(selectedYear, selectedMonth - 1, 1);
-      const endDate = new Date(selectedYear, selectedMonth, 0, 23, 59, 59);
-      const rangeStart = new Date(selectedYear, selectedMonth - chartMonths, 1);
-      const cacheKey = `db-cache-${String(profile.company_id)}-${selectedYear}-${selectedMonth}-${chartMonths}m`;
+      
+      const calendarYear = getCalendarYearForFiscalPeriod(selectedYear, selectedMonth);
+      const startDate = new Date(calendarYear, selectedMonth - 1, 1);
+      const endDate = new Date(calendarYear, selectedMonth, 0, 23, 59, 59);
+      
+      const rangeStart = new Date(startDate);
+      rangeStart.setMonth(rangeStart.getMonth() - chartMonths);
+      
+      const cacheKey = `db-cache-${String(profile.company_id)}-${selectedYear}-${selectedMonth}-${chartMonths}m-fy${fiscalStartMonth}`;
       try {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
@@ -342,9 +358,12 @@ export const DashboardOverview = () => {
       setExpenseWheelInner([{ name: 'Income', value: totals.income }, { name: 'Expenses', value: totals.expenses }]);
 
       const months: Array<{ start: Date; end: Date; label: string }> = [];
-      for (let i = chartMonths - 1; i >= 0; i--) {
-        const ms = new Date(selectedYear, selectedMonth - 1 - i, 1);
-        const me = new Date(selectedYear, selectedMonth - 1 - i + 1, 0, 23, 59, 59, 999);
+      for (let i = 0; i < chartMonths; i++) {
+        const monthIndex = (fiscalStartMonth - 1 + i) % 12;
+        const monthNum = monthIndex + 1;
+        const yearForMonth = getCalendarYearForFiscalPeriod(selectedYear, monthNum);
+        const ms = new Date(yearForMonth, monthIndex, 1);
+        const me = new Date(yearForMonth, monthIndex + 1, 0, 23, 59, 59, 999);
         const label = ms.toLocaleDateString('en-ZA', { month: 'short' });
         months.push({ start: ms, end: me, label });
       }
@@ -581,7 +600,9 @@ export const DashboardOverview = () => {
         totalIncome: incomeTotalAgg,
         totalExpenses: expenseTotalAgg,
         operatingExpenses: opexTotalAgg,
-        bankBalance
+        bankBalance,
+        currentAssets: 0,
+        currentLiabilities: 0
       };
 
       try {
@@ -980,12 +1001,14 @@ export const DashboardOverview = () => {
       setCashOnTrack(Number(newMetrics.bankBalance || 0) >= min);
       setLoading(false);
       loadingRef.current = false;
+      reloadErrorCountRef.current = 0;
       try { localStorage.setItem(cacheKey, JSON.stringify({ metrics: newMetrics, recentTransactions: recent, chartData: monthlyData, netProfitTrend: netTrend, incomeBreakdown, expenseBreakdown, arTop10: arTop, apTop10: apTop, arDonut: arTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })), apDonut: apTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })) })); } catch {}
     } catch (error) {
       setLoading(false);
       loadingRef.current = false;
+      reloadErrorCountRef.current += 1;
     }
-  }, [selectedMonth, selectedYear, chartMonths, fetchTrialBalanceForPeriod]);
+  }, [selectedMonth, selectedYear, chartMonths, fetchTrialBalanceForPeriod, getCalendarYearForFiscalPeriod]);
 
   useEffect(() => {
     const h = () => { loadDashboardData(); };
@@ -1008,9 +1031,11 @@ export const DashboardOverview = () => {
 
   const reloadTimerRef = useRef<number | null>(null);
   const lastReloadAtRef = useRef<number>(0);
+  const reloadErrorCountRef = useRef<number>(0);
   const scheduleReload = useCallback(() => {
     const now = Date.now();
     if (now - lastReloadAtRef.current < 10000) return;
+    if (reloadErrorCountRef.current >= 3) return;
     lastReloadAtRef.current = now;
     if (reloadTimerRef.current) {
       clearTimeout(reloadTimerRef.current);
@@ -1224,27 +1249,25 @@ export const DashboardOverview = () => {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="1">January</SelectItem>
-                <SelectItem value="2">February</SelectItem>
-                <SelectItem value="3">March</SelectItem>
-                <SelectItem value="4">April</SelectItem>
-                <SelectItem value="5">May</SelectItem>
-                <SelectItem value="6">June</SelectItem>
-                <SelectItem value="7">July</SelectItem>
-                <SelectItem value="8">August</SelectItem>
-                <SelectItem value="9">September</SelectItem>
-                <SelectItem value="10">October</SelectItem>
-                <SelectItem value="11">November</SelectItem>
-                <SelectItem value="12">December</SelectItem>
+                {Array.from({ length: 12 }, (_, i) => {
+                  const monthIndex = (fiscalStartMonth - 1 + i) % 12;
+                  const monthNum = monthIndex + 1;
+                  const date = new Date(2000, monthIndex, 1);
+                  return (
+                    <SelectItem key={monthNum} value={monthNum.toString()}>
+                      {date.toLocaleString('default', { month: 'long' })}
+                    </SelectItem>
+                  );
+                })}
               </SelectContent>
             </Select>
-            <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
-              <SelectTrigger className="w-24">
+            <Select value={selectedYear.toString()} onValueChange={(value) => { const y = parseInt(value); setSelectedYear(y); setSelectedFiscalYear(y); }}>
+              <SelectTrigger className="w-28">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i).map(year => (
-                  <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
+                  <SelectItem key={year} value={year.toString()}>{fiscalStartMonth === 1 ? year : `FY ${year}`}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -1261,7 +1284,7 @@ export const DashboardOverview = () => {
           </div>
           <Badge variant="outline" className="gap-2">
             <Calendar className="h-4 w-4" />
-            {new Date(selectedYear, selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })} • {chartMonths} months
+            {new Date(getCalendarYearForFiscalPeriod(selectedYear, selectedMonth), selectedMonth - 1).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })} • {chartMonths} months
           </Badge>
           <FinancialHealthInsight metrics={metrics} />
           <DashboardCalendar />

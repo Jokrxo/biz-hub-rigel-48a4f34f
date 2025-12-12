@@ -63,15 +63,14 @@ export const PageLoader = () => {
   }, []);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-subtle">
-      <div className="text-center space-y-4">
-        <LoadingSpinner size="lg" />
-        <div className="space-y-2">
-          {/* Removed Rigel Business text as requested */}
-          <div className="text-2xl font-bold bg-gradient-primary bg-clip-text text-transparent">
-            {progress}%
-          </div>
-          <p className="text-sm text-muted-foreground animate-pulse">Loading...</p>
+    <div className="pointer-events-none fixed inset-0 z-50">
+      <div className="fixed top-0 left-0 w-full h-1 bg-muted">
+        <div className="h-1 bg-primary transition-all" style={{ width: `${progress}%` }} />
+      </div>
+      <div className="fixed bottom-4 right-4">
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-background/80 backdrop-blur shadow">
+          <LoadingSpinner size="sm" />
+          <span className="text-xs text-muted-foreground">Loading…</span>
         </div>
       </div>
     </div>

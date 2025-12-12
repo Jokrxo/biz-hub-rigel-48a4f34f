@@ -116,7 +116,7 @@ export default function Loans() {
 
   const generateUniqueLoanRef = () => {
     const today = new Date().toISOString().slice(0,10).replace(/-/g,'');
-    let rand = Math.random().toString(36).slice(2,8);
+    const rand = Math.random().toString(36).slice(2,8);
     return `LN-${today}-${rand}`;
   };
 
@@ -502,7 +502,7 @@ export default function Loans() {
                       const termMonths = loanForm.termUnit === 'years' ? termVal * 12 : termVal;
                       const monthlyRate = (ratePct / 100) / 12;
                       const monthlyRepayment = monthlyRate === 0 ? (principal / termMonths) : (principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1);
-                      let ref = (loanForm.reference && loanForm.reference.trim() !== "") ? loanForm.reference.trim() : generateUniqueLoanRef();
+                      const ref = (loanForm.reference && loanForm.reference.trim() !== "") ? loanForm.reference.trim() : generateUniqueLoanRef();
                       const loanType = loanForm.classification || (termMonths >= 12 ? 'long' : 'short');
                       
                       const { error } = await supabase.from('loans' as any).insert({
