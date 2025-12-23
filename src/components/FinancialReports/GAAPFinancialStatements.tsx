@@ -4918,7 +4918,7 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
 
     const type = (acc.account_type || '').toLowerCase();
     const naturalDebit = type === 'asset' || type === 'expense';
-    const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+    let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
     if (String(acc.account_code || '') === '2000' && typeof apBalanceAsOf === 'number') {
       balance = apBalanceAsOf;
