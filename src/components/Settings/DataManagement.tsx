@@ -176,7 +176,6 @@ export const DataManagement = () => {
 
           const rows = results.data as any[];
           let successCount = 0;
-          let errors = 0;
 
           if (importType === "customers" || importType === "suppliers") {
             const table = importType;

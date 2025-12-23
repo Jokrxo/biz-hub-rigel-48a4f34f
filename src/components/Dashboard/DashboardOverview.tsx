@@ -28,6 +28,8 @@ import { useAuth } from "@/context/useAuth";
 import { DashboardCalendar } from "./DashboardCalendar";
 import { FinancialHealthInsight } from "./FinancialHealthInsight";
 import { useFiscalYear } from "@/hooks/use-fiscal-year";
+import { Skeleton } from "@/components/ui/skeleton";
+import { isDemoMode, getDemoCompany, getDemoTransactions, getDemoTrialBalanceForPeriod } from "@/lib/demo-data";
 
 export const DashboardOverview = () => {
   const { toast } = useToast();
@@ -76,6 +78,9 @@ export const DashboardOverview = () => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [companyId, setCompanyId] = useState<string>("");
   const [chartMonths, setChartMonths] = useState<number>(12);
+  const [sbStatus, setSbStatus] = useState<'online' | 'offline' | 'connecting'>('connecting');
+  const [sbLatency, setSbLatency] = useState<number | null>(null);
+  const [sbStrength, setSbStrength] = useState<number>(0);
   const loadingRef = useRef(false);
   const { fiscalStartMonth, selectedFiscalYear, setSelectedFiscalYear, getCalendarYearForFiscalPeriod, loading: fiscalLoading } = useFiscalYear();
   
@@ -114,6 +119,54 @@ export const DashboardOverview = () => {
     return { ...defaultWidgets, ...parsed };
   });
   const [todoItems, setTodoItems] = useState<Array<{ id: string; label: string; done: boolean }>>([]);
+
+  const checkSupabaseConnection = useCallback(async () => {
+    try {
+      const dm = typeof localStorage !== 'undefined' && localStorage.getItem('rigel_demo_mode') === 'true';
+      if (dm) {
+        setSbStatus('online');
+        setSbStrength(3);
+        setSbLatency(null);
+        return;
+      }
+      setSbStatus(prev => prev === 'offline' ? 'connecting' : prev);
+      const start = performance.now();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setSbStatus('offline');
+        setSbStrength(0);
+        setSbLatency(null);
+        return;
+      }
+      const { error } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('user_id', user.id)
+        .limit(1);
+      if (error) throw error;
+      const latency = Math.round(performance.now() - start);
+      setSbLatency(latency);
+      setSbStatus('online');
+      setSbStrength(latency < 150 ? 3 : latency < 400 ? 2 : 1);
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (msg.includes('AbortError') || msg.includes('ERR_ABORTED')) {
+        setSbStatus('offline');
+        setSbStrength(0);
+        setSbLatency(null);
+        return;
+      }
+      setSbStatus('offline');
+      setSbStrength(0);
+      setSbLatency(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(checkSupabaseConnection, 15000);
+    checkSupabaseConnection();
+    return () => { try { clearInterval(timer); } catch {} };
+  }, [checkSupabaseConnection]);
 
 
 
@@ -194,7 +247,7 @@ export const DashboardOverview = () => {
       ledgerEntries?.forEach((entry: any) => { if (entry.account_id === acc.id) { sumDebit += Number(entry.debit || 0); sumCredit += Number(entry.credit || 0); } });
       const type = (acc.account_type || '').toLowerCase();
       const naturalDebit = type === 'asset' || type === 'expense';
-      let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+      const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
       const shouldShow = Math.abs(balance) > 0.01;
       if (shouldShow) { trialBalance.push({ account_id: acc.id, account_code: acc.account_code, account_name: acc.account_name, account_type: acc.account_type, balance }); }
     });
@@ -213,17 +266,30 @@ export const DashboardOverview = () => {
     try {
       if (loadingRef.current) return;
       loadingRef.current = true;
+      const isDemo = isDemoMode();
       const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError || !user) { setLoading(false); loadingRef.current = false; reloadErrorCountRef.current += 1; toast({ title: "Session expired", description: "Please sign in again" }); navigate("/login?session=expired", { replace: true }); return; }
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("company_id, first_name, last_name")
-        .eq("user_id", user.id)
-        .single();
-      if (profileError || !profile) { setLoading(false); loadingRef.current = false; reloadErrorCountRef.current += 1; return; }
-      setCompanyId(String(profile.company_id));
+      if (!isDemo && (authError || !user)) { setLoading(false); loadingRef.current = false; reloadErrorCountRef.current += 1; toast({ title: "Session expired", description: "Please sign in again" }); navigate("/login?session=expired", { replace: true }); return; }
+      let cid = "";
+      let nameForUser = "";
+      if (isDemo) {
+        const company = getDemoCompany();
+        cid = String(company.id);
+        nameForUser = "Demo User";
+      } else {
+        const { data: profile, error: profileError } = await supabase
+          .from("profiles")
+          .select("company_id, first_name, last_name")
+          .eq("user_id", user.id)
+          .single();
+        if (profileError || !profile) { setLoading(false); loadingRef.current = false; reloadErrorCountRef.current += 1; return; }
+        cid = String(profile.company_id);
+        const fullName = [String(profile.first_name || '').trim(), String(profile.last_name || '').trim()].filter(Boolean).join(' ');
+        nameForUser = fullName || (user.user_metadata?.name as string) || user.email || "";
+      }
+      setCompanyId(cid);
+      setUserName(nameForUser);
       try {
-        const todoKey = `dashboard_todo_${String(profile.company_id)}`;
+        const todoKey = `dashboard_todo_${String(cid)}`;
         const savedTodos = localStorage.getItem(todoKey);
         if (savedTodos) {
           setTodoItems(JSON.parse(savedTodos));
@@ -244,8 +310,6 @@ export const DashboardOverview = () => {
           localStorage.setItem(todoKey, JSON.stringify(defaults));
         }
       } catch {}
-      const fullName = [String(profile.first_name || '').trim(), String(profile.last_name || '').trim()].filter(Boolean).join(' ');
-      setUserName(fullName || (user.user_metadata?.name as string) || user.email || "");
       
       const calendarYear = getCalendarYearForFiscalPeriod(selectedYear, selectedMonth);
       const startDate = new Date(calendarYear, selectedMonth - 1, 1);
@@ -254,7 +318,7 @@ export const DashboardOverview = () => {
       const rangeStart = new Date(startDate);
       rangeStart.setMonth(rangeStart.getMonth() - chartMonths);
       
-      const cacheKey = `db-cache-${String(profile.company_id)}-${selectedYear}-${selectedMonth}-${chartMonths}m-fy${fiscalStartMonth}`;
+      const cacheKey = `db-cache-${String(cid)}-${selectedYear}-${selectedMonth}-${chartMonths}m-fy${fiscalStartMonth}`;
       try {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
@@ -268,31 +332,39 @@ export const DashboardOverview = () => {
       } catch {}
       const hadCache = !!localStorage.getItem(cacheKey);
       if (!hadCache) setLoading(true);
-      const txPromise = supabase
-        .from("transactions")
-        .select(`
-          id,
-          reference_number,
-          description,
-          total_amount,
-          transaction_date,
-          transaction_type,
-          status
-        `)
-        .eq("company_id", profile.company_id)
-        .gte("transaction_date", rangeStart.toISOString())
-        .lte("transaction_date", endDate.toISOString())
-        .order("transaction_date", { ascending: false });
-      const tbPromise = fetchTrialBalanceForPeriod(String(profile.company_id), startDate.toISOString(), endDate.toISOString());
-      const [txRes, trialBalance] = await Promise.all([txPromise, tbPromise]);
-      if ((txRes as any)?.error) throw (txRes as any).error;
-      const transactions = (txRes as any)?.data || [];
+      let transactions: any[] = [];
+      let trialBalance: any[] = [];
+      if (isDemo) {
+        transactions = await getDemoTransactions();
+        trialBalance = await getDemoTrialBalanceForPeriod(startDate.toISOString(), endDate.toISOString());
+      } else {
+        const txPromise = supabase
+          .from("transactions")
+          .select(`
+            id,
+            reference_number,
+            description,
+            total_amount,
+            transaction_date,
+            transaction_type,
+            status
+          `)
+          .eq("company_id", cid)
+          .gte("transaction_date", rangeStart.toISOString())
+          .lte("transaction_date", endDate.toISOString())
+          .order("transaction_date", { ascending: false });
+        const tbPromise = fetchTrialBalanceForPeriod(String(cid), startDate.toISOString(), endDate.toISOString());
+        const [txRes, tbRes] = await Promise.all([txPromise, tbPromise]);
+        if ((txRes as any)?.error) throw (txRes as any).error;
+        transactions = (txRes as any)?.data || [];
+        trialBalance = tbRes;
+      }
       const recent = (transactions || []).slice(0, 10).map((t: any) => ({
         id: String(t.id || t.reference_number || ''),
         description: String(t.description || ''),
         date: new Date(String(t.transaction_date || new Date())).toLocaleDateString('en-ZA'),
-        type: ['sales','income','asset_disposal','invoice'].includes(String(t.transaction_type || '').toLowerCase()) ? 'income' : 'expense',
-        amount: Number(t.total_amount || 0),
+        type: String(t.type || '').toLowerCase() === 'income' ? 'income' : (['sales','income','asset_disposal','invoice'].includes(String(t.transaction_type || '').toLowerCase()) ? 'income' : 'expense'),
+        amount: Number(t.total_amount || t.amount || 0),
         status: String(t.status || 'pending').toLowerCase()
       }));
       setRecentTransactions(recent);
@@ -319,13 +391,13 @@ export const DashboardOverview = () => {
         const { data: te } = await supabase
           .from('transaction_entries')
           .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id)`) 
-          .eq('transactions.company_id', profile.company_id)
+          .eq('transactions.company_id', companyId)
           .gte('transactions.transaction_date', startDate.toISOString())
           .lte('transactions.transaction_date', endDate.toISOString());
         const { data: accounts } = await supabase
           .from('chart_of_accounts')
           .select('id, account_type, account_name, account_code')
-          .eq('company_id', profile.company_id)
+          .eq('company_id', companyId)
           .eq('is_active', true);
         const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
         const nameById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
@@ -373,13 +445,13 @@ export const DashboardOverview = () => {
       const { data: teRange } = await supabase
         .from('transaction_entries')
         .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id)`) 
-        .eq('transactions.company_id', profile.company_id)
+        .eq('transactions.company_id', cid)
         .gte('transactions.transaction_date', months[0].start.toISOString())
         .lte('transactions.transaction_date', months[months.length - 1].end.toISOString());
       const { data: accountsAll } = await supabase
         .from('chart_of_accounts')
         .select('id, account_type, account_name, account_code')
-        .eq('company_id', profile.company_id)
+        .eq('company_id', cid)
         .eq('is_active', true);
       const typeByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
       const nameByIdAll = new Map<string, string>((accountsAll || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
@@ -448,7 +520,7 @@ export const DashboardOverview = () => {
       const { data: fa } = await supabase
         .from('fixed_assets')
         .select('id, description, cost, purchase_date, useful_life_years, status')
-        .eq('company_id', profile.company_id);
+        .eq('company_id', companyId);
       if (fa && fa.length > 0) {
         for (let i = 0; i < months.length; i++) {
           const monthEnd = months[i].end;
@@ -472,7 +544,7 @@ export const DashboardOverview = () => {
       const { data: ledRange } = await supabase
         .from('ledger_entries')
         .select('account_id, debit, credit, entry_date')
-        .eq('company_id', profile.company_id)
+        .eq('company_id', cid)
         .gte('entry_date', months[0].start.toISOString())
         .lte('entry_date', months[months.length - 1].end.toISOString());
 
@@ -480,13 +552,13 @@ export const DashboardOverview = () => {
       const { data: bsLedgerEntries } = await supabase
         .from('ledger_entries')
         .select('account_id, debit, credit')
-        .eq('company_id', profile.company_id)
+        .eq('company_id', cid)
         .lte('entry_date', endDate.toISOString());
 
       const { data: accMapData } = await supabase
         .from('chart_of_accounts')
         .select('id, account_type, account_name, account_code')
-        .eq('company_id', profile.company_id)
+        .eq('company_id', cid)
         .eq('is_active', true);
       const accTypeById = new Map<string, string>((accMapData || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
       const accNameById = new Map<string, string>((accMapData || []).map((a: any) => [String(a.id), String(a.account_name || '')]));
@@ -568,7 +640,7 @@ export const DashboardOverview = () => {
         const { data: quotesRows } = await supabase
           .from('quotes')
           .select('created_at, quote_date, status, company_id')
-          .eq('company_id', profile.company_id);
+          .eq('company_id', cid);
         const rangeStartIso = months[0].start.toISOString();
         const rangeEndIso = months[months.length - 1].end.toISOString();
         let accepted = 0; let unaccepted = 0;
@@ -588,7 +660,7 @@ export const DashboardOverview = () => {
       const { data: banks } = await supabase
         .from('bank_accounts')
         .select('current_balance')
-        .eq('company_id', profile.company_id);
+        .eq('company_id', cid);
       const bankBalance = (banks || []).reduce((s: number, b: any) => s + Number(b.current_balance || 0), 0);
       const operatingExpenses12 = monthlyData.reduce((sum: number, d: any) => sum + Number(d.expenses || 0), 0);
       const incomeBreakAgg = Object.entries(incAgg).map(([id, val]) => ({ name: nameByIdAll.get(id) || id, value: Number(val.toFixed(2)) })).sort((a, b) => b.value - a.value).slice(0, 10);
@@ -609,7 +681,7 @@ export const DashboardOverview = () => {
         const { data: budgetRows } = await supabase
           .from('budgets')
           .select('account_id, category, budgeted_amount, status')
-          .eq('company_id', profile.company_id)
+          .eq('company_id', cid)
           .eq('budget_year', selectedYear)
           .eq('budget_month', selectedMonth)
           .in('status', ['active','approved']);
@@ -620,7 +692,7 @@ export const DashboardOverview = () => {
           const { data: te } = await supabase
             .from('transaction_entries')
             .select(`account_id, debit, credit, status, transactions!inner (transaction_date, company_id, status)`) 
-            .eq('transactions.company_id', profile.company_id)
+            .eq('transactions.company_id', cid)
             .in('transactions.status', ['posted','approved'])
             .gte('transactions.transaction_date', startDate.toISOString())
             .lte('transactions.transaction_date', endDate.toISOString())
@@ -628,7 +700,7 @@ export const DashboardOverview = () => {
           const { data: accounts } = await supabase
             .from('chart_of_accounts')
             .select('id, account_type')
-            .eq('company_id', profile.company_id)
+            .eq('company_id', cid)
             .in('id', accIds);
           const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
           actualMap = {};
@@ -653,7 +725,7 @@ export const DashboardOverview = () => {
         const cfActual = { operating: 0, investing: 0, financing: 0, net: 0 } as any;
         if (cfBudgets.length > 0) {
           const { data: cf } = await supabase.rpc('generate_cash_flow', {
-            _company_id: profile.company_id,
+            _company_id: cid,
             _period_start: startDate.toISOString(),
             _period_end: endDate.toISOString()
           });
@@ -690,13 +762,13 @@ export const DashboardOverview = () => {
           const { data: te } = await supabase
             .from('transaction_entries')
             .select(`account_id, debit, credit, transactions!inner (transaction_date, company_id)`) 
-            .eq('transactions.company_id', profile.company_id)
+            .eq('transactions.company_id', companyId)
             .gte('transactions.transaction_date', startDate.toISOString())
             .lte('transactions.transaction_date', endDate.toISOString());
           const { data: accounts } = await supabase
             .from('chart_of_accounts')
             .select('id, account_type, account_name, account_code')
-            .eq('company_id', profile.company_id)
+            .eq('company_id', companyId)
             .eq('is_active', true);
 
           const typeById = new Map<string, string>((accounts || []).map((a: any) => [String(a.id), String(a.account_type || '').toLowerCase()]));
@@ -780,7 +852,7 @@ export const DashboardOverview = () => {
               const { data: les } = await supabase
                 .from('ledger_entries')
                 .select('account_id, debit, credit')
-                .eq('company_id', profile.company_id)
+                .eq('company_id', cid)
                 .gte('entry_date', startDate.toISOString())
                 .lte('entry_date', endDate.toISOString());
               const bb = (les || []).filter((e: any) => bankIds.has(String(e.account_id))).reduce((s: number, e: any) => s + (Number(e.debit || 0) - Number(e.credit || 0)), 0);
@@ -793,7 +865,7 @@ export const DashboardOverview = () => {
       const { data: invoices } = await supabase
         .from('invoices')
         .select('id, customer_name, total_amount, status, invoice_date, due_date')
-        .eq('company_id', profile.company_id)
+        .eq('company_id', cid)
         .gte('invoice_date', rangeStart.toISOString())
         .lte('invoice_date', endDate.toISOString());
       const unpaidStatuses = new Set(['unpaid','pending','partial','sent','overdue','open']);
@@ -825,13 +897,13 @@ export const DashboardOverview = () => {
       const { data: purchases } = await supabase
         .from('purchase_orders')
         .select('id, supplier_id, supplier_name, po_number, total_amount, status, po_date, due_date')
-        .eq('company_id', profile.company_id)
+        .eq('company_id', cid)
         .gte('po_date', apStart.toISOString())
         .lte('po_date', endDate.toISOString());
       const { data: bills } = await supabase
         .from('bills')
         .select('id, supplier_name, total_amount, status, bill_date, due_date')
-        .eq('company_id', profile.company_id)
+        .eq('company_id', cid)
         .gte('bill_date', rangeStart.toISOString())
         .lte('bill_date', endDate.toISOString());
       const supplierIds = Array.from(new Set([
@@ -970,7 +1042,7 @@ export const DashboardOverview = () => {
         const { data: products } = await supabase
           .from('items')
           .select('name, quantity_on_hand, item_type')
-          .eq('company_id', profile.company_id)
+          .eq('company_id', cid)
           .eq('item_type', 'product');
         const stocks = (products || [])
           .map((p: any) => ({ name: String(p.name || 'Unknown'), qty: Number(p.quantity_on_hand || 0) }))
@@ -1016,8 +1088,9 @@ export const DashboardOverview = () => {
     return () => window.removeEventListener('payroll-data-changed', h);
   }, [loadDashboardData]);
   useEffect(() => {
+    if (fiscalLoading) return;
     loadDashboardData();
-  }, [selectedMonth, selectedYear, loadDashboardData]);
+  }, [selectedMonth, selectedYear, fiscalLoading, loadDashboardData]);
 
   useEffect(() => {
     const channel = supabase
@@ -1226,9 +1299,43 @@ export const DashboardOverview = () => {
   const [quotesAcceptanceDonut, setQuotesAcceptanceDonut] = useState<Array<{ name: string; value: number }>>([]);
 
   if (loading) {
-    return <div className="flex items-center justify-center h-96">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-    </div>;
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-4 w-64 mt-2" />
+          </div>
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-9 w-32" />
+            <Skeleton className="h-9 w-28" />
+            <Skeleton className="h-9 w-28" />
+            <Skeleton className="h-9 w-24" />
+            <Skeleton className="h-9 w-9" />
+            <Skeleton className="h-9 w-9" />
+          </div>
+        </div>
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="card-professional border rounded-lg p-4">
+              <Skeleton className="h-4 w-24 mb-3" />
+              <Skeleton className="h-8 w-40" />
+              <Skeleton className="h-3 w-28 mt-3" />
+            </div>
+          ))}
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div className="card-professional border rounded-lg p-4">
+            <Skeleton className="h-6 w-32 mb-4" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+          <div className="card-professional border rounded-lg p-4">
+            <Skeleton className="h-6 w-32 mb-4" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+        </div>
+      </div>
+    );
   }
 
   
@@ -1243,6 +1350,19 @@ export const DashboardOverview = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 bg-background p-1.5 rounded-md border shadow-sm">
+            <div className="flex items-end gap-0.5 h-5">
+              <div className={`w-1 rounded-sm ${sbStrength >= 1 ? 'bg-green-500' : 'bg-muted'} h-2`} />
+              <div className={`w-1 rounded-sm ${sbStrength >= 2 ? 'bg-green-500' : 'bg-muted'} h-3`} />
+              <div className={`w-1 rounded-sm ${sbStrength >= 3 ? 'bg-green-500' : 'bg-muted'} h-4`} />
+            </div>
+            <div className="text-xs">
+              {sbStatus === 'online' ? 'Supabase Online' : sbStatus === 'connecting' ? 'Connecting…' : 'Supabase Offline'}
+            </div>
+            {sbLatency !== null && (
+              <div className="text-[10px] text-muted-foreground">{sbLatency}ms</div>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(parseInt(value))}>
               <SelectTrigger className="w-32">

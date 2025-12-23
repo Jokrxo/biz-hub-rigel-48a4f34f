@@ -101,7 +101,7 @@ export const UserTour = ({ open, onOpenChange, userId }: UserTourProps) => {
         <div className="space-y-3 text-sm">
           <p>{step.description}</p>
           <div className="flex items-center gap-3 mt-3">
-            <img src="/Modern Rigel Business Logo Design.png" alt="Rigel Business" className="h-10 w-10 rounded-full object-cover" />
+            <img src="/logo.png" alt="Rigel Business" className="h-10 w-10 rounded-full object-cover" />
             <span className="text-base font-semibold">Rigel Business</span>
           </div>
         </div>

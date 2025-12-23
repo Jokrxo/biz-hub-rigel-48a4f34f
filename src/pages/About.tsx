@@ -54,7 +54,7 @@ const About = () => {
             </div>
             <div className="relative z-10 flex items-center gap-6">
               <div className="bg-white/10 p-2 rounded-2xl backdrop-blur-md border border-white/20 shadow-inner">
-                <img src="/Modern Rigel Business Logo Design.png" alt="Rigel Business" className="w-16 h-16 rounded-xl object-cover shadow-lg" />
+                <img src="/logo.png" alt="Rigel Business" className="w-16 h-16 rounded-xl object-cover shadow-lg" />
               </div>
               <div>
                 <div className="flex items-center gap-3">

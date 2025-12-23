@@ -2,10 +2,12 @@ import { useState } from "react";
 import stellaLogo from "@/assets/stellkhygugvyt.jpg";
 import { Sidebar } from "./Sidebar";
 import { DashboardHeader } from "./DashboardHeader";
+import { TopNavigation } from "./TopNavigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Bot } from "lucide-react";
 import { StellaBotModal } from "@/components/Stella/StellaBotModal";
+import { useLayout } from "@/context/LayoutContext";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -14,28 +16,37 @@ interface DashboardLayoutProps {
 export const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [stellaOpen, setStellaOpen] = useState(false);
+  const { layoutMode } = useLayout();
+
+  const isHorizontal = layoutMode === 'horizontal';
 
   return (
     <div className="min-h-screen bg-gradient-subtle">
-      <div className={cn("md:block", sidebarOpen ? "block" : "hidden")}> 
-        <Sidebar open={sidebarOpen} onOpenChange={setSidebarOpen} />
-      </div>
-      <div
-        className={cn(
-          "fixed inset-0 bg-black/40 z-30 md:hidden",
-          sidebarOpen ? "" : "hidden"
-        )}
-        onClick={() => setSidebarOpen(false)}
-      />
+      {!isHorizontal && (
+        <>
+          <div className={cn("md:block", sidebarOpen ? "block" : "hidden")}> 
+            <Sidebar open={sidebarOpen} onOpenChange={setSidebarOpen} />
+          </div>
+          <div
+            className={cn(
+              "fixed inset-0 bg-black/40 z-30 md:hidden",
+              sidebarOpen ? "" : "hidden"
+            )}
+            onClick={() => setSidebarOpen(false)}
+          />
+        </>
+      )}
+
+      {isHorizontal && <TopNavigation />}
       
       <div
         className={cn(
           "transition-all duration-300 ease-in-out flex flex-col min-h-screen",
-          "ml-0 md:ml-16",
-          sidebarOpen && "md:ml-64"
+          !isHorizontal && "ml-0 md:ml-16",
+          !isHorizontal && sidebarOpen && "md:ml-64"
         )}
       >
-        <DashboardHeader onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
+        {!isHorizontal && <DashboardHeader onMenuClick={() => setSidebarOpen(!sidebarOpen)} />}
         
         <main className="p-4 sm:p-6 flex-1">
           <div className="mx-auto max-w-7xl space-y-6">

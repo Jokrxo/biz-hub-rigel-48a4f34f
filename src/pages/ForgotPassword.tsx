@@ -7,6 +7,9 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import SEO from "@/components/SEO";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { ArrowLeft, ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
+import signupBg from "@/assets/stella-sign-up.jpg";
 
 const schema = z.object({ email: z.string().trim().email("Enter a valid email") });
 
@@ -31,39 +34,89 @@ export default function ForgotPassword() {
   return (
     <>
       <SEO title="Forgot Password | Rigel Business" description="Reset your Rigel Business password" canonical={window.location.href} />
-      <main className="min-h-screen bg-gradient-to-br from-primary/5 via-accent/5 to-background flex items-center justify-center p-6 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=1920&h=1080&fit=crop')] bg-cover bg-center opacity-5" />
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/10 via-transparent to-accent/10 backdrop-blur-3xl" />
-        <article className="w-full max-w-md rounded-lg border border-border bg-card/95 backdrop-blur-sm shadow-elegant p-8 relative z-10">
-          <header className="mb-8 text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-primary mb-4 animate-glow">
-              <span className="text-3xl font-bold text-primary-foreground">A</span>
+      <div className="container relative min-h-screen flex-col items-center justify-center md:grid lg:max-w-none lg:grid-cols-2 lg:px-0">
+        
+        {/* Right Side - Visual (Hidden on mobile) */}
+        <div className="relative hidden h-full flex-col bg-muted p-10 text-white dark:border-r lg:flex">
+          <div className="absolute inset-0 bg-slate-900">
+             <img 
+               src={signupBg} 
+               alt="Office background" 
+               className="h-full w-full object-cover opacity-50 mix-blend-overlay"
+             />
+             <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/40 to-transparent" />
+          </div>
+          <div className="relative z-20 flex items-center gap-4 text-3xl font-bold">
+            <img src="/logo.png" alt="Rigel" className="h-48 w-auto rounded-xl shadow-lg" />
+            Rigel Business
+          </div>
+          <div className="relative z-20 mt-auto">
+            <blockquote className="space-y-2">
+              <p className="text-lg">
+                &ldquo;Security is our top priority. Rest assured that your account recovery is handled with the highest standards of protection.&rdquo;
+              </p>
+              <footer className="text-sm text-slate-300">Rigel Security Team</footer>
+            </blockquote>
+          </div>
+        </div>
+
+        {/* Left Side - Form */}
+        <div className="lg:p-8">
+          <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[450px] border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 p-8 shadow-xl rounded-2xl">
+            <div className="flex flex-col space-y-2 text-center">
+              {/* Mobile Logo */}
+              <div className="flex justify-center mb-6 lg:hidden">
+                 <img src="/logo.png" alt="Rigel" className="h-32 w-auto rounded-lg shadow-md" />
+              </div>
+              <h1 className="text-2xl font-semibold tracking-tight">Forgot password?</h1>
+              <p className="text-sm text-muted-foreground">
+                Enter your email address and we'll send you a link to reset your password.
+              </p>
             </div>
-            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
-            <p className="text-sm text-muted-foreground mt-2">Reset your password</p>
-          </header>
 
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input inputMode="email" autoComplete="email" placeholder="you@company.co.za" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                <FormField
+                  control={form.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input 
+                          placeholder="name@example.com" 
+                          type="email" 
+                          autoCapitalize="none" 
+                          autoComplete="email" 
+                          autoCorrect="off" 
+                          className="bg-background"
+                          {...field} 
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                
+                <Button type="submit" className="w-full bg-gradient-primary hover:opacity-90 transition-opacity">
+                  Send reset link
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Button>
+              </form>
+            </Form>
 
-              <Button type="submit" className="w-full bg-gradient-primary">Send reset link</Button>
-            </form>
-          </Form>
-        </article>
-      </main>
+            <div className="text-center text-sm">
+              <Link 
+                to="/login" 
+                className="inline-flex items-center text-muted-foreground hover:text-primary transition-colors"
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to login
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
     </>
   );
 }

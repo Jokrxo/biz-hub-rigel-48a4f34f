@@ -10,10 +10,11 @@ import { ThemeSettings } from "@/components/Settings/ThemeSettings";
 import { SecuritySettings } from "@/components/Settings/SecuritySettings";
 import { Button } from "@/components/ui/button";
 import { OpeningBalancesAdjustments } from "@/components/Settings/OpeningBalancesAdjustments";
+import { AccountMapping } from "@/components/Settings/AccountMapping";
 import { CommunicationSettings } from "@/components/Settings/CommunicationSettings";
 import { TaxAndInvoicingSettings } from "@/components/Settings/TaxAndInvoicingSettings";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Info, Building2, Settings2, Users, Database, Shield, Palette, Scale, ChevronRight, Calculator, Mail, Calendar } from "lucide-react";
+import { Info, Building2, Settings2, Users, Database, Shield, Palette, Scale, ChevronRight, Calculator, Mail, Calendar, FolderTree } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,7 @@ export default function SettingsPage() {
     { id: "general", label: "Preferences", icon: Settings2, desc: "System defaults & localization" },
     { id: "fiscal", label: "Fiscal", icon: Calendar, desc: "Fiscal year and period settings" },
     { id: "tax_invoice", label: "Tax & Invoicing", icon: Calculator, desc: "VAT rates, currency & prefixes" },
+    { id: "account_mapping", label: "Account Mapping", icon: FolderTree, desc: "Map accounts to reporting categories" },
     { id: "communication", label: "Email & Templates", icon: Mail, desc: "Notifications & document emails" },
     { id: "administration", label: "Team & Roles", icon: Users, desc: "Manage users and permissions" },
     { id: "data", label: "Data Management", icon: Database, desc: "Backup, restore & imports" },
@@ -134,6 +136,10 @@ export default function SettingsPage() {
                   
                   <TabsContent value="tax_invoice" className="mt-0">
                     <TaxAndInvoicingSettings />
+                  </TabsContent>
+
+                  <TabsContent value="account_mapping" className="mt-0">
+                    <AccountMapping />
                   </TabsContent>
 
                   <TabsContent value="communication" className="mt-0">

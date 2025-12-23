@@ -13,6 +13,7 @@ import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import { AuthProvider } from "./context/AuthContext";
+import { LayoutProvider } from "./context/LayoutContext";
 import { useAuth } from "./context/useAuth";
 import { ProtectedRoute } from "./components/Auth/ProtectedRoute";
 import { SupabaseSetup } from "./components/Setup/SupabaseSetup";
@@ -37,6 +38,7 @@ const Budget = lazy(() => import("./pages/Budget"));
 const Payroll = lazy(() => import("./pages/Payroll"));
 const Loans = lazy(() => import("./pages/Loans"));
 const Investments = lazy(() => import("./pages/Investments"));
+const Impairment = lazy(() => import("./pages/Impairment"));
 const PaymentPortal = lazy(() => import("./pages/PaymentPortal"));
 const License = lazy(() => import("./pages/License"));
 const LicenseAdmin = lazy(() => import("./pages/LicenseAdmin"));
@@ -61,6 +63,7 @@ const App = () => {
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      <LayoutProvider>
       <AuthProvider>
         <BrowserRouter>
           {(() => {
@@ -161,6 +164,7 @@ const App = () => {
             <Route path="/budget" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Budget /></Suspense></ProtectedRoute>} />
             <Route path="/loans" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Loans /></Suspense></ProtectedRoute>} />
             <Route path="/investments" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Investments /></Suspense></ProtectedRoute>} />
+            <Route path="/impairment" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Impairment /></Suspense></ProtectedRoute>} />
             <Route path="/payroll" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Payroll /></Suspense></ProtectedRoute>} />
             <Route path="/journals" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Journals /></Suspense></ProtectedRoute>} />
             <Route path="/billing" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense></ProtectedRoute>} />
@@ -180,6 +184,7 @@ const App = () => {
           <InstallPrompt />
         </BrowserRouter>
       </AuthProvider>
+      </LayoutProvider>
     </TooltipProvider>
   </QueryClientProvider>
   );

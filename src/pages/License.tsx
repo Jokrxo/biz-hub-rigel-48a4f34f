@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
-import stellaLogo from "@/assets/stellkhygugvyt.jpg";
+import logo from "@/assets/logo.png";
 import { Key, RefreshCw, CheckCircle2, Clock, Users, Calendar, Shield, CreditCard, Star, Mail, Phone, Info, Download } from "lucide-react";
 import jsPDF from "jspdf";
 
@@ -75,13 +75,14 @@ export default function License() {
       // --- Watermarks ---
       // Stella Lumen Watermark (Top Right)
       const logoSize = 60;
-      doc.addImage(stellaLogo, 'JPEG', 140, 10, logoSize, logoSize, undefined, 'FAST');
+      doc.addImage(logo, 'PNG', 140, 10, logoSize, logoSize, undefined, 'FAST');
       
       // Rigel Business Watermark (Center Page - Faded)
       doc.setFontSize(80);
       doc.setTextColor(200, 200, 200);
       doc.saveGraphicsState();
-      doc.setGState(new doc.GState({ opacity: 0.05 }));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      doc.setGState(new (doc as any).GState({ opacity: 0.05 }));
       doc.text("RIGEL BUSINESS", 105, 150, { align: "center", angle: 45 });
       doc.restoreGraphicsState();
 
@@ -345,7 +346,7 @@ export default function License() {
               </Button>
               
               <div className="pt-4">
-                <img src={stellaLogo} alt="Stella Lumen" className="w-full h-auto rounded-lg border opacity-90" />
+                <img src={logo} alt="Stella Lumen" className="w-full h-auto rounded-lg border opacity-90" />
                 <p className="text-xs text-center text-muted-foreground mt-2">Powered by Stella Lumen</p>
               </div>
             </CardContent>

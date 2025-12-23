@@ -13,6 +13,8 @@ import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import SEO from "@/components/SEO";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { ArrowRight, Check, X } from "lucide-react";
+import signupBg from "@/assets/background-picture.jpg";
 
 const passwordSchema = z
   .string()
@@ -53,20 +55,14 @@ export default function Signup() {
 
   const form = useForm<FormValues>({ resolver: zodResolver(schema), defaultValues: { name: "", email: "", password: "", confirm: "", companyName: "", companyAddress: "", companyPhone: "", fiscalStartMonth: String(new Date().getMonth() + 1), fiscalDefaultYear: String(new Date().getFullYear()), termsAccepted: false } });
 
-  // Helper function to format error messages
   const formatErrorMessage = (error: any): string => {
     const message = error?.message || String(error);
-    
-    // Check for common Supabase password validation errors
     if (message.toLowerCase().includes("password") && message.toLowerCase().includes("contain")) {
       return "Password must contain at least one lowercase letter, one uppercase letter, one number, and one special character";
     }
-    
     if (message.toLowerCase().includes("password") && message.toLowerCase().includes("length")) {
       return "Password must be at least 8 characters long";
     }
-    
-    // Return original message if no match
     return message;
   };
 
@@ -132,7 +128,6 @@ export default function Signup() {
           }
         }
       } catch {}
-      // After signup, try to attach company via invite
       if (invite) {
         try {
           const { data: { user } } = await supabase.auth.getUser();
@@ -165,7 +160,6 @@ export default function Signup() {
     }
   };
 
-  // Password requirement checks
   const passwordChecks = {
     minLength: password.length >= 8,
     hasLowercase: /[a-z]/.test(password),
@@ -177,231 +171,258 @@ export default function Signup() {
   return (
     <>
       <SEO title="Sign Up | Rigel Business" description="Create your Rigel Business enterprise account" canonical={window.location.href} />
-      <main className="min-h-screen flex items-center justify-center p-6 relative overflow-hidden">
-        {/* Background Image */}
-        <div className="absolute inset-0 bg-[url('/src/assets/background-picture.jpg')] bg-cover bg-center" />
-        <div className="absolute inset-0 bg-gradient-to-br from-background/90 via-background/85 to-background/90" />
+      <div className="container relative min-h-screen flex-col items-center justify-center md:grid lg:max-w-none lg:grid-cols-2 lg:px-0">
         
-        <article className="w-full max-w-md rounded-lg border border-border bg-card/95 shadow-2xl p-8 relative z-10">
-          <header className="mb-8 text-center">
-            <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl mb-4 overflow-hidden border border-border bg-background">
-              <img
-                src="/Modern Rigel Business Logo Design.png"
-                alt="Rigel Business"
-                className="h-full w-full object-cover"
-                onError={(e) => { (e.currentTarget.style.display = 'none'); }}
-              />
-            </div>
-            <h1 className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">Rigel Business</h1>
-            <p className="text-sm text-muted-foreground mt-2">Create your enterprise account</p>
-          </header>
+        {/* Right Side - Visual */}
+        <div className="relative hidden h-full flex-col bg-muted p-10 text-white dark:border-r lg:flex">
+          <div className="absolute inset-0 bg-slate-900">
+             <img 
+               src={signupBg} 
+               alt="Office background" 
+               className="h-full w-full object-cover opacity-50 mix-blend-overlay"
+             />
+             <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/40 to-transparent" />
+          </div>
+          <div className="relative z-20 flex items-center gap-4 text-3xl font-bold">
+             <img src="/logo.png" alt="Rigel" className="h-24 w-auto rounded-xl shadow-lg" />
+             Rigel Business
+          </div>
+          <div className="relative z-20 mt-auto">
+            <blockquote className="space-y-2">
+              <p className="text-lg">
+                &ldquo;Starting my business with Rigel was the best decision. The compliance tools and financial reporting gave me peace of mind from day one.&rdquo;
+              </p>
+              <footer className="text-sm text-slate-300">Founder, TechStart SA</footer>
+            </blockquote>
+          </div>
+        </div>
 
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="name"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Full name</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Thabo Mokoena" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+        {/* Left Side - Form */}
+        <div className="lg:p-8">
+           <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[600px] border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 p-8 shadow-xl rounded-2xl">
+             <div className="flex flex-col space-y-2 text-center">
+               <div className="flex justify-center mb-6 lg:hidden">
+                  <img src="/logo.png" alt="Rigel" className="h-32 w-auto rounded-lg shadow-md" />
+               </div>
+               <h1 className="text-2xl font-semibold tracking-tight">Create an account</h1>
+               <p className="text-sm text-muted-foreground">
+                 Enter your details below to create your account
+               </p>
+             </div>
 
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input inputMode="email" autoComplete="email" placeholder="you@company.co.za" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+             <Form {...form}>
+               <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                 <div className="grid grid-cols-2 gap-4">
+                   <FormField
+                     control={form.control}
+                     name="name"
+                     render={({ field }) => (
+                       <FormItem>
+                         <FormLabel>Full Name</FormLabel>
+                         <FormControl>
+                           <Input placeholder="John Doe" {...field} />
+                         </FormControl>
+                         <FormMessage />
+                       </FormItem>
+                     )}
+                   />
+                   <FormField
+                     control={form.control}
+                     name="email"
+                     render={({ field }) => (
+                       <FormItem>
+                         <FormLabel>Email</FormLabel>
+                         <FormControl>
+                           <Input placeholder="john@example.com" {...field} />
+                         </FormControl>
+                         <FormMessage />
+                       </FormItem>
+                     )}
+                   />
+                 </div>
 
-              
+                 <FormField
+                   control={form.control}
+                   name="companyName"
+                   render={({ field }) => (
+                     <FormItem>
+                       <FormLabel>Company Name</FormLabel>
+                       <FormControl>
+                         <Input placeholder="Acme Corp (Pty) Ltd" {...field} />
+                       </FormControl>
+                       <FormMessage />
+                     </FormItem>
+                   )}
+                 />
 
-            <FormField
-              control={form.control}
-              name="companyName"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Company name</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Rigel Business (Pty) Ltd" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                 <FormField
+                   control={form.control}
+                   name="companyAddress"
+                   render={({ field }) => (
+                     <FormItem>
+                       <FormLabel>Address</FormLabel>
+                       <FormControl>
+                         <Input placeholder="123 Business Rd, Sandton" {...field} />
+                       </FormControl>
+                       <FormMessage />
+                     </FormItem>
+                   )}
+                 />
 
-            <FormField
-              control={form.control}
-              name="companyAddress"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Company address</FormLabel>
-                  <FormControl>
-                    <Input placeholder="123 Main Road, Sandton, 2196" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                 <FormField
+                   control={form.control}
+                   name="companyPhone"
+                   render={({ field }) => (
+                     <FormItem>
+                       <FormLabel>Phone</FormLabel>
+                       <FormControl>
+                         <Input placeholder="0821234567" {...field} />
+                       </FormControl>
+                       <FormMessage />
+                     </FormItem>
+                   )}
+                 />
 
-            <FormField
-              control={form.control}
-              name="companyPhone"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Company phone</FormLabel>
-                  <FormControl>
-                    <Input inputMode="tel" placeholder="0812345678" {...field} />
-                  </FormControl>
-                  <FormDescription>10 digits, numbers only</FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="fiscalStartMonth"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Financial Year Start Month</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger className="h-10">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 12 }, (_, i) => (
-                          <SelectItem key={i + 1} value={String(i + 1)}>
-                            {new Date(2000, i, 1).toLocaleString('default', { month: 'long' })}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="fiscalDefaultYear"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Financial Year (Start Year)</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <SelectTrigger className="h-10">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i).map(y => (
-                          <SelectItem key={y} value={String(y)}>
-                            {parseInt(form.getValues('fiscalStartMonth')) === 1 ? y : `FY ${y}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-
-            <FormField
-              control={form.control}
-              name="termsAccepted"
-              render={({ field }) => (
-                <FormItem>
-                  <div className="flex items-center gap-2">
-                    <Checkbox checked={field.value} onCheckedChange={field.onChange} id="terms" />
-                    <FormLabel htmlFor="terms">I accept the Terms & Conditions</FormLabel>
-                    <Button type="button" variant="outline" className="h-8 px-2 text-xs" onClick={() => setTermsOpen(true)}>View Terms</Button>
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Password</FormLabel>
-                  <FormControl>
-                    <Input 
-                      type="password" 
-                      autoComplete="new-password" 
-                      placeholder="••••••••" 
-                      {...field}
-                      onChange={(e) => {
-                        field.onChange(e);
-                        setPassword(e.target.value);
-                      }}
+                 <div className="grid grid-cols-2 gap-4">
+                    <FormField
+                      control={form.control}
+                      name="fiscalStartMonth"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>FY Start Month</FormLabel>
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 12 }, (_, i) => (
+                                <SelectItem key={i + 1} value={String(i + 1)}>
+                                  {new Date(2000, i, 1).toLocaleString('default', { month: 'short' })}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </FormControl>
-                  <div className="space-y-1 text-xs mt-2">
-                    <div className={`flex items-center gap-2 ${passwordChecks.minLength ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                      <span>{passwordChecks.minLength ? '✓' : '○'}</span>
-                      <span>At least 8 characters</span>
-                    </div>
-                    <div className={`flex items-center gap-2 ${passwordChecks.hasLowercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                      <span>{passwordChecks.hasLowercase ? '✓' : '○'}</span>
-                      <span>One lowercase letter (a-z)</span>
-                    </div>
-                    <div className={`flex items-center gap-2 ${passwordChecks.hasUppercase ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                      <span>{passwordChecks.hasUppercase ? '✓' : '○'}</span>
-                      <span>One uppercase letter (A-Z)</span>
-                    </div>
-                    <div className={`flex items-center gap-2 ${passwordChecks.hasNumber ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                      <span>{passwordChecks.hasNumber ? '✓' : '○'}</span>
-                      <span>One number (0-9)</span>
-                    </div>
-                    <div className={`flex items-center gap-2 ${passwordChecks.hasSpecial ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'}`}>
-                      <span>{passwordChecks.hasSpecial ? '✓' : '○'}</span>
-                      <span>One special character</span>
-                    </div>
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
 
-            <FormField
-              control={form.control}
-              name="confirm"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Confirm password</FormLabel>
-                  <FormControl>
-                    <Input type="password" autoComplete="new-password" placeholder="••••••••" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                    <FormField
+                      control={form.control}
+                      name="fiscalDefaultYear"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>FY Start Year</FormLabel>
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i).map(y => (
+                                <SelectItem key={y} value={String(y)}>
+                                  {y}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                 </div>
 
-            <Button type="submit" className="w-full bg-gradient-primary">Create account</Button>
-          </form>
-        </Form>
+                 <div className="grid grid-cols-2 gap-4">
+                   <FormField
+                     control={form.control}
+                     name="password"
+                     render={({ field }) => (
+                       <FormItem>
+                         <FormLabel>Password</FormLabel>
+                         <FormControl>
+                           <Input 
+                             type="password" 
+                             {...field}
+                             onChange={(e) => {
+                               field.onChange(e);
+                               setPassword(e.target.value);
+                             }}
+                           />
+                         </FormControl>
+                         <FormMessage />
+                       </FormItem>
+                     )}
+                   />
 
-          <footer className="mt-4 text-center text-sm">
-            Already have an account? <Link to="/login" className="text-primary hover:underline">Sign in</Link>
-          </footer>
-        </article>
-      </main>
+                   <FormField
+                     control={form.control}
+                     name="confirm"
+                     render={({ field }) => (
+                       <FormItem>
+                         <FormLabel>Confirm Password</FormLabel>
+                         <FormControl>
+                           <Input type="password" {...field} />
+                         </FormControl>
+                         <FormMessage />
+                       </FormItem>
+                     )}
+                   />
+                 </div>
+
+                 {/* Password strength indicators */}
+                 <div className="space-y-1 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                       {passwordChecks.minLength ? <Check className="h-3 w-3 text-green-500" /> : <div className="h-3 w-3 rounded-full border border-current" />}
+                       <span>Min 8 characters</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       {passwordChecks.hasLowercase && passwordChecks.hasUppercase ? <Check className="h-3 w-3 text-green-500" /> : <div className="h-3 w-3 rounded-full border border-current" />}
+                       <span>Mix of uppercase & lowercase</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       {passwordChecks.hasNumber && passwordChecks.hasSpecial ? <Check className="h-3 w-3 text-green-500" /> : <div className="h-3 w-3 rounded-full border border-current" />}
+                       <span>Numbers & special characters</span>
+                    </div>
+                 </div>
+
+                 <FormField
+                   control={form.control}
+                   name="termsAccepted"
+                   render={({ field }) => (
+                     <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
+                       <FormControl>
+                         <Checkbox
+                           checked={field.value}
+                           onCheckedChange={field.onChange}
+                         />
+                       </FormControl>
+                       <div className="space-y-1 leading-none">
+                         <FormLabel>
+                           I accept the <button type="button" onClick={() => setTermsOpen(true)} className="text-primary hover:underline">Terms & Conditions</button>
+                         </FormLabel>
+                       </div>
+                     </FormItem>
+                   )}
+                 />
+
+                 <Button type="submit" className="w-full bg-gradient-primary">
+                   Create Account
+                   <ArrowRight className="ml-2 h-4 w-4" />
+                 </Button>
+               </form>
+             </Form>
+
+             <p className="px-8 text-center text-sm text-muted-foreground">
+               Already have an account?{" "}
+               <Link 
+                 to="/login" 
+                 className="underline underline-offset-4 hover:text-primary"
+               >
+                 Sign in
+               </Link>
+             </p>
+           </div>
+        </div>
+      </div>
 
       <Dialog open={termsOpen} onOpenChange={setTermsOpen}>
         <DialogContent className="sm:max-w-[720px]">

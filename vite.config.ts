@@ -49,13 +49,13 @@ export default defineConfig({
         orientation: 'portrait-primary',
         icons: [
           {
-            src: '/Modern Rigel Business Logo Design.png',
+            src: '/logo.png',
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any maskable'
           },
           {
-            src: '/Modern Rigel Business Logo Design.png',
+            src: '/logo.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
@@ -68,14 +68,14 @@ export default defineConfig({
             short_name: 'Transaction',
             description: 'Quickly add a new transaction',
             url: '/transactions/new',
-            icons: [{ src: '/Modern Rigel Business Logo Design.png', sizes: '192x192' }]
+            icons: [{ src: '/logo.png', sizes: '192x192' }]
           },
           {
             name: 'View Reports',
             short_name: 'Reports',
             description: 'View financial reports',
             url: '/reports',
-            icons: [{ src: '/Modern Rigel Business Logo Design.png', sizes: '192x192' }]
+            icons: [{ src: '/logo.png', sizes: '192x192' }]
           }
         ]
       },

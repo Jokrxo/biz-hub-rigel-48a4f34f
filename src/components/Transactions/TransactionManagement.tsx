@@ -936,7 +936,7 @@ export const TransactionManagement = () => {
                 {(quickType === 'product_purchase' || quickType === 'asset' || quickType === 'asset_disposal' || quickType === 'depreciation' || (quickType && quickType.startsWith('loan_'))) && (
                   <div className="relative p-6 border rounded-lg bg-muted/30 overflow-hidden">
                     <div className="absolute inset-0 pointer-events-none opacity-10 flex items-center justify-center">
-                      <img src="/Modern Rigel Business Logo Design.png" alt="Rigel Business" className="h-32 w-32 rounded-lg object-cover" />
+                      <img src="/logo.png" alt="Rigel Business" className="h-32 w-32 rounded-lg object-cover" />
                     </div>
                     <div className="relative space-y-3">
                       {quickType === 'product_purchase' ? (
@@ -1819,7 +1819,7 @@ export const TransactionManagement = () => {
       <Dialog open={editWarningOpen} onOpenChange={setEditWarningOpen}>
         <DialogContent className="sm:max-w-[425px] text-center">
            <DialogHeader className="flex flex-col items-center gap-4">
-             <img src="/Modern Rigel Business Logo Design.png" alt="Rigel Logo" className="h-16 w-auto object-contain" />
+             <img src="/logo.png" alt="Rigel Logo" className="h-16 w-auto object-contain" />
              <DialogTitle className="text-xl">Expert Mode Warning</DialogTitle>
              <DialogDescription className="text-base pt-2">
                Editing a transaction requires accounting knowledge. You will need to manually adjust debit and credit entries.

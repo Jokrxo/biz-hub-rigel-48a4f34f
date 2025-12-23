@@ -50,6 +50,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { QuickSetupSheet } from "./QuickSetupSheet";
+import { HelpDialog } from "./HelpDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -70,49 +72,7 @@ interface SidebarProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const navGroups = [
-  {
-    title: "Overview",
-    items: [
-      { icon: LayoutDashboard, label: "Dashboard", href: "/" },
-      { icon: Receipt, label: "Transactions", href: "/transactions" },
-      { icon: Building, label: "Bank", href: "/bank" },
-    ]
-  },
-  {
-    title: "Accounting",
-    items: [
-      { icon: Receipt, label: "Tax", href: "/tax" },
-      { icon: Building2, label: "Fixed Assets", href: "/fixed-assets" },
-      { icon: Calculator, label: "Trial Balance", href: "/trial-balance" },
-      { icon: BookOpen, label: "Journals", href: "/journals" },
-      { icon: TrendingUp, label: "Financial Reports", href: "/reports" },
-      { icon: Wallet, label: "Budget", href: "/budget" },
-      { icon: CreditCard, label: "Loans", href: "/loans" },
-      { icon: PieChart, label: "Investments", href: "/investments" },
-      { icon: DollarSign, label: "Payroll", href: "/payroll" },
-    ]
-  },
-  {
-    title: "Sales & Purchase",
-    items: [
-      { icon: FileText, label: "Invoices", href: "/invoices" },
-      { icon: FileText, label: "Quotes", href: "/quotes" },
-      { icon: DollarSign, label: "Sales", href: "/sales" },
-      { icon: CreditCard, label: "Purchase", href: "/purchase" },
-      { icon: Users, label: "Customers", href: "/customers" },
-    ]
-  },
-  {
-    title: "System",
-    items: [
-      { icon: Crown, label: "License", href: "/license" },
-      { icon: Building2, label: "Companies", href: "/companies" },
-      { icon: Settings, label: "Settings", href: "/settings" },
-      { icon: Info, label: "About", href: "/about-us" },
-    ]
-  }
-];
+import { navGroups } from "@/config/navigation";
 
 export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
   const location = useLocation();
@@ -136,15 +96,6 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [supportAppOpen, setSupportAppOpen] = useState(false);
-
-  const [setupStatus, setSetupStatus] = useState({
-    hasCoa: false,
-    hasBank: false,
-    hasProducts: false,
-    hasCustomers: false,
-    hasSuppliers: false,
-    hasEmployees: false
-  });
 
   useEffect(() => {
     const loadUserProfile = async () => {
@@ -182,26 +133,6 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
 
           setUserProfile({ name: fullName, role });
           setCompanyLogoUrl(company?.logo_url || null);
-
-          // Load setup status
-          if (profile.company_id) {
-            const ac = new AbortController();
-            const { count: coaCount } = await supabase.from("chart_of_accounts").select("id", { count: "exact" }).eq("company_id", profile.company_id).eq("is_active", true).limit(1);
-            const { count: banksCount } = await supabase.from("bank_accounts").select("id", { count: "exact" }).eq("company_id", profile.company_id).limit(1);
-            const { count: productsCount } = await supabase.from("items").select("id", { count: "exact" }).eq("company_id", profile.company_id).eq("item_type", "product").limit(1);
-            const { count: customersCount } = await supabase.from("customers").select("id", { count: "exact" }).eq("company_id", profile.company_id).limit(1);
-            const { count: suppliersCount } = await supabase.from("suppliers").select("id", { count: "exact" }).eq("company_id", profile.company_id).limit(1);
-            const { count: employeesCount } = await supabase.from("employees").select("id", { count: "exact" }).eq("company_id", profile.company_id).limit(1);
-            
-            setSetupStatus({
-              hasCoa: (coaCount || 0) > 0,
-              hasBank: (banksCount || 0) > 0,
-              hasProducts: (productsCount || 0) > 0,
-              hasCustomers: (customersCount || 0) > 0,
-              hasSuppliers: (suppliersCount || 0) > 0,
-              hasEmployees: (employeesCount || 0) > 0
-            });
-          }
         } else {
           // Fallback to email if no profile
           setUserProfile({ 
@@ -238,7 +169,7 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
               </div>
             ) : (
               <img
-                src="/Modern Rigel Business Logo Design.png"
+                src="/logo.png"
                 alt="Rigel Business"
                 className="h-10 w-10 rounded-lg object-cover"
                 onError={() => setLogoError(true)}
@@ -396,135 +327,14 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
       </div>
 
       {/* Quick Setup Sheet */}
-      <Sheet open={quickSetupOpen} onOpenChange={setQuickSetupOpen}>
-        <SheetContent side="left" className="w-full sm:max-w-xl overflow-y-auto z-50">
-          <SheetHeader>
-            <SheetTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-amber-500" />
-              Company Setup
-            </SheetTitle>
-            <SheetDescription>Add core records to get your business up and running.</SheetDescription>
-          </SheetHeader>
-          <div className="relative space-y-4 mt-6">
-            {/* Watermark */}
-            <div className="absolute inset-0 z-0 flex items-center justify-center opacity-5 pointer-events-none">
-               <img src={stellaLogo} alt="Watermark" className="w-2/3 h-auto object-contain" />
-            </div>
-            <div className="grid gap-3 relative z-10">
-              <Card className="border-l-4 border-l-blue-500">
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="font-medium">Chart of Accounts</div>
-                    <div className="text-xs text-muted-foreground">Define your ledger accounts</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={setupStatus.hasCoa ? 'default' : 'outline'}>{setupStatus.hasCoa ? 'Done' : 'Pending'}</Badge>
-                    <Button size="sm" variant="ghost" onClick={() => { navigate('/transactions?tab=chart'); setQuickSetupOpen(false); }}>Go</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-l-4 border-l-green-500">
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="font-medium">Bank Account</div>
-                    <div className="text-xs text-muted-foreground">Connect your business bank</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={setupStatus.hasBank ? 'default' : 'outline'}>{setupStatus.hasBank ? 'Done' : 'Pending'}</Badge>
-                    <Button size="sm" variant="ghost" onClick={() => { navigate('/bank'); setQuickSetupOpen(false); }}>Go</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="font-medium">Products & Services</div>
-                    <div className="text-xs text-muted-foreground">Add items you sell</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={setupStatus.hasProducts ? 'default' : 'outline'}>{setupStatus.hasProducts ? 'Done' : 'Pending'}</Badge>
-                    <Button size="sm" variant="ghost" onClick={() => { navigate('/sales?tab=products'); setQuickSetupOpen(false); }}>Go</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="font-medium">Customers</div>
-                    <div className="text-xs text-muted-foreground">Add your clients</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={setupStatus.hasCustomers ? 'default' : 'outline'}>{setupStatus.hasCustomers ? 'Done' : 'Pending'}</Badge>
-                    <Button size="sm" variant="ghost" onClick={() => { navigate('/customers'); setQuickSetupOpen(false); }}>Go</Button>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="space-y-1">
-                    <div className="font-medium">Suppliers</div>
-                    <div className="text-xs text-muted-foreground">Add your vendors</div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge variant={setupStatus.hasSuppliers ? 'default' : 'outline'}>{setupStatus.hasSuppliers ? 'Done' : 'Pending'}</Badge>
-                    <Button size="sm" variant="ghost" onClick={() => { navigate('/purchase'); setQuickSetupOpen(false); }}>Go</Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
-        </SheetContent>
-      </Sheet>
+      <QuickSetupSheet open={quickSetupOpen} onOpenChange={setQuickSetupOpen} />
 
       {/* Help Dialog */}
-      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <HelpCircle className="h-5 w-5 text-primary" />
-              Help & Support
-            </DialogTitle>
-            <DialogDescription>
-              Get assistance with Rigel Business
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <Button variant="outline" className="h-auto py-4 justify-start gap-4" onClick={() => { setHelpOpen(false); setDocumentationOpen(true); }}>
-              <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-                <BookOpen className="h-5 w-5" />
-              </div>
-              <div className="text-left">
-                <div className="font-semibold">Documentation</div>
-                <div className="text-xs text-muted-foreground">Read guides and API docs</div>
-              </div>
-            </Button>
-            
-            <Button variant="outline" className="h-auto py-4 justify-start gap-4" onClick={() => { setHelpOpen(false); setDocumentationOpen(true); }}>
-              <div className="h-10 w-10 rounded-full bg-red-100 flex items-center justify-center text-red-600">
-                <Video className="h-5 w-5" />
-              </div>
-              <div className="text-left">
-                <div className="font-semibold">Video Tutorials</div>
-                <div className="text-xs text-muted-foreground">Watch how-to videos</div>
-              </div>
-            </Button>
-
-            <Button variant="outline" className="h-auto py-4 justify-start gap-4">
-              <div className="h-10 w-10 rounded-full bg-green-100 flex items-center justify-center text-green-600">
-                <MessageSquare className="h-5 w-5" />
-              </div>
-              <div className="text-left">
-                <div className="font-semibold">Contact Support</div>
-                <div className="text-xs text-muted-foreground">Chat with our team</div>
-              </div>
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <HelpDialog 
+        open={helpOpen} 
+        onOpenChange={setHelpOpen} 
+        onOpenDocs={() => setDocumentationOpen(true)} 
+      />
 
       <DocumentationModal open={documentationOpen} onOpenChange={setDocumentationOpen} />
 

@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { supabase } from "@/integrations/supabase/client";
@@ -23,9 +24,11 @@ import {
   CheckCircle2,
   AlertTriangle
 } from "lucide-react";
+import { isDemoMode, getDemoTrialBalanceForPeriod as demoTBPeriod, getDemoTrialBalanceAsOf as demoTBAsOf } from "@/lib/demo-data";
 
 export const EnhancedFinancialReports = () => {
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [activeReport, setActiveReport] = useState<'pl' | 'bs' | 'cf' | 'tb'>('pl');
   const [periodStart, setPeriodStart] = useState(() => {
     const date = new Date();
@@ -45,6 +48,7 @@ export const EnhancedFinancialReports = () => {
   }>({ profitLoss: [], balanceSheet: [], cashFlow: [], trialBalance: [] });
   const [fallbackCOGS, setFallbackCOGS] = useState<number>(0);
   const [vatNet, setVatNet] = useState<number>(0);
+  const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true);
   
   const [drilldownAccount, setDrilldownAccount] = useState<{
     id: string;
@@ -66,36 +70,50 @@ export const EnhancedFinancialReports = () => {
         .maybeSingle();
       if (!profile?.company_id) return;
       setCompanyId(profile.company_id);
-      try { await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id }); } catch {}
-      try {
-        const { count: nullTxCount } = await supabase
-          .from('transactions')
-          .select('id', { count: 'exact', head: true })
-          .eq('company_id', profile.company_id)
-          .is('transaction_date', null);
-        if ((nullTxCount || 0) > 0) {
-          toast({ title: 'Missing transaction dates detected', description: `${nullTxCount} transaction(s) have no date and were excluded from period reports. Please update their dates for accurate reporting.`, variant: 'default' });
-        }
-      } catch {}
-      const trialBalancePeriod = await fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd);
-      const cumulativeTB = await fetchTrialBalanceCumulativeToEnd(profile.company_id, periodEnd);
-      let openingPpeNbv = 0;
-      try {
-        const { data: openingAssets } = await supabase
+      const housekeeping = (async () => {
+        try { await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id }); } catch {}
+        try {
+          const { count: nullTxCount } = await supabase
+            .from('transactions')
+            .select('id', { count: 'exact', head: true })
+            .eq('company_id', profile.company_id)
+            .is('transaction_date', null);
+          if ((nullTxCount || 0) > 0) {
+            toast({ title: 'Missing transaction dates detected', description: `${nullTxCount} transaction(s) have no date and were excluded from period reports. Please update their dates for accurate reporting.`, variant: 'default' });
+          }
+        } catch {}
+      })();
+      const demo = isDemoMode();
+      const [trialBalancePeriod, cumulativeTB, openingAssets, cogsFallback] = demo ? [
+        demoTBPeriod(periodStart, periodEnd),
+        demoTBAsOf(periodEnd),
+        [],
+        0
+      ] : await Promise.all([
+        fetchTrialBalanceForPeriod(profile.company_id, periodStart, periodEnd),
+        fetchTrialBalanceCumulativeToEnd(profile.company_id, periodEnd),
+        supabase
           .from('fixed_assets')
           .select('cost, accumulated_depreciation, status, description')
-          .eq('company_id', profile.company_id);
+          .eq('company_id', profile.company_id)
+          .then(res => res.data),
+        calculateCOGSFromInvoices(profile.company_id, periodStart, periodEnd),
+      ]);
+      await housekeeping;
+      setFallbackCOGS(cogsFallback || 0);
+      let openingPpeNbv = 0;
+      try {
         openingPpeNbv = (openingAssets || [])
           .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
           .filter((a: any) => String(a.description || '').toLowerCase().includes('[opening]'))
           .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
       } catch {}
-      const cogsFallback = await calculateCOGSFromInvoices(profile.company_id, periodStart, periodEnd);
-      setFallbackCOGS(cogsFallback);
-      const pl = generateProfitLoss(trialBalancePeriod);
-      const bs = generateBalanceSheet(cumulativeTB, openingPpeNbv);
-      const cf = await generateCashFlow(profile.company_id);
-      setReportData({ profitLoss: pl, balanceSheet: bs, cashFlow: cf, trialBalance: trialBalancePeriod });
+      const pl = generateProfitLoss(trialBalancePeriod || []);
+      const bs = generateBalanceSheet(cumulativeTB || [], openingPpeNbv);
+      setReportData({ profitLoss: pl, balanceSheet: bs, cashFlow: [], trialBalance: trialBalancePeriod || [] });
+      setLoading(false);
+      const cf = demo ? [] : await generateCashFlow(profile.company_id);
+      setReportData(prev => ({ ...prev, cashFlow: cf }));
 
       try {
         const { data: v } = await supabase.rpc('validate_trial_balance' as any, {
@@ -115,6 +133,78 @@ export const EnhancedFinancialReports = () => {
   }, [periodStart, periodEnd, selectedFiscalYear, toast]);
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd, loadFinancialData]);
 
+  const refreshCurrentReport = useCallback(async () => {
+    try {
+      if (!companyId) {
+        await loadFinancialData();
+        return;
+      }
+      setRefreshing(true);
+      if (activeReport === 'tb') {
+        const tb = await fetchTrialBalanceForPeriod(companyId, periodStart, periodEnd);
+        setReportData(prev => ({ ...prev, trialBalance: tb || [] }));
+      } else if (activeReport === 'pl') {
+        const tb = await fetchTrialBalanceForPeriod(companyId, periodStart, periodEnd);
+        const pl = generateProfitLoss(tb || []);
+        setReportData(prev => ({ ...prev, profitLoss: pl, trialBalance: tb || [] }));
+      } else if (activeReport === 'bs') {
+        const [cumulativeTB, openingAssets] = await Promise.all([
+          fetchTrialBalanceCumulativeToEnd(companyId, periodEnd),
+          supabase
+            .from('fixed_assets')
+            .select('cost, accumulated_depreciation, status, description')
+            .eq('company_id', companyId)
+            .then(res => res.data),
+        ]);
+        let openingPpeNbv = 0;
+        try {
+          openingPpeNbv = (openingAssets || [])
+            .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
+            .filter((a: any) => String(a.description || '').toLowerCase().includes('[opening]'))
+            .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
+        } catch {}
+        const bs = generateBalanceSheet(cumulativeTB || [], openingPpeNbv);
+        setReportData(prev => ({ ...prev, balanceSheet: bs }));
+      } else if (activeReport === 'cf') {
+        const cf = await generateCashFlow(companyId);
+        setReportData(prev => ({ ...prev, cashFlow: cf }));
+      }
+    } catch (error: any) {
+      console.error('Error refreshing report:', error);
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    } finally {
+      setRefreshing(false);
+    }
+  }, [activeReport, companyId, periodStart, periodEnd, toast, loadFinancialData]);
+
+  const autoRefreshTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!companyId) return;
+    if (!isAutoRefreshEnabled) return;
+    const ch = (supabase as any).channel('enhanced_fin_auto_refresh');
+    const schedule = () => {
+      if (autoRefreshTimer.current) {
+        clearTimeout(autoRefreshTimer.current);
+      }
+      toast({ title: 'Data changed', description: 'Refreshing current report' });
+      autoRefreshTimer.current = window.setTimeout(() => {
+        refreshCurrentReport();
+      }, 1200);
+    };
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `company_id=eq.${companyId}` }, schedule);
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'ledger_entries', filter: `company_id=eq.${companyId}` }, schedule);
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'fixed_assets', filter: `company_id=eq.${companyId}` }, schedule);
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'invoices', filter: `company_id=eq.${companyId}` }, schedule);
+    ch.subscribe();
+    return () => {
+      try { (supabase as any).removeChannel(ch); } catch {}
+      if (autoRefreshTimer.current) {
+        clearTimeout(autoRefreshTimer.current);
+        autoRefreshTimer.current = null;
+      }
+    };
+  }, [companyId, activeReport, periodStart, periodEnd, isAutoRefreshEnabled]);
+
   useEffect(() => {
     const fy = typeof selectedFiscalYear === 'number' ? selectedFiscalYear : new Date().getFullYear();
     const { startStr, endStr } = getFiscalYearDates(fy);
@@ -132,45 +222,48 @@ export const EnhancedFinancialReports = () => {
     endDateObj.setHours(23, 59, 59, 999);
     const endISO = endDateObj.toISOString();
 
-    const { data: accounts, error: accountsError } = await supabase
-      .from('chart_of_accounts')
-      .select('id, account_code, account_name, account_type')
-      .eq('company_id', companyId)
-      .eq('is_active', true)
-      .order('account_code');
-
+    const [accountsRes, txRes, ledgerRes] = await Promise.all([
+      supabase
+        .from('chart_of_accounts')
+        .select('id, account_code, account_name, account_type')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('account_code'),
+      supabase
+        .from('transaction_entries')
+        .select(`
+          transaction_id,
+          account_id,
+          debit,
+          credit,
+          description,
+          transactions!inner (
+            transaction_date,
+            status,
+            company_id
+          )
+        `)
+        .eq('transactions.company_id', companyId)
+        .eq('transactions.status', 'posted')
+        .gte('transactions.transaction_date', startISO)
+        .lte('transactions.transaction_date', endISO)
+        .not('description', 'ilike', '%Opening balance (carry forward)%'),
+      supabase
+        .from('ledger_entries')
+        .select('transaction_id, account_id, debit, credit, entry_date, description')
+        .eq('company_id', companyId)
+        .gte('entry_date', startISO)
+        .lte('entry_date', endISO)
+        .not('description', 'ilike', '%Opening balance (carry forward)%'),
+    ]);
+    const accounts = (accountsRes as any).data;
+    const accountsError = (accountsRes as any).error;
     if (accountsError) throw accountsError;
-
-    const { data: txEntries, error: txError } = await supabase
-      .from('transaction_entries')
-      .select(`
-        transaction_id,
-        account_id,
-        debit,
-        credit,
-        description,
-        transactions!inner (
-          transaction_date,
-          status,
-          company_id
-        )
-      `)
-      .eq('transactions.company_id', companyId)
-      .eq('transactions.status', 'posted')
-      .gte('transactions.transaction_date', startISO)
-      .lte('transactions.transaction_date', endISO)
-      .not('description', 'ilike', '%Opening balance (carry forward)%');
-
+    const txEntries = (txRes as any).data;
+    const txError = (txRes as any).error;
     if (txError) throw txError;
-
-    const { data: ledgerEntries, error: ledgerError } = await supabase
-      .from('ledger_entries')
-      .select('transaction_id, account_id, debit, credit, entry_date, description')
-      .eq('company_id', companyId)
-      .gte('entry_date', startISO)
-      .lte('entry_date', endISO)
-      .not('description', 'ilike', '%Opening balance (carry forward)%');
-
+    const ledgerEntries = (ledgerRes as any).data;
+    const ledgerError = (ledgerRes as any).error;
     if (ledgerError) throw ledgerError;
 
     const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
@@ -225,43 +318,46 @@ export const EnhancedFinancialReports = () => {
     endDateObj.setHours(23, 59, 59, 999);
     const endISO = endDateObj.toISOString();
 
-    const { data: accounts, error: accountsError } = await supabase
-      .from('chart_of_accounts')
-      .select('id, account_code, account_name, account_type')
-      .eq('company_id', companyId)
-      .eq('is_active', true)
-      .order('account_code');
-
+    const [accountsRes, txRes, ledgerRes] = await Promise.all([
+      supabase
+        .from('chart_of_accounts')
+        .select('id, account_code, account_name, account_type')
+        .eq('company_id', companyId)
+        .eq('is_active', true)
+        .order('account_code'),
+      supabase
+        .from('transaction_entries')
+        .select(`
+          transaction_id,
+          account_id,
+          debit,
+          credit,
+          description,
+          transactions!inner (
+            transaction_date,
+            status,
+            company_id
+          )
+        `)
+        .eq('transactions.company_id', companyId)
+        .eq('transactions.status', 'posted')
+        .lte('transactions.transaction_date', endISO)
+        .not('description', 'ilike', '%Opening balance (carry forward)%'),
+      supabase
+        .from('ledger_entries')
+        .select('transaction_id, account_id, debit, credit, entry_date, description')
+        .eq('company_id', companyId)
+        .lte('entry_date', endISO)
+        .not('description', 'ilike', '%Opening balance (carry forward)%'),
+    ]);
+    const accounts = (accountsRes as any).data;
+    const accountsError = (accountsRes as any).error;
     if (accountsError) throw accountsError;
-
-    const { data: txEntries, error: txError } = await supabase
-      .from('transaction_entries')
-      .select(`
-        transaction_id,
-        account_id,
-        debit,
-        credit,
-        description,
-        transactions!inner (
-          transaction_date,
-          status,
-          company_id
-        )
-      `)
-      .eq('transactions.company_id', companyId)
-      .eq('transactions.status', 'posted')
-      .lte('transactions.transaction_date', endISO)
-      .not('description', 'ilike', '%Opening balance (carry forward)%');
-
+    const txEntries = (txRes as any).data;
+    const txError = (txRes as any).error;
     if (txError) throw txError;
-
-    const { data: ledgerEntries, error: ledgerError } = await supabase
-      .from('ledger_entries')
-      .select('transaction_id, account_id, debit, credit, entry_date, description')
-      .eq('company_id', companyId)
-      .lte('entry_date', endISO)
-      .not('description', 'ilike', '%Opening balance (carry forward)%');
-
+    const ledgerEntries = (ledgerRes as any).data;
+    const ledgerError = (ledgerRes as any).error;
     if (ledgerError) throw ledgerError;
 
     const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];
@@ -682,7 +778,11 @@ export const EnhancedFinancialReports = () => {
     try {
       const { data: entries } = await supabase
         .from('transaction_entries')
-        .select(`debit, credit, account_id, transactions!inner (transaction_date, status, company_id), chart_of_accounts!inner (account_type, account_name)`) as any;
+        .select(`debit, credit, account_id, transactions!inner (transaction_date, status, company_id), chart_of_accounts!inner (account_type, account_name)`)
+        .eq('transactions.company_id', companyId)
+        .eq('transactions.status', 'posted')
+        .gte('transactions.transaction_date', periodStart)
+        .lte('transactions.transaction_date', periodEnd) as any;
       const inPeriod = (d: string) => new Date(d) >= new Date(periodStart) && new Date(d) <= new Date(periodEnd);
       let income = 0; let expense = 0; let depreciation = 0; let recvChange = 0; let payChange = 0; let investing = 0; let financing = 0;
       (entries || []).forEach((e: any) => {
@@ -704,7 +804,10 @@ export const EnhancedFinancialReports = () => {
       const operating = income - expense + depreciation - recvChange + payChange;
       const { data: pre } = await supabase
         .from('transaction_entries')
-        .select(`debit, credit, transactions!inner (transaction_date, status, company_id), chart_of_accounts!inner (account_type, account_name)`) as any;
+        .select(`debit, credit, transactions!inner (transaction_date, status, company_id), chart_of_accounts!inner (account_type, account_name)`)
+        .eq('transactions.company_id', companyId)
+        .eq('transactions.status', 'posted')
+        .lt('transactions.transaction_date', periodStart) as any;
       let openingCash = 0;
       (pre || []).forEach((e: any) => {
         if (String(e.transactions?.company_id || '') !== String(companyId)) return;
@@ -816,10 +919,14 @@ export const EnhancedFinancialReports = () => {
           <h1 className="text-3xl font-bold">Annual Financial Statements</h1>
           <p className="text-muted-foreground mt-1">GAAP-compliant financial statements with drill-down capability</p>
         </div>
-        <div className="flex gap-3">
-          <Button variant="outline" onClick={loadFinancialData}>
-            <Activity className="h-4 w-4 mr-2" />
-            Refresh
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border">
+            <Label className="text-xs">Auto Refresh</Label>
+            <Switch checked={isAutoRefreshEnabled} onCheckedChange={setIsAutoRefreshEnabled} />
+          </div>
+          <Button variant="outline" onClick={refreshCurrentReport} disabled={refreshing}>
+            {refreshing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Activity className="h-4 w-4 mr-2" />}
+            {refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>
       </div>

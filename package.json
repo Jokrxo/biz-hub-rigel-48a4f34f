@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5173",
+    "dev:5109": "vite --port 5109",
     "dev:5187": "vite --port 5187",
     "dev:5209": "vite --port 5209",
     "dev:5211": "vite --port 5211",

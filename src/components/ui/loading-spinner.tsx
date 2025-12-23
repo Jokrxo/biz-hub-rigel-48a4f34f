@@ -31,7 +31,7 @@ export const LoadingSpinner = ({ className, size = "md" }: LoadingSpinnerProps) 
           
           <div className="absolute inset-0 flex items-center justify-center">
             <img
-              src="/Modern Rigel Business Logo Design.png"
+              src="/logo.png"
               alt="Rigel Business"
               className="w-2/3 h-2/3 rounded-full object-cover"
               onError={(e) => { (e.currentTarget.style.display = 'none'); }}

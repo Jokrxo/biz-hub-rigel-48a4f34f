@@ -951,6 +951,39 @@ export type Database = {
           },
         ]
       }
+      licenses: {
+        Row: {
+          id: string
+          license_key: string
+          plan_type: string
+          status: string
+          expiry_date: string | null
+          assigned_user_id: string | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          license_key: string
+          plan_type?: string
+          status?: string
+          expiry_date?: string | null
+          assigned_user_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          license_key?: string
+          plan_type?: string
+          status?: string
+          expiry_date?: string | null
+          assigned_user_id?: string | null
+          created_at?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           branch_id: string | null
@@ -964,6 +997,10 @@ export type Database = {
           role: string | null
           updated_at: string
           user_id: string
+          subscription_status: string | null
+          plan: string | null
+          subscription_expiry: string | null
+          license_key: string | null
         }
         Insert: {
           branch_id?: string | null
@@ -977,6 +1014,10 @@ export type Database = {
           role?: string | null
           updated_at?: string
           user_id: string
+          subscription_status?: string | null
+          plan?: string | null
+          subscription_expiry?: string | null
+          license_key?: string | null
         }
         Update: {
           branch_id?: string | null
@@ -990,6 +1031,10 @@ export type Database = {
           role?: string | null
           updated_at?: string
           user_id?: string
+          subscription_status?: string | null
+          plan?: string | null
+          subscription_expiry?: string | null
+          license_key?: string | null
         }
         Relationships: [
           {

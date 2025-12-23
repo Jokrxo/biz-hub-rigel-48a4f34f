@@ -1,14 +1,15 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
-import { RefreshCw, Download, Eye, Calendar, FileDown, Scale, Activity, ArrowLeftRight, History, PieChart, BarChart3, Filter, CheckCircle2, AlertTriangle, FileText, Info, Star } from "lucide-react";
+import { RefreshCw, Download, Eye, Calendar, FileDown, Scale, Activity, ArrowLeftRight, History, PieChart, BarChart3, Filter, CheckCircle2, AlertTriangle, FileText, Info, Star, ArrowLeft } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { exportFinancialReportToExcel, exportFinancialReportToPDF, exportComparativeCashFlowToExcel, exportComparativeCashFlowToPDF } from "@/lib/export-utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,6 +20,7 @@ import { PPEStatement } from "./PPEStatement";
 import { calculateTotalPPEAsOf, calculateDepreciationExpenseForPeriod, calculateAccumulatedDepreciationAsOf } from "@/components/FixedAssets/DepreciationCalculator";
 import { useFiscalYear } from "@/hooks/use-fiscal-year";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { isDemoMode, getDemoTrialBalanceForPeriod as demoTBPeriod, getDemoTrialBalanceAsOf as demoTBAsOf } from "@/lib/demo-data";
 
 interface TrialBalanceRow {
   account_id: string;
@@ -42,14 +44,17 @@ interface LedgerEntry {
 
 export const GAAPFinancialStatements = () => {
   const [loading, setLoading] = useState(false);
-  const [periodMode, setPeriodMode] = useState<'monthly' | 'annual'>('annual');
+  const [refreshing, setRefreshing] = useState(false);
+  const [isAutoRefreshEnabled, setIsAutoRefreshEnabled] = useState(true);
+  const [periodMode, setPeriodMode] = useState<'monthly' | 'annual'>('monthly');
   const [selectedMonth, setSelectedMonth] = useState<string>(() => new Date().toISOString().slice(0,7)); // YYYY-MM
   const [selectedYear, setSelectedYear] = useState<number>(() => new Date().getFullYear());
   const { fiscalStartMonth: fyStart, selectedFiscalYear, setSelectedFiscalYear, loading: fyLoading, getFiscalYearDates, lockFiscalYear, defaultFiscalYear } = useFiscalYear();
-  const [activeTab, setActiveTab] = useState<string>('balance-sheet');
+  const [activeTab, setActiveTab] = useState<string>('');
+  const [companyId, setCompanyId] = useState<string | null>(null);
   const [periodStart, setPeriodStart] = useState(() => {
     const date = new Date();
-    date.setMonth(0, 1); // January 1st
+    date.setDate(1); // 1st of current month
     return date.toISOString().split('T')[0];
   });
   const [periodEnd, setPeriodEnd] = useState(() => new Date().toISOString().split('T')[0]);
@@ -136,7 +141,7 @@ export const GAAPFinancialStatements = () => {
   const [investingProceedsPrev, setInvestingProceedsPrev] = useState<number>(0);
   const [loanFinancedAcqCurr, setLoanFinancedAcqCurr] = useState<number>(0);
   const [loanFinancedAcqPrev, setLoanFinancedAcqPrev] = useState<number>(0);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(true);
   const [showAdviceModal, setShowAdviceModal] = useState(false);
   const [trialBalanceAsOf, setTrialBalanceAsOf] = useState<TrialBalanceRow[]>([]);
   const [retainedOpeningYTD, setRetainedOpeningYTD] = useState<number>(0);
@@ -298,26 +303,73 @@ export const GAAPFinancialStatements = () => {
   }, [trialBalance, trialBalanceAsOf, vatNet, ppeBookValue, openingEquityTotal, periodEnd]);
 
   const [loadingProgress, setLoadingProgress] = useState(0);
+  const autoRefreshTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!companyId) return;
+    if (!isAutoRefreshEnabled) return;
+    const ch = (supabase as any).channel('gaap_fin_auto_refresh');
+    const schedule = () => {
+      if (autoRefreshTimer.current) {
+        clearTimeout(autoRefreshTimer.current);
+      }
+      toast({ title: 'Data changed', description: 'Refreshing current report' });
+      autoRefreshTimer.current = window.setTimeout(() => {
+        handleRefresh();
+      }, 1200);
+    };
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `company_id=eq.${companyId}` }, schedule);
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'ledger_entries', filter: `company_id=eq.${companyId}` }, schedule);
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'fixed_assets', filter: `company_id=eq.${companyId}` }, schedule);
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'invoices', filter: `company_id=eq.${companyId}` }, schedule);
+    ch.subscribe();
+    return () => {
+      try { (supabase as any).removeChannel(ch); } catch {}
+      if (autoRefreshTimer.current) {
+        clearTimeout(autoRefreshTimer.current);
+        autoRefreshTimer.current = null;
+      }
+    };
+  }, [companyId, activeTab, periodStart, periodEnd, isAutoRefreshEnabled]);
 
   async function loadFinancialData() {
     setLoading(true);
-    setLoadingProgress(0);
+    setLoadingProgress(5); // Start with 5% to show activity
+    
+    // Safety timeout to ensure loading doesn't stick
+    const safetyTimer = setTimeout(() => {
+      setLoading((l) => {
+        if (l) {
+          toast({ title: "Loading timed out", description: "Please refresh the page.", variant: "destructive" });
+          return false;
+        }
+        return l;
+      });
+    }, 15000);
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      // Use Promise.race to prevent auth hang
+      const userPromise = supabase.auth.getUser().then(({ data }) => data.user);
+      const timeoutPromise = new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Authentication timed out")), 10000));
+      
+      const user = await Promise.race([userPromise, timeoutPromise]);
+      
       if (!user) throw new Error("Not authenticated");
 
-      const { data: companyProfile } = await supabase
+      const { data: companyProfile, error: profileError } = await supabase
         .from("profiles")
         .select("company_id")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle(); // Use maybeSingle to avoid 406 error if multiple/none (though should be one)
 
+      if (profileError) throw profileError;
       if (!companyProfile?.company_id) throw new Error("Company not found");
+      
+      setCompanyId(companyProfile.company_id);
       
       setLoadingProgress(20);
 
-      // Fetch period-scoped trial balance using transaction entry dates
-      const tbData = await fetchTrialBalanceForPeriod(companyProfile.company_id, periodStart, periodEnd);
+      const demo = isDemoMode();
+      const tbData = demo ? demoTBPeriod(periodStart, periodEnd) : await fetchTrialBalanceForPeriod(companyProfile.company_id, periodStart, periodEnd);
       const normalized = (tbData || []).map((r: any) => ({
         account_id: String(r.account_id || ''),
         account_code: String(r.account_code || ''),
@@ -346,8 +398,7 @@ export const GAAPFinancialStatements = () => {
 
       setLoadingProgress(60);
 
-      // Fetch cumulative trial balance as of period end for balance sheet
-      const tbAsOf = await fetchTrialBalanceAsOf(companyProfile.company_id, periodEnd);
+      const tbAsOf = demo ? demoTBAsOf(periodEnd) : await fetchTrialBalanceAsOf(companyProfile.company_id, periodEnd);
       const normalizedAsOf = (tbAsOf || []).map((r: any) => ({
         account_id: String(r.account_id || ''),
         account_code: String(r.account_code || ''),
@@ -680,20 +731,88 @@ export const GAAPFinancialStatements = () => {
   }
 
   const handleRefresh = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data: companyProfile } = await supabase
-      .from("profiles")
-      .select("company_id")
-      .eq("user_id", user.id)
-      .single();
-
-    if (!companyProfile?.company_id) return;
-
-    await supabase.rpc('refresh_afs_cache', { _company_id: companyProfile.company_id });
-    await loadFinancialData();
-    toast({ title: "Success", description: "Financial statements refreshed" });
+    try {
+      setRefreshing(true);
+      setLoadingProgress(0);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { setRefreshing(false); return; }
+      const { data: companyProfile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .single();
+      if (!companyProfile?.company_id) { setRefreshing(false); return; }
+      const cid = companyProfile.company_id as string;
+      const notify = (pct: number, msg: string) => { setLoadingProgress(pct); toast({ title: `Loading ${pct}%`, description: msg }); };
+      if (activeTab === 'balance-sheet') {
+        notify(10, 'Cumulative trial balance as of period end');
+        const tbAsOf = await fetchTrialBalanceAsOf(cid, periodEnd);
+        const normalizedAsOf = (tbAsOf || []).map((r: any) => ({
+          account_id: String(r.account_id || ''),
+          account_code: String(r.account_code || ''),
+          account_name: String(r.account_name || ''),
+          account_type: String(r.account_type || ''),
+          normal_balance: String(r.normal_balance || 'debit'),
+          total_debits: Number(r.total_debits || 0),
+          total_credits: Number(r.total_credits || 0),
+          balance: Number(r.balance || 0),
+        }));
+        setTrialBalanceAsOf(normalizedAsOf);
+        notify(60, 'VAT receivable and payable');
+        const vatRecvSum = normalizedAsOf
+          .filter((r: any) => String(r.account_type || '').toLowerCase() === 'asset' && (String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable')))
+          .reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
+        const vatPaySum = normalizedAsOf
+          .filter((r: any) => String(r.account_type || '').toLowerCase() === 'liability' && String(r.account_name || '').toLowerCase().includes('vat'))
+          .reduce((sum: number, r: any) => sum + Number(r.balance || 0), 0);
+        setVatReceivableAsOf(vatRecvSum);
+        setVatPayableAsOf(vatPaySum);
+        notify(100, 'Balance Sheet refreshed');
+      } else if (activeTab === 'income') {
+        notify(10, 'Period trial balance');
+        const tbData = await fetchTrialBalanceForPeriod(cid, periodStart, periodEnd);
+        const normalized = (tbData || []).map((r: any) => ({
+          account_id: String(r.account_id || ''),
+          account_code: String(r.account_code || ''),
+          account_name: String(r.account_name || ''),
+          account_type: String(r.account_type || ''),
+          normal_balance: String(r.normal_balance || 'debit'),
+          total_debits: Number(r.total_debits || 0),
+          total_credits: Number(r.total_credits || 0),
+          balance: Number(r.balance || 0),
+        }));
+        setTrialBalance(normalized);
+        notify(60, 'Computing net profit');
+        const revRowsPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'revenue' || String(r.account_type || '').toLowerCase() === 'income');
+        const expRowsPeriod = normalized.filter((r: any) => String(r.account_type || '').toLowerCase() === 'expense' && !String(r.account_name || '').toLowerCase().includes('vat'));
+        const cogsRowsPeriod = expRowsPeriod.filter((r: any) => String(r.account_name || '').toLowerCase().includes('cost of') || String(r.account_code || '').startsWith('50'));
+        const opexRowsPeriod = expRowsPeriod
+          .filter((r: any) => !cogsRowsPeriod.includes(r))
+          .filter((r: any) => !(String(r.account_code || '') === '5600' || String(r.account_name || '').toLowerCase().includes('depreciation')));
+        const totalRevenuePeriod = revRowsPeriod.reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+        const totalCOGSPeriod = cogsRowsPeriod.reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+        const grossProfitPeriod = totalRevenuePeriod - totalCOGSPeriod;
+        const totalOpexPeriod = opexRowsPeriod.reduce((s: number, r: any) => s + Number(r.balance || 0), 0);
+        setNetProfitPeriod(grossProfitPeriod - totalOpexPeriod);
+        notify(100, 'Income Statement refreshed');
+      } else if (activeTab === 'cash-flow') {
+        notify(10, 'Generating cash flow');
+        await loadCashFlow();
+        notify(100, 'Cash Flow refreshed');
+      } else if (activeTab === 'comparative') {
+        notify(10, 'Loading comparative data');
+        await loadComparativeData();
+        notify(100, 'Comparative view refreshed');
+      } else {
+        notify(10, 'Refreshing financial statements');
+        await loadFinancialData();
+        notify(100, 'All sections refreshed');
+      }
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message });
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleExport = async (type: 'pdf' | 'excel') => {
@@ -2253,96 +2372,138 @@ export const GAAPFinancialStatements = () => {
   const renderComparativeBalanceSheet = () => {
     const y = comparativeYearA;
     const py = comparativeYearB;
-    const normalizeName = (name: string) => name.toLowerCase().replace(/accumulated/g, '').replace(/depreciation/g, '').replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
-    const buildMap = (tb: TrialBalanceRow[]) => new Map(tb.map(r => [String(r.account_code || r.account_id), r]));
-    const mapCurr = buildMap(trialBalanceCompAsOfA);
-    const mapPrev = buildMap(trialBalanceCompAsOfB);
-    const listCurrentAssets = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'asset' && (r.account_name.toLowerCase().includes('cash') || r.account_name.toLowerCase().includes('bank') || r.account_name.toLowerCase().includes('receivable') || r.account_name.toLowerCase().includes('inventory') || parseInt(r.account_code) < 1500) && !String(r.account_name || '').toLowerCase().includes('vat'));
-    const vatReceivableFor = (tb: TrialBalanceRow[]) => tb.filter(r => String(r.account_name || '').toLowerCase().includes('vat input') || String(r.account_name || '').toLowerCase().includes('vat receivable')).reduce((s, r) => s + r.balance, 0);
-    const nonCurrentAssetsAll = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'asset' && !listCurrentAssets(tb).includes(r));
-    const accDepRows = (tb: TrialBalanceRow[]) => nonCurrentAssetsAll(tb).filter(r => String(r.account_name || '').toLowerCase().includes('accumulated'));
-    const nonCurrentAssets = (tb: TrialBalanceRow[]) => nonCurrentAssetsAll(tb).filter(r => !String(r.account_name || '').toLowerCase().includes('accumulated'));
-    const nbvFor = (tb: TrialBalanceRow[], assetRow: TrialBalanceRow) => {
-      const base = normalizeName(assetRow.account_name);
-      const related = accDepRows(tb).filter(ad => {
-        const adBase = normalizeName(ad.account_name);
-        return adBase.includes(base) || base.includes(adBase);
-      });
-      const accTotal = related.reduce((sum, r) => sum + r.balance, 0);
-      return assetRow.balance - accTotal;
+    const pctClass = (val: number) => {
+        if (isNaN(val) || !isFinite(val)) return 'text-muted-foreground';
+        if (val > 0) return 'text-green-600';
+        if (val < 0) return 'text-red-600';
+        return 'text-muted-foreground';
     };
-    const vatPayableFor = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'liability' && String(r.account_name || '').toLowerCase().includes('vat')).reduce((s, r) => s + r.balance, 0);
-    const currentLiabilitiesList = (tb: TrialBalanceRow[]) => {
-      const rows = tb.filter(r => r.account_type.toLowerCase() === 'liability' && !String(r.account_name || '').toLowerCase().includes('vat'));
-      return rows.filter(r => {
-        const name = String(r.account_name || '').toLowerCase();
-        const code = String(r.account_code || '');
-        const isLoan = name.includes('loan');
-        const isLongLoan = isLoan && (code === '2400' || name.includes('long'));
-        const isShortLoan = isLoan && (code === '2300' || name.includes('short'));
-        const isPayableOrTax = name.includes('payable') || name.includes('sars');
-        return (isPayableOrTax && !isLongLoan) || isShortLoan;
-      });
+    const percentChange = (curr: number, prev: number) => {
+        if (prev === 0) return 0;
+        return ((curr - prev) / Math.abs(prev)) * 100;
     };
-    const prevSetCurrentLiab = new Set(currentLiabilitiesList(trialBalanceCompAsOfB).map(r => r.account_id));
-    const nonCurrentLiabilitiesList = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'liability' && !prevSetCurrentLiab.has(r.account_id));
-    const equityList = (tb: TrialBalanceRow[]) => tb.filter(r => r.account_type.toLowerCase() === 'equity');
-    const mergeCodes = Array.from(new Set([...trialBalanceCompAsOfA.map(r => String(r.account_code || r.account_id)), ...trialBalanceCompAsOfB.map(r => String(r.account_code || r.account_id))]));
-    const rows: Array<{ label: string; curr: number; prev: number; bold?: boolean }> = [];
-    rows.push({ label: 'ASSETS', curr: 0, prev: 0, bold: true });
-    rows.push({ label: 'VAT Receivable', curr: vatReceivableFor(trialBalanceCompAsOfA), prev: vatReceivableFor(trialBalanceCompAsOfB) });
-    rows.push({ label: 'Current Assets', curr: 0, prev: 0, bold: true });
-    listCurrentAssets(trialBalanceCompAsOfA).forEach(a => {
-      const key = String(a.account_code || a.account_id);
-      const prevRow = mapPrev.get(key);
-      rows.push({ label: `${a.account_code} - ${a.account_name}`, curr: a.balance, prev: prevRow ? prevRow.balance : 0 });
-    });
-    const currCA = rows.filter(r => !r.bold && (listCurrentAssets(trialBalanceCompAsOfA).some(a => `${a.account_code} - ${a.account_name}` === r.label))).reduce((s, r) => s + r.curr, 0) + vatReceivableFor(trialBalanceCompAsOfA);
-    const prevCA = rows.filter(r => !r.bold && (listCurrentAssets(trialBalanceCompAsOfB).some(a => `${a.account_code} - ${a.account_name}` === r.label))).reduce((s, r) => s + r.prev, 0) + vatReceivableFor(trialBalanceCompAsOfB);
-    rows.push({ label: 'Total Current Assets', curr: currCA, prev: prevCA, bold: true });
-    rows.push({ label: 'Non-current Assets (NBV)', curr: 0, prev: 0, bold: true });
-    nonCurrentAssets(trialBalanceCompAsOfA).forEach(a => {
-      const key = String(a.account_code || a.account_id);
-      const prevRow = mapPrev.get(key);
-      const currNbv = nbvFor(trialBalanceCompAsOfA, a);
-      const prevNbv = prevRow ? nbvFor(trialBalanceCompAsOfB, prevRow) : 0;
-      rows.push({ label: `${a.account_code} - ${a.account_name}`, curr: currNbv, prev: prevNbv });
-    });
-    const currNCA = nonCurrentAssets(trialBalanceCompAsOfA).reduce((s, a) => s + nbvFor(trialBalanceCompAsOfA, a), 0);
-    const prevNCA = nonCurrentAssets(trialBalanceCompAsOfB).reduce((s, a) => s + nbvFor(trialBalanceCompAsOfB, a), 0);
-    rows.push({ label: 'Total Non-current Assets', curr: currNCA, prev: prevNCA, bold: true });
-    rows.push({ label: 'TOTAL ASSETS', curr: currCA + currNCA, prev: prevCA + prevNCA, bold: true });
-    rows.push({ label: 'LIABILITIES', curr: 0, prev: 0, bold: true });
-    rows.push({ label: 'VAT Payable', curr: vatPayableFor(trialBalanceCompAsOfA), prev: vatPayableFor(trialBalanceCompAsOfB) });
-    rows.push({ label: 'Current Liabilities', curr: 0, prev: 0, bold: true });
-    currentLiabilitiesList(trialBalanceCompAsOfA).forEach(l => {
-      const key = String(l.account_code || l.account_id);
-      const prevRow = mapPrev.get(key);
-      rows.push({ label: `${l.account_code} - ${l.account_name}`, curr: l.balance, prev: prevRow ? prevRow.balance : 0 });
-    });
-    const currCL = currentLiabilitiesList(trialBalanceCompAsOfA).reduce((s, r) => s + r.balance, 0) + vatPayableFor(trialBalanceCompAsOfA);
-    const prevCL = currentLiabilitiesList(trialBalanceCompAsOfB).reduce((s, r) => s + r.balance, 0) + vatPayableFor(trialBalanceCompAsOfB);
-    rows.push({ label: 'Total Current Liabilities', curr: currCL, prev: prevCL, bold: true });
-    rows.push({ label: 'Non-current Liabilities', curr: 0, prev: 0, bold: true });
-    nonCurrentLiabilitiesList(trialBalanceCompAsOfA).forEach(l => {
-      const key = String(l.account_code || l.account_id);
-      const prevRow = mapPrev.get(key);
-      rows.push({ label: `${l.account_code} - ${l.account_name}`, curr: l.balance, prev: prevRow ? prevRow.balance : 0 });
-    });
-    const currNCL = nonCurrentLiabilitiesList(trialBalanceCompAsOfA).reduce((s, r) => s + r.balance, 0);
-    const prevNCL = nonCurrentLiabilitiesList(trialBalanceCompAsOfB).reduce((s, r) => s + r.balance, 0);
-    rows.push({ label: 'Total Non-current Liabilities', curr: currNCL, prev: prevNCL, bold: true });
-    rows.push({ label: 'TOTAL LIABILITIES', curr: currCL + currNCL, prev: prevCL + prevNCL, bold: true });
-    rows.push({ label: 'EQUITY', curr: 0, prev: 0, bold: true });
-    equityList(trialBalanceCompAsOfA).forEach(e => {
-      const key = String(e.account_code || e.account_id);
-      const prevRow = mapPrev.get(key);
-      rows.push({ label: `${e.account_code} - ${e.account_name}`, curr: e.balance, prev: prevRow ? prevRow.balance : 0 });
-    });
-    const currEQ = equityList(trialBalanceCompAsOfA).reduce((s, r) => s + r.balance, 0);
-    const prevEQ = equityList(trialBalanceCompAsOfB).reduce((s, r) => s + r.balance, 0);
-    rows.push({ label: 'Total Equity', curr: currEQ, prev: prevEQ, bold: true });
-    rows.push({ label: 'TOTAL L & E', curr: currCL + currNCL + currEQ, prev: prevCL + prevNCL + prevEQ, bold: true });
+    const formatCurrency = (amount: number) => new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(amount);
+
+    // Helper functions for aggregation (matching renderComparativeNotes logic where possible)
+    const toLower = (s: string) => String(s || '').toLowerCase();
+    const sum = (arr: TrialBalanceRow[]) => arr.reduce((s, r) => s + Number(r.balance || 0), 0);
+
+    const getAggregates = (tb: TrialBalanceRow[]) => {
+        const nonCurrentAssets = tb.filter(r => toLower(r.account_type) === 'asset' && parseInt(String(r.account_code || '0'), 10) >= 1500);
+        const ppe = sum(nonCurrentAssets.filter(r => !toLower(r.account_name).includes('accumulated') && !toLower(r.account_name).includes('intangible') && !toLower(r.account_name).includes('investment')));
+        const accDep = sum(nonCurrentAssets.filter(r => toLower(r.account_name).includes('accumulated')));
+        const ppeNet = ppe + accDep; // accDep is usually negative
+
+        const inventory = sum(tb.filter(r => toLower(r.account_type) === 'asset' && toLower(r.account_name).includes('inventory')));
+        
+        const tradeReceivables = tb.filter(r => toLower(r.account_type) === 'asset' && (toLower(r.account_name).includes('trade receivable') || toLower(r.account_name).includes('accounts receivable')));
+        const tradeRecVal = sum(tradeReceivables);
+        
+        const cashItems = tb.filter(r => toLower(r.account_type) === 'asset' && (toLower(r.account_name).includes('cash') || toLower(r.account_name).includes('bank')));
+        const cashVal = sum(cashItems);
+
+        const vatReceivable = sum(tb.filter(r => toLower(r.account_type) === 'asset' && toLower(r.account_name).includes('vat')));
+        
+        // Other receivables (excluding trade, inventory, ppe, cash, vat)
+        const otherReceivables = sum(tb.filter(r => 
+            toLower(r.account_type) === 'asset' && 
+            !tradeReceivables.includes(r) && 
+            !toLower(r.account_name).includes('inventory') && 
+            !nonCurrentAssets.includes(r) && 
+            !cashItems.includes(r) &&
+            !toLower(r.account_name).includes('vat')
+        ));
+
+        // Liabilities
+        const tradePayables = tb.filter(r => toLower(r.account_type) === 'liability' && (toLower(r.account_name).includes('trade payable') || toLower(r.account_name).includes('accounts payable')));
+        const tradePayVal = sum(tradePayables);
+        
+        const vatPayable = sum(tb.filter(r => toLower(r.account_type) === 'liability' && toLower(r.account_name).includes('vat')));
+        
+        const taxPayable = sum(tb.filter(r => toLower(r.account_type) === 'liability' && toLower(r.account_name).includes('tax') && !toLower(r.account_name).includes('vat')));
+
+        // Long term loans
+        const nonCurrentLiab = sum(tb.filter(r => toLower(r.account_type) === 'liability' && (String(r.account_code) === '2400' || toLower(r.account_name).includes('long term'))));
+
+        // Other current liabilities
+        const otherPayables = sum(tb.filter(r => 
+            toLower(r.account_type) === 'liability' && 
+            !tradePayables.includes(r) && 
+            !toLower(r.account_name).includes('vat') && 
+            !toLower(r.account_name).includes('tax') &&
+            !(String(r.account_code) === '2400' || toLower(r.account_name).includes('long term'))
+        ));
+
+        const equity = sum(tb.filter(r => toLower(r.account_type) === 'equity'));
+
+        return {
+            ppeNet,
+            inventory,
+            tradeRecVal,
+            otherReceivables,
+            cashVal,
+            vatReceivable,
+            equity,
+            nonCurrentLiab,
+            tradePayVal,
+            otherPayables,
+            vatPayable,
+            taxPayable
+        };
+    };
+
+    const curr = getAggregates(trialBalanceCompAsOfA);
+    const prev = getAggregates(trialBalanceCompAsOfB);
+
+    // Calculate totals
+    const totalNonCurrentAssetsCurr = curr.ppeNet; // Add other non-current if needed
+    const totalNonCurrentAssetsPrev = prev.ppeNet;
+    
+    const totalCurrentAssetsCurr = curr.inventory + curr.tradeRecVal + curr.otherReceivables + curr.cashVal + curr.vatReceivable;
+    const totalCurrentAssetsPrev = prev.inventory + prev.tradeRecVal + prev.otherReceivables + prev.cashVal + prev.vatReceivable;
+
+    const totalAssetsCurr = totalNonCurrentAssetsCurr + totalCurrentAssetsCurr;
+    const totalAssetsPrev = totalNonCurrentAssetsPrev + totalCurrentAssetsPrev;
+
+    const totalEquityCurr = curr.equity;
+    const totalEquityPrev = prev.equity;
+
+    const totalNonCurrentLiabCurr = curr.nonCurrentLiab;
+    const totalNonCurrentLiabPrev = prev.nonCurrentLiab;
+
+    const totalCurrentLiabCurr = curr.tradePayVal + curr.otherPayables + curr.vatPayable + curr.taxPayable;
+    const totalCurrentLiabPrev = prev.tradePayVal + prev.otherPayables + prev.vatPayable + prev.taxPayable;
+
+    const totalEquityLiabCurr = totalEquityCurr + totalNonCurrentLiabCurr + totalCurrentLiabCurr;
+    const totalEquityLiabPrev = totalEquityPrev + totalNonCurrentLiabPrev + totalCurrentLiabPrev;
+
+    const rows: Array<{ label: string; curr: number; prev: number; bold?: boolean; note?: string; indent?: boolean; sectionHeader?: boolean; totalRow?: boolean }> = [
+      { label: 'ASSETS', curr: 0, prev: 0, sectionHeader: true },
+      { label: 'Non-current assets', curr: totalNonCurrentAssetsCurr, prev: totalNonCurrentAssetsPrev, bold: true },
+      { label: 'Property, plant and equipment', curr: curr.ppeNet, prev: prev.ppeNet, note: '1', indent: true },
+      
+      { label: 'Current assets', curr: totalCurrentAssetsCurr, prev: totalCurrentAssetsPrev, bold: true },
+      { label: 'Inventories', curr: curr.inventory, prev: prev.inventory, note: '2', indent: true },
+      { label: 'Trade and other receivables', curr: curr.tradeRecVal + curr.otherReceivables, prev: prev.tradeRecVal + prev.otherReceivables, note: '3', indent: true },
+      { label: 'Cash and cash equivalents', curr: curr.cashVal, prev: prev.cashVal, note: '4', indent: true },
+      { label: 'VAT Receivable', curr: curr.vatReceivable, prev: prev.vatReceivable, indent: true }, // No note usually for VAT
+      
+      { label: 'Total Assets', curr: totalAssetsCurr, prev: totalAssetsPrev, totalRow: true },
+
+      { label: 'EQUITY AND LIABILITIES', curr: 0, prev: 0, sectionHeader: true },
+      { label: 'Equity', curr: totalEquityCurr, prev: totalEquityPrev, bold: true, note: '10' },
+      
+      { label: 'Non-current liabilities', curr: totalNonCurrentLiabCurr, prev: totalNonCurrentLiabPrev, bold: true },
+      { label: 'Long-term borrowings', curr: curr.nonCurrentLiab, prev: prev.nonCurrentLiab, indent: true },
+
+      { label: 'Current liabilities', curr: totalCurrentLiabCurr, prev: totalCurrentLiabPrev, bold: true },
+      { label: 'Trade and other payables', curr: curr.tradePayVal + curr.otherPayables, prev: prev.tradePayVal + prev.otherPayables, note: '5', indent: true },
+      { label: 'Taxation payable', curr: curr.taxPayable, prev: prev.taxPayable, note: '9', indent: true },
+      { label: 'VAT Payable', curr: curr.vatPayable, prev: prev.vatPayable, indent: true },
+
+      { label: 'Total Equity and Liabilities', curr: totalEquityLiabCurr, prev: totalEquityLiabPrev, totalRow: true },
+    ];
+
     return (
       <div className="space-y-4">
         <h3 className="text-xl font-bold">Comparative Statement of Financial Position</h3>
@@ -2350,23 +2511,34 @@ export const GAAPFinancialStatements = () => {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="p-2 text-left font-semibold">Item</th>
+                <th className="p-2 text-left font-semibold w-1/2">Item</th>
+                <th className="p-2 text-center font-semibold w-16">Note</th>
                 <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
                 <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
                 <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">% Change</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r, i) => (
-                <tr key={`bs-comp-${i}-${r.label}`} className="border-b hover:bg-muted/50">
-                  <td className={`p-2 ${r.bold ? 'font-semibold' : ''}`}>{r.label}</td>
-                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-semibold' : ''}`}>R {r.curr.toLocaleString()}</td>
-                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${r.bold ? 'font-semibold' : ''}`}>R {r.prev.toLocaleString()}</td>
-                  <td className={`p-2 text-right border-l border-muted-foreground/20 ${pctClass(percentChange(r.curr, r.prev))} ${r.bold ? 'font-semibold' : ''}`}>
-                    {percentChange(r.curr, r.prev).toFixed(1)}%
-                  </td>
-                </tr>
-              ))}
+              {rows.map((r, i) => {
+                if (r.sectionHeader) {
+                    return (
+                        <tr key={`bs-comp-${i}`} className="bg-muted/30">
+                            <td colSpan={5} className="p-2 font-bold uppercase">{r.label}</td>
+                        </tr>
+                    );
+                }
+                return (
+                    <tr key={`bs-comp-${i}`} className={`border-b hover:bg-muted/50 ${r.totalRow ? 'font-bold border-t-2 bg-muted/20' : ''}`}>
+                      <td className={`p-2 ${r.indent ? 'pl-6' : ''} ${r.bold ? 'font-semibold' : ''}`}>{r.label}</td>
+                      <td className="p-2 text-center text-muted-foreground">{r.note || '-'}</td>
+                      <td className={`p-2 text-right border-l border-muted-foreground/20`}>{formatCurrency(r.curr)}</td>
+                      <td className={`p-2 text-right border-l border-muted-foreground/20`}>{formatCurrency(r.prev)}</td>
+                      <td className={`p-2 text-right border-l border-muted-foreground/20 ${pctClass(percentChange(r.curr, r.prev))}`}>
+                        {percentChange(r.curr, r.prev).toFixed(1)}%
+                      </td>
+                    </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -3338,9 +3510,14 @@ export const GAAPFinancialStatements = () => {
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-bold">GAAP Financial Statements</h1>
-            <p className="text-muted-foreground">Annual Financial Statements with drill-down</p>
+            <p className="text-muted-foreground">Financial Statements with drill-down</p>
           </div>
+          {activeTab && (
           <div className="flex items-center gap-3 bg-background p-1.5 rounded-xl border shadow-sm">
+            <div className="flex items-center gap-2 px-2 py-1 rounded-md border bg-muted/20">
+              <Label className="text-xs">Auto Refresh</Label>
+              <Switch checked={isAutoRefreshEnabled} onCheckedChange={setIsAutoRefreshEnabled} />
+            </div>
              <Button 
                variant="ghost" 
                size="sm" 
@@ -3353,17 +3530,18 @@ export const GAAPFinancialStatements = () => {
              <div className="h-6 w-px bg-border" />
              <Button 
                onClick={handleRefresh} 
-               disabled={loading}
+               disabled={refreshing}
                size="sm"
                className="h-9 px-4 gap-2 rounded-lg shadow-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-all"
              >
-               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-               {loading ? `Loading ${loadingProgress}%` : 'Refresh Data'}
+               <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+               {refreshing ? `Refreshing ${loadingProgress}%` : 'Refresh Data'}
              </Button>
           </div>
+          )}
         </div>
 
-      {showFilters && (
+      {activeTab && showFilters && (
       <div className="animate-in fade-in slide-in-from-top-4 duration-300">
         <Card className="border shadow-sm bg-muted/10">
           <CardContent className="p-6">
@@ -3446,41 +3624,116 @@ export const GAAPFinancialStatements = () => {
       </div>
       )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <div className="border-b pb-px overflow-x-auto">
-          <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0 rounded-none">
-            <TabsTrigger value="balance-sheet" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
-              <Scale className="h-4 w-4" />
-              Statement of Financial Position
-            </TabsTrigger>
-            <TabsTrigger value="income" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
-              <Activity className="h-4 w-4" />
+      <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 ${activeTab ? 'hidden' : ''}`}>
+        <Card onClick={() => { setActiveTab('balance-sheet'); setShowFilters(true); }} className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${activeTab === 'balance-sheet' ? 'border-l-primary shadow-md' : 'border-l-transparent'}`}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Scale className="h-4 w-4 text-primary" />
+              Balance Sheet
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <p className="text-xs text-muted-foreground">Statement of Financial Position</p>
+          </CardContent>
+        </Card>
+
+        <Card onClick={() => { setActiveTab('income'); setShowFilters(true); }} className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${activeTab === 'income' ? 'border-l-primary shadow-md' : 'border-l-transparent'}`}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Activity className="h-4 w-4 text-primary" />
               Income Statement
-            </TabsTrigger>
-            <TabsTrigger value="cash-flow" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
-              <ArrowLeftRight className="h-4 w-4" />
-              Cash Flow Statement
-            </TabsTrigger>
-            <TabsTrigger value="comparative" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
-              <History className="h-4 w-4" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <p className="text-xs text-muted-foreground">Profit or Loss Statement</p>
+          </CardContent>
+        </Card>
+
+        <Card onClick={() => { setActiveTab('cash-flow'); setShowFilters(true); }} className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${activeTab === 'cash-flow' ? 'border-l-primary shadow-md' : 'border-l-transparent'}`}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <ArrowLeftRight className="h-4 w-4 text-primary" />
+              Cash Flow
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <p className="text-xs text-muted-foreground">Cash Inflows & Outflows</p>
+          </CardContent>
+        </Card>
+
+        <Card onClick={() => { setActiveTab('comparative'); setShowFilters(true); }} className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${activeTab === 'comparative' ? 'border-l-primary shadow-md' : 'border-l-transparent'}`}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <History className="h-4 w-4 text-primary" />
               Comparative
-            </TabsTrigger>
-            <TabsTrigger value="retained-earnings" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
-              <PieChart className="h-4 w-4" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <p className="text-xs text-muted-foreground">Year-over-Year Analysis</p>
+          </CardContent>
+        </Card>
+        
+        <Card onClick={() => { setActiveTab('retained-earnings'); setShowFilters(true); }} className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${activeTab === 'retained-earnings' ? 'border-l-primary shadow-md' : 'border-l-transparent'}`}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <PieChart className="h-4 w-4 text-primary" />
               Retained Earnings
-            </TabsTrigger>
-            <TabsTrigger value="ppe" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
-              <FileText className="h-4 w-4" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <p className="text-xs text-muted-foreground">Changes in Equity</p>
+          </CardContent>
+        </Card>
+
+        <Card onClick={() => { setActiveTab('ppe'); setShowFilters(true); }} className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${activeTab === 'ppe' ? 'border-l-primary shadow-md' : 'border-l-transparent'}`}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary" />
               PPE Schedule
-            </TabsTrigger>
-            <TabsTrigger value="monthly-report" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
-              <BarChart3 className="h-4 w-4" />
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <p className="text-xs text-muted-foreground">Property, Plant & Equipment</p>
+          </CardContent>
+        </Card>
+
+        <Card onClick={() => { setActiveTab('monthly-report'); setShowFilters(true); }} className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${activeTab === 'monthly-report' ? 'border-l-primary shadow-md' : 'border-l-transparent'}`}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-primary" />
               Monthly Report
-            </TabsTrigger>
-            <TabsTrigger value="ifrs-notes" className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-3 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2">
-              <FileText className="h-4 w-4" />
-              Notes to Financial Statements (IFRS)
-            </TabsTrigger>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <p className="text-xs text-muted-foreground">Month-by-Month Breakdown</p>
+          </CardContent>
+        </Card>
+
+        <Card onClick={() => setActiveTab('ifrs-notes')} className={`cursor-pointer transition-all hover:shadow-md border-l-4 ${activeTab === 'ifrs-notes' ? 'border-l-primary shadow-md' : 'border-l-transparent'}`}>
+          <CardHeader className="p-4 pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <FileText className="h-4 w-4 text-primary" />
+              IFRS Notes
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            <p className="text-xs text-muted-foreground">Notes to Financial Statements</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {activeTab && (
+        <Button variant="outline" onClick={() => setActiveTab('')} className="mb-4">
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          Back to Dashboard
+        </Button>
+      )}
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className={`space-y-6 ${!activeTab ? 'hidden' : ''}`}>
+        <div className="hidden">
+          {/* TabsList hidden for card-based navigation */}
+          <TabsList>
+             <TabsTrigger value="balance-sheet">Balance Sheet</TabsTrigger>
           </TabsList>
         </div>
 
@@ -4665,7 +4918,7 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
 
     const type = (acc.account_type || '').toLowerCase();
     const naturalDebit = type === 'asset' || type === 'expense';
-    let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
+    const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
     if (String(acc.account_code || '') === '2000' && typeof apBalanceAsOf === 'number') {
       balance = apBalanceAsOf;
@@ -4765,11 +5018,7 @@ const fetchTrialBalanceAsOf = async (companyId: string, end: string) => {
 
     const type = (acc.account_type || '').toLowerCase();
     const naturalDebit = type === 'asset' || type === 'expense';
-    let balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
-
-    if (false) {
-      balance = inventoryValueAsOf;
-    }
+    const balance = naturalDebit ? (sumDebit - sumCredit) : (sumCredit - sumDebit);
 
     const shouldShow = Math.abs(balance) > 0.01;
     if (shouldShow) {

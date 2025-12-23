@@ -46,7 +46,7 @@ export const DocumentationModal = ({ open, onOpenChange }: DocumentationModalPro
           <div className="relative z-10 flex items-center gap-4">
             <div className="bg-white/10 p-3 rounded-xl backdrop-blur-md border border-white/20 shadow-inner">
               <img 
-                src="/Modern Rigel Business Logo Design.png" 
+                src="/logo.png" 
                 alt="Rigel Business" 
                 className="w-12 h-12 object-cover rounded-lg"
               />

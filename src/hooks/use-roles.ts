@@ -1,34 +1,47 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/context/useAuth';
 
-type Role = 'administrator' | 'accountant' | 'manager';
+export type Role = 'administrator' | 'accountant' | 'manager';
 
 export function useRoles() {
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { user, loading: authLoading } = useAuth();
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) { setRoles([]); return; }
-        const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).maybeSingle();
-        if (!profile?.company_id) { setRoles([]); return; }
-        const { data } = await supabase.from('user_roles').select('role').eq('user_id', user.id).eq('company_id', profile.company_id);
-        if (mounted) setRoles((data || []).map(r => r.role as Role));
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    })();
-    return () => { mounted = false; };
-  }, []);
+  const { data: roles = [], isLoading: queryLoading } = useQuery({
+    queryKey: ['userRoles', user?.id],
+    queryFn: async () => {
+      if (!user) return [];
+      
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('company_id')
+        .eq('user_id', user.id)
+        .maybeSingle();
+        
+      if (!profile?.company_id) return [];
+      
+      const { data } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('company_id', profile.company_id);
+        
+      return (data || []).map(r => r.role as Role);
+    },
+    enabled: !!user && !authLoading,
+    staleTime: 1000 * 60 * 5, // 5 minutes cache
+    refetchOnWindowFocus: false,
+  });
+
+  const loading = authLoading || (!!user && queryLoading);
+  const isAdmin = roles.includes('administrator');
 
   return {
     roles,
     loading,
-    isAdmin: roles.includes('administrator'),
-    isAccountant: roles.includes('accountant'),
-    isManager: roles.includes('manager')
+    isAdmin,
+    // Administrators automatically inherit all other role permissions
+    isAccountant: roles.includes('accountant') || isAdmin,
+    isManager: roles.includes('manager') || isAdmin
   };
 }

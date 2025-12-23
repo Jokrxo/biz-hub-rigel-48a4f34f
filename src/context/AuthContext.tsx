@@ -2,56 +2,12 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import AuthContext, { AuthContextValue } from "./AuthContextBase";
-
- 
+import { enableDemoMode, disableDemoMode } from "@/lib/demo-data";
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Get initial session with error handling
-    const initializeAuth = async () => {
-      if (!hasSupabaseEnv) {
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-      try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) {
-          console.warn('Auth session error:', error);
-          // Clear any corrupted session data
-          if (typeof localStorage !== 'undefined') {
-            localStorage.removeItem('supabase-auth-token');
-            localStorage.removeItem('sb-mzrdksmimgzkvbojjytc-auth-token');
-          }
-        }
-        setUser(session?.user ?? null);
-      } catch (error) {
-        console.error('Failed to initialize auth:', error);
-        setUser(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    initializeAuth();
-
-    // Listen for auth changes with error handling
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  const login = useCallback(async (email: string, password: string) => {
-    if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-  }, []);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<string | null>(null);
 
   const generateUuid = useCallback(() => {
     try { return crypto.randomUUID(); } catch { /* fallback */ }
@@ -71,9 +27,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Check if profile exists
       const { data: existing, error: profErr } = await supabase
         .from('profiles')
-        .select('company_id')
+        .select('company_id, subscription_status')
         .eq('user_id', userId)
         .maybeSingle();
+      
+      // Update subscription status in state
+      if (existing) {
+        setSubscriptionStatus(existing.subscription_status);
+      }
       
       if (profErr) return;
       
@@ -120,6 +81,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .delete()
             .eq('user_id', userId)
             .eq('company_id', existing.company_id);
+        } else {
+          // Check if user has any role in their current company
+          const { count } = await supabase
+            .from('user_roles')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', userId)
+            .eq('company_id', existing.company_id);
+          
+          if (count === 0) {
+             // Fallback: Assign administrator role if missing
+             await supabase.from('user_roles').insert({ user_id: userId, company_id: existing.company_id, role: 'administrator' });
+          }
         }
         return;
       }
@@ -167,6 +140,98 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [generateUuid]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    // Timeout safety to ensure we never get stuck in loading state
+    const loadingTimeout = setTimeout(() => {
+      if (mounted) {
+        console.warn("Auth loading timed out - forcing completion");
+        setLoading(false);
+      }
+    }, 3000); // Reduced to 3 seconds
+
+    // Get initial session with error handling
+    const initializeAuth = async () => {
+      if (!hasSupabaseEnv) {
+        if (mounted) {
+          setUser(null);
+          setLoading(false);
+        }
+        return;
+      }
+      try {
+        // Race condition for getSession as well
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise<{ data: { session: null }, error: any }>(resolve => 
+          setTimeout(() => resolve({ data: { session: null }, error: "Session fetch timeout" }), 2000)
+        );
+
+        const { data: { session }, error } = await Promise.race([sessionPromise, timeoutPromise]);
+        
+        if (error && error !== "Session fetch timeout") {
+          console.warn('Auth session error:', error);
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('supabase-auth-token');
+            localStorage.removeItem('sb-mzrdksmimgzkvbojjytc-auth-token');
+          }
+        }
+        
+        if (session?.user) {
+          if (mounted) setUser(session.user);
+          
+          // Bootstrap in background, don't block loading
+          bootstrapProfileIfNeeded(session.user.id).catch(console.error);
+        } else {
+          if (mounted) setUser(null);
+        }
+      } catch (error) {
+        console.error('Failed to initialize auth:', error);
+        if (mounted) setUser(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    initializeAuth();
+
+    // Listen for auth changes with error handling
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (mounted) {
+        setUser(session?.user ?? null);
+        setLoading(false); // Unblock immediately
+        
+        if (session?.user) {
+          // Fetch additional data in background
+          supabase.from('profiles')
+            .select('subscription_status')
+            .eq('user_id', session.user.id)
+            .maybeSingle()
+            .then(({ data }) => {
+              if (mounted) setSubscriptionStatus(data?.subscription_status || null);
+            });
+        } else {
+          setSubscriptionStatus(null);
+        }
+      }
+    });
+
+    return () => {
+      mounted = false;
+      clearTimeout(loadingTimeout);
+      subscription.unsubscribe();
+    };
+  }, [bootstrapProfileIfNeeded]);
+
+  const login = useCallback(async (email: string, password: string) => {
+    if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw error;
+    if (data.user) {
+      bootstrapProfileIfNeeded(data.user.id);
+    }
+  }, [bootstrapProfileIfNeeded]);
+
   const signup = useCallback(async (name: string, email: string, password: string) => {
     if (!hasSupabaseEnv) throw new Error('Supabase is not configured');
     const { data, error } = await supabase.auth.signUp({ 
@@ -180,13 +245,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     if (error) throw error;
     
-    // Wait a moment for database triggers to complete, then bootstrap profile
-    // This ensures the user gets a unique company even if the trigger created a DEFAULT company
     if (data?.user?.id) {
-      // Small delay to allow database trigger to complete
-      await new Promise(resolve => setTimeout(resolve, 500));
-      // Bootstrap will check and fix any DEFAULT company assignment
-      await bootstrapProfileIfNeeded(data.user.id);
+      setTimeout(() => {
+        bootstrapProfileIfNeeded(data.user.id);
+      }, 500);
     }
   }, [bootstrapProfileIfNeeded]);
 
@@ -197,14 +259,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const logout = useCallback(async () => {
-    if (!hasSupabaseEnv) { setUser(null); return; }
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    try {
+      if (hasSupabaseEnv) {
+        try { await supabase.auth.signOut(); } catch {}
+      }
+    } finally {
+      try { disableDemoMode(); } catch {}
+      setUser(null);
+      setSubscriptionStatus(null);
+    }
   }, []);
 
-  const value = useMemo(() => ({ user, loading, login, signup, forgotPassword, logout }), [user, loading, login, signup, forgotPassword, logout]);
+  const startDemo = useCallback(async () => {
+    try { enableDemoMode(); setUser(null); } catch {}
+  }, []);
+  const endDemo = useCallback(async () => {
+    try { disableDemoMode(); } catch {}
+  }, []);
+
+  const value = useMemo(() => ({ user, loading, subscriptionStatus, login, signup, forgotPassword, logout, startDemo, endDemo }), [user, loading, subscriptionStatus, login, signup, forgotPassword, logout, startDemo, endDemo]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
- 
-
