@@ -16,6 +16,8 @@ import { ArrowRight, Plus, Trash2, FileText, Download, Mail } from "lucide-react
 import { buildQuotePDF, type QuoteForPDF, type QuoteItemForPDF, type CompanyForPDF } from '@/lib/quote-export';
 import { addLogoToPDF, fetchLogoDataUrl } from '@/lib/invoice-export';
 import { formatDate } from '@/lib/utils';
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Progress } from "@/components/ui/progress";
 
 interface Quote {
   id: string;
@@ -61,6 +63,9 @@ export const SalesQuotes = () => {
   const [endDate, setEndDate] = useState<string>("");
   const [page, setPage] = useState(0);
   const [pageSize] = useState(7);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
 
   const loadData = useCallback(async () => {
     try {
@@ -232,7 +237,12 @@ export const SalesQuotes = () => {
       return;
     }
 
+    setDialogOpen(false);
     try {
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Creating Quote...");
+
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
@@ -262,6 +272,10 @@ export const SalesQuotes = () => {
 
       if (quoteError) throw quoteError;
 
+      setProgress(50);
+      setProgressText("Saving Items...");
+      await new Promise(r => setTimeout(r, 400));
+
       // Create quote items
       const items = formData.items.map(item => ({
         quote_id: quote.id,
@@ -278,12 +292,18 @@ export const SalesQuotes = () => {
 
       if (itemsError) throw itemsError;
 
+      setProgress(100);
+      setProgressText("Finalizing...");
+      await new Promise(r => setTimeout(r, 600));
+
       toast({ title: "Success", description: "Quote created successfully" });
-      setDialogOpen(false);
+      setIsSubmitting(false);
       resetForm();
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+      setIsSubmitting(false);
+      setDialogOpen(true);
     }
   };
 
@@ -300,6 +320,10 @@ export const SalesQuotes = () => {
 
   const convertToInvoice = async (quoteId: string, quote: Quote) => {
     try {
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Converting to Invoice...");
+
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
@@ -360,10 +384,16 @@ export const SalesQuotes = () => {
         .update({ status: "accepted" })
         .eq("id", quoteId);
 
+      setProgress(100);
+      setProgressText("Converted Successfully");
+      await new Promise(r => setTimeout(r, 600));
+
       toast({ title: "Success", description: "Quote converted to invoice successfully" });
+      setIsSubmitting(false);
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+      setIsSubmitting(false);
     }
   };
 
@@ -801,6 +831,24 @@ export const SalesQuotes = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {isSubmitting && (
+        <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+          <div className="bg-background border shadow-xl rounded-xl flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
+            <LoadingSpinner size="lg" className="scale-125" />
+            <div className="w-full space-y-4">
+              <Progress value={progress} className="h-2 w-full" />
+              <div className="text-center space-y-2">
+                <div className="text-xl font-semibold text-primary animate-pulse">
+                  {progressText}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Please wait while we update your financial records...
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 };

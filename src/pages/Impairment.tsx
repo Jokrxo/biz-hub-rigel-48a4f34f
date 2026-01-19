@@ -435,22 +435,12 @@ export default function ImpairmentPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end p-4 border rounded-lg bg-muted/20">
                     <div className="space-y-2">
                       <Label>Select Asset (Load Preview First)</Label>
-                      <Select 
-                        value={selectedAsset || undefined} 
-                        onValueChange={setSelectedAsset}
-                        disabled={!assetsPreview}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={!assetsPreview ? "Click Preview to load assets" : "Choose asset..."} />
-                        </SelectTrigger>
+                      <Select value={selectedAsset} onValueChange={setSelectedAsset}>
+                        <SelectTrigger><SelectValue placeholder="Choose asset..." /></SelectTrigger>
                         <SelectContent>
-                          {(assetsPreview?.items || []).length === 0 ? (
-                            <SelectItem value="none" disabled>No assets found</SelectItem>
-                          ) : (
-                            (assetsPreview?.items || []).map(a => (
-                              <SelectItem key={a.asset_id} value={a.asset_id}>{a.description || a.asset_id}</SelectItem>
-                            ))
-                          )}
+                          {(assetsPreview?.items || []).map(a => (
+                            <SelectItem key={a.asset_id} value={a.asset_id}>{a.description || a.asset_id}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>

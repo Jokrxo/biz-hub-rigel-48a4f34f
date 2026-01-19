@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { Plus, Download, FileText, ArrowRight, Mail, Info, LayoutDashboard, TrendingUp, CheckCircle2, XCircle, AlertCircle, Clock, Users, Filter } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { buildQuotePDF, type QuoteForPDF, type QuoteItemForPDF, type CompanyForPDF } from '@/lib/quote-export';
@@ -17,7 +17,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
@@ -359,17 +358,17 @@ export default function QuotesPage() {
                 <Info className="h-4 w-4 mr-2" />
                 Help
               </Button>
-              <Sheet open={isQuickActionsOpen} onOpenChange={setIsQuickActionsOpen}>
-                <SheetTrigger asChild>
+              <Dialog open={isQuickActionsOpen} onOpenChange={setIsQuickActionsOpen}>
+                <DialogTrigger asChild>
                   <Button className="bg-gradient-primary shadow-lg hover:shadow-xl transition-all">
                     <Plus className="h-4 w-4 mr-2" /> Quick Actions
                   </Button>
-                </SheetTrigger>
-                <SheetContent>
-                  <SheetHeader>
-                    <SheetTitle>Quote Actions</SheetTitle>
-                    <SheetDescription>Quickly manage your sales pipeline</SheetDescription>
-                  </SheetHeader>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Quote Actions</DialogTitle>
+                    <DialogDescription>Quickly manage your sales pipeline</DialogDescription>
+                  </DialogHeader>
                   <div className="grid gap-4 py-4">
                     <Button variant="outline" className="justify-start h-12" onClick={() => { navigate('/sales?tab=quotes'); setIsQuickActionsOpen(false); }}>
                       <FileText className="h-5 w-5 mr-3 text-purple-500" />
@@ -384,8 +383,8 @@ export default function QuotesPage() {
                       Go to Sales
                     </Button>
                   </div>
-                </SheetContent>
-              </Sheet>
+                </DialogContent>
+              </Dialog>
             </div>
           </div>
 

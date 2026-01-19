@@ -187,7 +187,7 @@ export const GAAPFinancialStatements = () => {
 
   // Load cash flow whenever cash-flow tab is active or period changes
   useEffect(() => { if (activeTab === 'cash-flow') { loadCashFlow(); } }, [activeTab, periodStart, periodEnd]);
-  useEffect(() => { if (activeTab === 'comparative') { loadComparativeData(); } }, [activeTab, comparativeYearA, comparativeYearB]);
+  useEffect(() => { if (activeTab === 'comparative') { loadComparativeData(); } }, [activeTab, comparativeYearA, comparativeYearB, fiscalStartMonth]);
   useEffect(() => {
     if (periodMode === 'annual' && activeTab === 'cash-flow') {
       loadComparativeData();
@@ -2372,6 +2372,8 @@ export const GAAPFinancialStatements = () => {
   const renderComparativeBalanceSheet = () => {
     const y = comparativeYearA;
     const py = comparativeYearB;
+    const { endDate: yEndDate } = getFiscalYearDates(y);
+    const { endDate: pyEndDate } = getFiscalYearDates(py);
     const pctClass = (val: number) => {
         if (isNaN(val) || !isFinite(val)) return 'text-muted-foreground';
         if (val > 0) return 'text-green-600';
@@ -2513,8 +2515,14 @@ export const GAAPFinancialStatements = () => {
               <tr className="border-b bg-muted/50">
                 <th className="p-2 text-left font-semibold w-1/2">Item</th>
                 <th className="p-2 text-center font-semibold w-16">Note</th>
-                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
-                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">
+                  {y}
+                  <span className="text-xs font-normal text-muted-foreground block">As of {format(yEndDate, 'dd MMM yyyy')}</span>
+                </th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">
+                  {py}
+                  <span className="text-xs font-normal text-muted-foreground block">As of {format(pyEndDate, 'dd MMM yyyy')}</span>
+                </th>
                 <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">% Change</th>
               </tr>
             </thead>
@@ -2549,6 +2557,8 @@ export const GAAPFinancialStatements = () => {
   const renderComparativeIncomeStatement = () => {
     const y = comparativeYearA;
     const py = comparativeYearB;
+    const { startDate: yStartDate, endDate: yEndDate } = getFiscalYearDates(y);
+    const { startDate: pyStartDate, endDate: pyEndDate } = getFiscalYearDates(py);
     const revenueCurr = trialBalance.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
     const revenuePrev = trialBalancePrev.filter(r => r.account_type.toLowerCase() === 'revenue' || r.account_type.toLowerCase() === 'income');
     const expensesCurr = trialBalance.filter(r => String(r.account_type || '').toLowerCase() === 'expense');
@@ -2606,8 +2616,14 @@ export const GAAPFinancialStatements = () => {
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="p-2 text-left font-semibold">Item</th>
-                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
-                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">
+                  {y}
+                  <span className="text-xs font-normal text-muted-foreground block">{format(yStartDate, 'dd MMM')} - {format(yEndDate, 'dd MMM')}</span>
+                </th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">
+                  {py}
+                  <span className="text-xs font-normal text-muted-foreground block">{format(pyStartDate, 'dd MMM')} - {format(pyEndDate, 'dd MMM')}</span>
+                </th>
                 <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">% Change</th>
               </tr>
             </thead>
@@ -2634,6 +2650,8 @@ export const GAAPFinancialStatements = () => {
     const cfPrev = cashFlowPrev || { operating_inflows: 0, operating_outflows: 0, net_cash_from_operations: 0, investing_inflows: 0, investing_outflows: 0, net_cash_from_investing: 0, financing_inflows: 0, financing_outflows: 0, net_cash_from_financing: 0, opening_cash_balance: 0, closing_cash_balance: 0, net_change_in_cash: 0 };
     const y = comparativeYearA;
     const py = comparativeYearB;
+    const { startDate: yStartDate, endDate: yEndDate } = getFiscalYearDates(y);
+    const { startDate: pyStartDate, endDate: pyEndDate } = getFiscalYearDates(py);
     const buildLower = (tb: TrialBalanceRow[]) => tb.map(a => ({ account_id: a.account_id, account_code: String(a.account_code || ''), account_name: String(a.account_name || '').toLowerCase(), account_type: String(a.account_type || '').toLowerCase(), balance: Number(a.balance || 0) }));
     const lowerCurr = buildLower(trialBalance);
     const lowerPrev = buildLower(trialBalancePrev);
@@ -2756,8 +2774,14 @@ export const GAAPFinancialStatements = () => {
             <thead>
               <tr className="border-b bg-muted/50">
                 <th className="p-2 text-left font-semibold">Item</th>
-                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
-                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">
+                  {y}
+                  <span className="text-xs font-normal text-muted-foreground block">{format(yStartDate, 'dd MMM')} - {format(yEndDate, 'dd MMM')}</span>
+                </th>
+                <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">
+                  {py}
+                  <span className="text-xs font-normal text-muted-foreground block">{format(pyStartDate, 'dd MMM')} - {format(pyEndDate, 'dd MMM')}</span>
+                </th>
                 <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">% Change</th>
               </tr>
             </thead>
@@ -2782,6 +2806,8 @@ export const GAAPFinancialStatements = () => {
   const renderComparativeRetainedEarnings = () => {
     const y = comparativeYearA;
     const py = comparativeYearB;
+    const { startDate: yStartDate, endDate: yEndDate } = getFiscalYearDates(y);
+    const { startDate: pyStartDate, endDate: pyEndDate } = getFiscalYearDates(py);
     const formatCurrency = (amount: number) => new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(amount);
     const sum = (arr: TrialBalanceRow[]) => arr.reduce((s, r) => s + Number(r.balance || 0), 0);
 
@@ -2865,8 +2891,14 @@ export const GAAPFinancialStatements = () => {
                     <thead>
                         <tr className="border-b bg-muted/50">
                             <th className="p-2 text-left font-semibold">Item</th>
-                            <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{y}</th>
-                            <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">{py}</th>
+                            <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">
+                              {y}
+                              <span className="text-xs font-normal text-muted-foreground block">{format(yStartDate, 'dd MMM')} - {format(yEndDate, 'dd MMM')}</span>
+                            </th>
+                            <th className="p-2 text-right font-semibold border-l border-muted-foreground/20">
+                              {py}
+                              <span className="text-xs font-normal text-muted-foreground block">{format(pyStartDate, 'dd MMM')} - {format(pyEndDate, 'dd MMM')}</span>
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
@@ -4857,8 +4889,7 @@ const fetchTrialBalanceForPeriod = async (companyId: string, start: string, end:
     .eq('transactions.company_id', companyId)
     .eq('transactions.status', 'posted')
     .gte('transactions.transaction_date', startISO)
-    .lte('transactions.transaction_date', endISO)
-    .not('description', 'ilike', '%Opening balance (carry forward)%');
+    .lte('transactions.transaction_date', endISO);
 
   if (txError) throw txError;
 
@@ -4979,16 +5010,14 @@ const fetchTrialBalanceAsOf = async (companyId: string, end: string) => {
     `)
     .eq('transactions.company_id', companyId)
     .eq('transactions.status', 'posted')
-    .lte('transactions.transaction_date', endISO)
-    .not('description', 'ilike', '%Opening balance (carry forward)%');
+    .lte('transactions.transaction_date', endISO);
   if (txError) throw txError;
 
   const { data: ledgerEntries, error: ledgerError } = await supabase
     .from('ledger_entries')
     .select('transaction_id, account_id, debit, credit, entry_date, description')
     .eq('company_id', companyId)
-    .lte('entry_date', endISO)
-    .not('description', 'ilike', '%Opening balance (carry forward)%');
+    .lte('entry_date', endISO);
   if (ledgerError) throw ledgerError;
 
   const trialBalance: Array<{ account_id: string; account_code: string; account_name: string; account_type: string; balance: number; }> = [];

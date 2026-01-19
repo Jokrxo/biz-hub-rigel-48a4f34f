@@ -5,11 +5,12 @@ import SEO from "@/components/SEO";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Info, Plus, FileText, Package, LayoutDashboard, Receipt } from "lucide-react";
+import { Info, Plus, FileText, Package, LayoutDashboard, Receipt, Users } from "lucide-react";
 import { ARDashboard } from "@/components/Sales/ARDashboard";
 import { SalesInvoices } from "@/components/Sales/SalesInvoices";
 import { SalesQuotes } from "@/components/Sales/SalesQuotes";
 import { SalesProducts } from "@/components/Sales/SalesProducts";
+import { SalesCustomers } from "@/components/Sales/SalesCustomers";
 import { useAuth } from "@/context/useAuth";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet";
 
@@ -81,6 +82,10 @@ export default function SalesPage() {
                       <Package className="h-5 w-5 mr-3 text-green-500" />
                       Add Product
                     </Button>
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { setActiveTab("customers"); setIsQuickActionsOpen(false); }}>
+                      <Users className="h-5 w-5 mr-3 text-orange-500" />
+                      Add Customer
+                    </Button>
                   </div>
                 </SheetContent>
               </Sheet>
@@ -118,6 +123,13 @@ export default function SalesPage() {
                   <Package className="h-4 w-4" />
                   Products
                 </TabsTrigger>
+                <TabsTrigger 
+                  value="customers"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <Users className="h-4 w-4" />
+                  Customers
+                </TabsTrigger>
               </TabsList>
             </div>
 
@@ -135,6 +147,10 @@ export default function SalesPage() {
 
             <TabsContent value="products">
               <SalesProducts />
+            </TabsContent>
+
+            <TabsContent value="customers">
+              <SalesCustomers />
             </TabsContent>
           </Tabs>
 

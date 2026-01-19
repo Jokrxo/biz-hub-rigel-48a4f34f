@@ -1,6 +1,4 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { DashboardLayout } from "@/components/Layout/DashboardLayout";
-import SEO from "@/components/SEO";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +39,7 @@ interface Customer {
   created_at: string;
 }
 
-export default function CustomersPage() {
+export function SalesCustomers() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -590,446 +588,441 @@ export default function CustomersPage() {
   };
 
   return (
-    <>
-      <SEO title="Customers | Rigel Business" description="Manage customer information" />
-      <DashboardLayout>
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight">Customers</h1>
-              <p className="text-muted-foreground mt-1">Manage your customer database and relationships</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <Button variant="outline" onClick={() => setTutorialOpen(true)}>
-                <Info className="h-4 w-4 mr-2" />
-                Help
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="card-professional">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Total Customers</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-primary">{customers.length}</div>
-                <p className="text-xs text-muted-foreground mt-1">Registered clients</p>
-              </CardContent>
-            </Card>
-            <Card className="card-professional">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">New This Month</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-accent">
-                  {customers.filter(c => {
-                    const d = new Date(c.created_at);
-                    const now = new Date();
-                    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                  }).length}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Recently added</p>
-              </CardContent>
-            </Card>
-            <Card className="card-professional">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Active Database</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{customers.length > 0 ? "100%" : "0%"}</div>
-                <p className="text-xs text-muted-foreground mt-1">Data integrity</p>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card className="card-professional">
-            <CardHeader>
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                <CardTitle className="flex items-center gap-2">
-                  <Users className="h-5 w-5 text-primary" />
-                  All Customers
-                </CardTitle>
-                {canEdit && (
-                  <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                    <DialogTrigger asChild>
-                      <Button className="bg-gradient-primary shadow-elegant hover:shadow-lg transition-all">
-                        <UserPlus className="h-4 w-4 mr-2" />
-                        Add Customer
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Add New Customer</DialogTitle>
-                      </DialogHeader>
-                      <form onSubmit={handleSubmit} className="space-y-4">
-                        <div>
-                          <Label>Customer Name *</Label>
-                          <Input
-                            value={formData.name}
-                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                            required
-                            placeholder="Business or individual name"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <Label>Email</Label>
-                            <Input
-                              type="email"
-                              value={formData.email}
-                              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                              placeholder="client@example.com"
-                            />
-                          </div>
-                          <div>
-                            <Label>Phone</Label>
-                            <Input
-                              value={formData.phone}
-                              onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                              placeholder="082 123 4567"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <Label>Address</Label>
-                          <Input
-                            value={formData.address}
-                            onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                            placeholder="Physical address"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
-                          <div>
-                            <Label className="text-xs">Opening Balance</Label>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              value={formData.openingBalance}
-                              onChange={(e) => setFormData({ ...formData, openingBalance: e.target.value })}
-                              placeholder="0.00"
-                              className="bg-background"
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs">Date</Label>
-                            <Input
-                              type="date"
-                              value={formData.openingDate}
-                              onChange={(e) => setFormData({ ...formData, openingDate: e.target.value })}
-                              className="bg-background"
-                            />
-                          </div>
-                        </div>
-                        <Button type="submit" className="w-full bg-gradient-primary">Add Customer</Button>
-                      </form>
-                    </DialogContent>
-                  </Dialog>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="relative max-w-sm mb-6">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search customers..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-8"
-                />
-              </div>
-
-              {loading ? (
-                <div className="text-center py-12 text-muted-foreground">Loading...</div>
-              ) : customers.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Users className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                  <p>No customers found</p>
-                  {canEdit && <p className="text-sm mt-2">Add your first customer to get started</p>}
-                </div>
-              ) : (
-                <>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Customer</TableHead>
-                      <TableHead>Contact Info</TableHead>
-                      <TableHead>Location</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-[80px] text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredCustomers.slice(page * pageSize, page * pageSize + pageSize).map((customer) => (
-                      <TableRow key={customer.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-3">
-                            <Avatar className="h-9 w-9 border border-primary/20">
-                              <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs">
-                                {getInitials(customer.name)}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div className="flex flex-col">
-                              <span className="font-medium text-sm">{customer.name}</span>
-                              <span className="text-xs text-muted-foreground">Added {new Date(customer.created_at).toLocaleDateString()}</span>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            {customer.email && (
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                <Mail className="h-3 w-3" />
-                                {customer.email}
-                              </div>
-                            )}
-                            {customer.phone && (
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                                <Phone className="h-3 w-3" />
-                                {customer.phone}
-                              </div>
-                            )}
-                            {!customer.email && !customer.phone && <span className="text-muted-foreground">-</span>}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {customer.address ? (
-                            <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                              <MapPin className="h-3 w-3" />
-                              <span className="truncate max-w-[150px]">{customer.address}</span>
-                            </div>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">Active</Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                              onClick={() => openStatementViewer(customer)}
-                              title="View Statement"
-                            >
-                              <FileText className="h-4 w-4" />
-                            </Button>
-                            {canEdit && (
-                              <Button 
-                                variant="ghost" 
-                                size="icon"
-                                className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
-                                onClick={() => openPayment(customer)}
-                                title="Receive Payment"
-                              >
-                                <CreditCard className="h-4 w-4" />
-                              </Button>
-                            )}
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" className="h-8 w-8 p-0">
-                                  <span className="sr-only">Open menu</span>
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                <DropdownMenuItem onClick={() => openStatementDialog(customer)}>
-                                  <FileDown className="mr-2 h-4 w-4" /> Statement PDF
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                <div className="flex items-center justify-between mt-4">
-                  <div className="text-xs text-muted-foreground">
-                    Page {page + 1} of {Math.max(1, Math.ceil(filteredCustomers.length / pageSize))}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-                    <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil(filteredCustomers.length / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
-                  </div>
-                </div>
-                </>
-              )}
-            </CardContent>
-          </Card>
-
-          <Dialog open={statementOpen} onOpenChange={setStatementOpen}>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Statement Options</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Quick period</Label>
-                    <Select value={monthsPreset} onValueChange={setMonthsPreset}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select period" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="3">Last 3 months</SelectItem>
-                        <SelectItem value="6">Last 6 months</SelectItem>
-                        <SelectItem value="12">Last 12 months</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Switch checked={useCustomRange} onCheckedChange={setUseCustomRange} />
-                    <Label>Use custom date range</Label>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Start date</Label>
-                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={!useCustomRange} />
-                  </div>
-                  <div>
-                    <Label>End date</Label>
-                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={!useCustomRange} />
-                  </div>
-                </div>
-              </div>
-              <div className="pt-4">
-                <Button onClick={exportStatement} className="w-full bg-gradient-primary">Export PDF</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
-            <DialogContent className="sm:max-w-[640px] p-4">
-              <DialogHeader>
-                <DialogTitle>Customers Tutorial</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 text-sm">
-                <p>To issue an invoice, first add the customer here.</p>
-                <p>Capture the customer’s basic information so invoices and statements reflect correct details.</p>
-              </div>
-              <div className="pt-4">
-                <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={statementViewOpen} onOpenChange={setStatementViewOpen}>
-            <DialogContent className="sm:max-w-[800px]">
-              <DialogHeader>
-                <DialogTitle>Customer Statement</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Start date</Label>
-                    <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                  </div>
-                  <div>
-                    <Label>End date</Label>
-                    <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-                  </div>
-                </div>
-                <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
-                  <div className="text-sm font-medium">Opening balance: <span className="font-mono">{statementOpeningBalance.toFixed(2)}</span></div>
-                  <Button variant="outline" size="sm" onClick={refreshStatementViewer}>Refresh</Button>
-                </div>
-                <div className="border rounded-md overflow-hidden">
-                  <Table>
-                    <TableHeader className="bg-muted/50">
-                      <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead>Reference</TableHead>
-                        <TableHead className="text-right">Dr</TableHead>
-                        <TableHead className="text-right">Cr</TableHead>
-                        <TableHead className="text-right">Balance</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {(() => {
-                        let running = statementOpeningBalance;
-                        return statementEntries.map((e, idx) => {
-                          running = running + Number(e.dr || 0) - Number(e.cr || 0);
-                          return (
-                            <TableRow key={idx}>
-                              <TableCell className="text-xs">{new Date(e.date).toLocaleDateString('en-ZA')}</TableCell>
-                              <TableCell className="text-xs font-medium">{e.description}</TableCell>
-                              <TableCell className="text-xs">{e.reference || '-'}</TableCell>
-                              <TableCell className="text-xs text-right font-mono text-muted-foreground">{Number(e.dr || 0) > 0 ? Number(e.dr).toFixed(2) : '-'}</TableCell>
-                              <TableCell className="text-xs text-right font-mono text-muted-foreground">{Number(e.cr || 0) > 0 ? Number(e.cr).toFixed(2) : '-'}</TableCell>
-                              <TableCell className="text-xs text-right font-mono font-bold">{running.toFixed(2)}</TableCell>
-                            </TableRow>
-                          );
-                        });
-                      })()}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
-            <DialogContent className="sm:max-w-[520px]">
-              <DialogHeader>
-                <DialogTitle>Receive Payment</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <Label>Customer</Label>
-                  <Input readOnly value={paymentCustomer?.name || ''} className="bg-muted" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Amount</Label>
-                    <Input type="number" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} />
-                  </div>
-                  <div>
-                    <Label>Date</Label>
-                    <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
-                  </div>
-                </div>
-                <div>
-                  <Label>Bank Account</Label>
-                  <Select value={selectedBankId} onValueChange={setSelectedBankId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select bank account" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {bankAccounts.map((b) => (
-                        <SelectItem key={b.id} value={String(b.id)}>{b.bank_name} ({b.account_number})</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="pt-4">
-                <Button className="w-full bg-gradient-primary" onClick={postCustomerPayment}>Post Payment</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
-            <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
-              <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
-                <Check className="h-12 w-12 text-green-600" />
-              </div>
-              <DialogHeader>
-                <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
-              </DialogHeader>
-              <div className="text-center space-y-2">
-                <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
-                <p className="text-muted-foreground">The operation has been completed successfully.</p>
-              </div>
-            </DialogContent>
-          </Dialog>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight">Customers</h2>
+          <p className="text-muted-foreground mt-1">Manage your customer database and relationships</p>
         </div>
-      </DashboardLayout>
-    </>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={() => setTutorialOpen(true)}>
+            <Info className="h-4 w-4 mr-2" />
+            Help
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="card-professional">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total Customers</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-primary">{customers.length}</div>
+            <p className="text-xs text-muted-foreground mt-1">Registered clients</p>
+          </CardContent>
+        </Card>
+        <Card className="card-professional">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">New This Month</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-accent">
+              {customers.filter(c => {
+                const d = new Date(c.created_at);
+                const now = new Date();
+                return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+              }).length}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Recently added</p>
+          </CardContent>
+        </Card>
+        <Card className="card-professional">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Active Database</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{customers.length > 0 ? "100%" : "0%"}</div>
+            <p className="text-xs text-muted-foreground mt-1">Data integrity</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="card-professional">
+        <CardHeader>
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              All Customers
+            </CardTitle>
+            {canEdit && (
+              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="bg-gradient-primary shadow-elegant hover:shadow-lg transition-all">
+                    <UserPlus className="h-4 w-4 mr-2" />
+                    Add Customer
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add New Customer</DialogTitle>
+                  </DialogHeader>
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                      <Label>Customer Name *</Label>
+                      <Input
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        required
+                        placeholder="Business or individual name"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label>Email</Label>
+                        <Input
+                          type="email"
+                          value={formData.email}
+                          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                          placeholder="client@example.com"
+                        />
+                      </div>
+                      <div>
+                        <Label>Phone</Label>
+                        <Input
+                          value={formData.phone}
+                          onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                          placeholder="082 123 4567"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <Label>Address</Label>
+                      <Input
+                        value={formData.address}
+                        onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                        placeholder="Physical address"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                      <div>
+                        <Label className="text-xs">Opening Balance</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={formData.openingBalance}
+                          onChange={(e) => setFormData({ ...formData, openingBalance: e.target.value })}
+                          placeholder="0.00"
+                          className="bg-background"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Date</Label>
+                        <Input
+                          type="date"
+                          value={formData.openingDate}
+                          onChange={(e) => setFormData({ ...formData, openingDate: e.target.value })}
+                          className="bg-background"
+                        />
+                      </div>
+                    </div>
+                    <Button type="submit" className="w-full bg-gradient-primary">Add Customer</Button>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="relative max-w-sm mb-6">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search customers..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8"
+            />
+          </div>
+
+          {loading ? (
+            <div className="text-center py-12 text-muted-foreground">Loading...</div>
+          ) : customers.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Users className="h-12 w-12 mx-auto mb-4 opacity-20" />
+              <p>No customers found</p>
+              {canEdit && <p className="text-sm mt-2">Add your first customer to get started</p>}
+            </div>
+          ) : (
+            <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Contact Info</TableHead>
+                  <TableHead>Location</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-[80px] text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredCustomers.slice(page * pageSize, page * pageSize + pageSize).map((customer) => (
+                  <TableRow key={customer.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-9 w-9 border border-primary/20">
+                          <AvatarFallback className="bg-primary/10 text-primary font-bold text-xs">
+                            {getInitials(customer.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex flex-col">
+                          <span className="font-medium text-sm">{customer.name}</span>
+                          <span className="text-xs text-muted-foreground">Added {new Date(customer.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        {customer.email && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Mail className="h-3 w-3" />
+                            {customer.email}
+                          </div>
+                        )}
+                        {customer.phone && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Phone className="h-3 w-3" />
+                            {customer.phone}
+                          </div>
+                        )}
+                        {!customer.email && !customer.phone && <span className="text-muted-foreground">-</span>}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {customer.address ? (
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                          <MapPin className="h-3 w-3" />
+                          <span className="truncate max-w-[150px]">{customer.address}</span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">Active</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                          onClick={() => openStatementViewer(customer)}
+                          title="View Statement"
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                        {canEdit && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
+                            onClick={() => openPayment(customer)}
+                            title="Receive Payment"
+                          >
+                            <CreditCard className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" className="h-8 w-8 p-0">
+                              <span className="sr-only">Open menu</span>
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => openStatementDialog(customer)}>
+                              <FileDown className="mr-2 h-4 w-4" /> Statement PDF
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-xs text-muted-foreground">
+                Page {page + 1} of {Math.max(1, Math.ceil(filteredCustomers.length / pageSize))}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
+                <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil(filteredCustomers.length / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+              </div>
+            </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={statementOpen} onOpenChange={setStatementOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Statement Options</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Quick period</Label>
+                <Select value={monthsPreset} onValueChange={setMonthsPreset}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select period" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="3">Last 3 months</SelectItem>
+                    <SelectItem value="6">Last 6 months</SelectItem>
+                    <SelectItem value="12">Last 12 months</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch checked={useCustomRange} onCheckedChange={setUseCustomRange} />
+                <Label>Use custom date range</Label>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Start date</Label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} disabled={!useCustomRange} />
+              </div>
+              <div>
+                <Label>End date</Label>
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} disabled={!useCustomRange} />
+              </div>
+            </div>
+          </div>
+          <div className="pt-4">
+            <Button onClick={exportStatement} className="w-full bg-gradient-primary">Export PDF</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
+        <DialogContent className="sm:max-w-[640px] p-4">
+          <DialogHeader>
+            <DialogTitle>Customers Tutorial</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p>To issue an invoice, first add the customer here.</p>
+            <p>Capture the customer’s basic information so invoices and statements reflect correct details.</p>
+          </div>
+          <div className="pt-4">
+            <Button onClick={() => setTutorialOpen(false)}>Got it</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={statementViewOpen} onOpenChange={setStatementViewOpen}>
+        <DialogContent className="sm:max-w-[800px]">
+          <DialogHeader>
+            <DialogTitle>Customer Statement</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Start date</Label>
+                <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>End date</Label>
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              </div>
+            </div>
+            <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
+              <div className="text-sm font-medium">Opening balance: <span className="font-mono">{statementOpeningBalance.toFixed(2)}</span></div>
+              <Button variant="outline" size="sm" onClick={refreshStatementViewer}>Refresh</Button>
+            </div>
+            <div className="border rounded-md overflow-hidden">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Reference</TableHead>
+                    <TableHead className="text-right">Dr</TableHead>
+                    <TableHead className="text-right">Cr</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(() => {
+                    let running = statementOpeningBalance;
+                    return statementEntries.map((e, idx) => {
+                      running = running + Number(e.dr || 0) - Number(e.cr || 0);
+                      return (
+                        <TableRow key={idx}>
+                          <TableCell className="text-xs">{new Date(e.date).toLocaleDateString('en-ZA')}</TableCell>
+                          <TableCell className="text-xs font-medium">{e.description}</TableCell>
+                          <TableCell className="text-xs">{e.reference || '-'}</TableCell>
+                          <TableCell className="text-xs text-right font-mono text-muted-foreground">{Number(e.dr || 0) > 0 ? Number(e.dr).toFixed(2) : '-'}</TableCell>
+                          <TableCell className="text-xs text-right font-mono text-muted-foreground">{Number(e.cr || 0) > 0 ? Number(e.cr).toFixed(2) : '-'}</TableCell>
+                          <TableCell className="text-xs text-right font-mono font-bold">{running.toFixed(2)}</TableCell>
+                        </TableRow>
+                      );
+                    });
+                  })()}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Receive Payment</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Customer</Label>
+              <Input readOnly value={paymentCustomer?.name || ''} className="bg-muted" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Amount</Label>
+                <Input type="number" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} />
+              </div>
+              <div>
+                <Label>Date</Label>
+                <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+              </div>
+            </div>
+            <div>
+              <Label>Bank Account</Label>
+              <Select value={selectedBankId} onValueChange={setSelectedBankId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select bank account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {bankAccounts.map((b) => (
+                    <SelectItem key={b.id} value={String(b.id)}>{b.bank_name} ({b.account_number})</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="pt-4">
+            <Button className="w-full bg-gradient-primary" onClick={postCustomerPayment}>Post Payment</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+          <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+            <Check className="h-12 w-12 text-green-600" />
+          </div>
+          <DialogHeader>
+            <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-2">
+            <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+            <p className="text-muted-foreground">The operation has been completed successfully.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

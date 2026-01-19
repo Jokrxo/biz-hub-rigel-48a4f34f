@@ -63,6 +63,9 @@ export default function Signup() {
     if (message.toLowerCase().includes("password") && message.toLowerCase().includes("length")) {
       return "Password must be at least 8 characters long";
     }
+    if (message.toLowerCase().includes("send") && message.toLowerCase().includes("confirmation")) {
+      return "Unable to send confirmation email. Your SMTP settings might be incorrect, or the default provider limit (3/hour) is exceeded.";
+    }
     return message;
   };
 
@@ -155,6 +158,7 @@ export default function Signup() {
       toast({ title: "Account created", description: "Please sign in to your new account", });
       navigate("/login?signup=success", { replace: true });
     } catch (e: any) {
+      console.error("Signup error details:", e);
       const errorMessage = formatErrorMessage(e);
       toast({ title: "Signup failed", description: errorMessage, variant: "destructive" });
     }

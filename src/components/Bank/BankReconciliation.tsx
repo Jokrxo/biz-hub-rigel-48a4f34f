@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { CheckCircle2, XCircle, AlertCircle, RefreshCw, SplitSquareHorizontal, Undo2, Download, Lock, Unlock, Info, ArrowRight, Sparkles, Search, Filter } from "lucide-react";
+import { CheckCircle2, XCircle, RefreshCw, Undo2, Lock, Sparkles, Search, Loader2, Check } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
@@ -55,6 +55,10 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
   const [lockOpen, setLockOpen] = useState(false);
   const [lockedMonths, setLockedMonths] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const [isError, setIsError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     if (selectedBank) {
@@ -148,6 +152,9 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
       return;
     }
 
+    setIsSuccess(false);
+    setErrorMessage("");
+
     try {
       setLoading(true);
 
@@ -176,7 +183,7 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
 
         const { data: accountsList } = await supabase
           .from("chart_of_accounts")
-          .select("id, account_code, account_name, account_type, is_cash_equivalent, financial_statement_category")
+          .select("id, account_code, account_name, account_type")
           .eq("company_id", companyId)
           .eq("is_active", true)
           .order("account_code");
@@ -205,21 +212,12 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
               account_name: bankLedgerName,
               account_type: 'asset',
               is_active: true,
-              is_cash_equivalent: true,
-              financial_statement_category: 'current_asset',
             })
-            .select("id, account_code, account_name, account_type, is_cash_equivalent, financial_statement_category")
+            .select("id, account_code, account_name, account_type")
             .single();
           if (createBankErr) throw createBankErr;
           bankLedger = newBankAcc as any;
-        } else {
-          if (!(bankLedger as any).is_cash_equivalent || (bankLedger as any).financial_statement_category !== 'current_asset') {
-            await supabase
-              .from("chart_of_accounts")
-              .update({ is_cash_equivalent: true, financial_statement_category: 'current_asset' })
-              .eq("id", (bankLedger as any).id);
-          }
-        }
+        } 
 
         if (!uncIncome) {
           const { data: newInc } = await supabase
@@ -293,10 +291,18 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
       }
 
       toast({ title: "Success", description: `Reconciled ${selectedTxs.size} transactions` });
-      setSelectedTxs(new Set());
-      loadTransactions();
+      setSuccessMessage(`Reconciled ${selectedTxs.size} transactions`);
+      setIsSuccess(true);
+      setTimeout(() => {
+        setSelectedTxs(new Set());
+        loadTransactions();
+        setIsSuccess(false);
+      }, 2000);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+      setErrorMessage(error.message || "Reconciliation failed");
+      setIsError(true);
+      setTimeout(() => setIsError(false), 2000);
     } finally {
       setLoading(false);
     }
@@ -352,23 +358,23 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
         <p className="text-muted-foreground text-center max-w-md">
           Select a bank account to begin matching your system transactions with your bank statement.
         </p>
-        <div className="w-[300px]">
-           <Select value={selectedBank} onValueChange={setSelectedBank}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select bank account" />
-            </SelectTrigger>
-            <SelectContent>
-              {bankAccounts.map((bank) => (
-                <SelectItem key={bank.id} value={bank.id}>
-                  {bank.account_name} ({bank.bank_name})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="w-[300px]">
+         <Select value={selectedBank} onValueChange={setSelectedBank}>
+          <SelectTrigger>
+            <SelectValue placeholder="Select bank account" />
+          </SelectTrigger>
+          <SelectContent>
+            {bankAccounts.map((bank) => (
+              <SelectItem key={bank.id} value={bank.id}>
+                {bank.account_name} ({bank.bank_name})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
   return (
     <div className="space-y-6">
@@ -455,14 +461,37 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
         <CardContent className="p-0">
           <div className="relative">
              {selectedTxs.size > 0 && (
-               <div className="absolute top-0 left-0 right-0 z-10 bg-primary text-primary-foreground p-2 px-4 flex items-center justify-between animate-in slide-in-from-top-2">
-                 <span className="text-sm font-medium">{selectedTxs.size} selected (R {selectedSum.toFixed(2)})</span>
-                 <Button size="sm" variant="secondary" onClick={handleBulkReconcile} className="gap-2">
-                   <CheckCircle2 className="h-4 w-4" />
-                   Reconcile Selection
+             <div className={cn(
+               "absolute top-0 left-0 right-0 z-10 p-2 px-4 flex items-center justify-between animate-in slide-in-from-top-2 transition-colors duration-300",
+               isSuccess ? "bg-green-600 text-white" : 
+               isError ? "bg-destructive text-destructive-foreground" : 
+               "bg-primary text-primary-foreground"
+             )}>
+               <span className="text-sm font-medium">
+                 {isSuccess ? "Successfully Reconciled!" : 
+                  isError ? "Reconciliation Failed" : 
+                  `${selectedTxs.size} selected (R ${selectedSum.toFixed(2)})`}
+               </span>
+               
+               {isSuccess ? (
+                  <div className="flex items-center gap-2 font-bold">
+                    <Check className="h-5 w-5" />
+                    <span>Done</span>
+                  </div>
+               ) : isError ? (
+                   <div className="flex items-center gap-2 font-bold">
+                     <XCircle className="h-5 w-5" />
+                     <span>Failed</span>
+                     <Button size="sm" variant="secondary" onClick={() => setIsError(false)} className="ml-2 h-7">Retry</Button>
+                   </div>
+               ) : (
+                 <Button size="sm" variant="secondary" onClick={handleBulkReconcile} disabled={loading} className="gap-2">
+                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                   {loading ? "Processing..." : "Reconcile Selection"}
                  </Button>
-               </div>
-             )}
+               )}
+             </div>
+           )}
              <Table>
               <TableHeader className="bg-muted/5">
                 <TableRow>
@@ -609,6 +638,36 @@ export const BankReconciliation = ({ bankAccounts }: ReconciliationProps) => {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Success Dialog */}
+      <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+          <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+            <Check className="h-12 w-12 text-green-600" />
+          </div>
+          <DialogHeader>
+            <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-2">
+            <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+            <p className="text-muted-foreground">The operation has been completed successfully.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isError} onOpenChange={setIsError}>
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+          <div className="h-24 w-24 rounded-full bg-red-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+            <XCircle className="h-12 w-12 text-red-600" />
+          </div>
+          <DialogHeader>
+            <DialogTitle className="text-center text-2xl text-red-700">Failed</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-2">
+            <p className="text-xl font-semibold text-gray-900">{errorMessage}</p>
+            <p className="text-muted-foreground">Please review and try again.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialogs */}
       <Dialog open={splitOpen} onOpenChange={setSplitOpen}>

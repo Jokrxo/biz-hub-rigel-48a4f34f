@@ -35,13 +35,15 @@ interface Company {
 
 interface TeamMember {
   user_id: string;
-  role: string;
+  role: Role;
   profile?: {
     first_name: string | null;
     last_name: string | null;
     email: string | null;
   };
 }
+
+type Role = 'administrator' | 'accountant' | 'manager';
 
 const formSchema = z.object({
   name: z.string().min(2, "Company name must be at least 2 characters"),
@@ -70,7 +72,7 @@ export const CompanyList = () => {
   // Assign Accountant/User State
   const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
   const [assignEmail, setAssignEmail] = useState("");
-  const [assignRole, setAssignRole] = useState("accountant");
+  const [assignRole, setAssignRole] = useState<Role>("accountant");
   const [assignLoading, setAssignLoading] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
@@ -79,6 +81,8 @@ export const CompanyList = () => {
   const [companyToDelete, setCompanyToDelete] = useState<Company | null>(null);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -224,12 +228,13 @@ export const CompanyList = () => {
         throw new Error("Failed to assign permissions: " + roleError.message);
       }
 
-      toast({
-        title: "Success",
-        description: `Company "${values.name}" created with code ${autoCode}`,
-      });
+      setSuccessMessage(`Company "${values.name}" created with code ${autoCode}`);
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        setIsDialogOpen(false);
+      }, 2000);
       
-      setIsDialogOpen(false);
       form.reset();
       
       setTimeout(() => {
@@ -799,6 +804,21 @@ export const CompanyList = () => {
               {deleteLoading ? "Deleting..." : "Delete Company"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+          <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+            <Check className="h-12 w-12 text-green-600" />
+          </div>
+          <DialogHeader>
+            <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-2">
+            <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+            <p className="text-muted-foreground">The operation has been completed successfully.</p>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

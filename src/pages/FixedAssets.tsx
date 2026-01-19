@@ -9,17 +9,18 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Download, Trash2, Package, Search, Info, Menu, Loader2, Building2, TrendingUp, Calculator, CheckCircle2, AlertTriangle } from "lucide-react";
+import { Plus, Download, Trash2, Package, Search, Info, Menu, Loader2, Building2, TrendingUp, Calculator, CheckCircle2, AlertTriangle, Check, XCircle } from "lucide-react";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import * as XLSX from "xlsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 import { calculateDepreciation, updateAssetDepreciation } from "@/components/FixedAssets/DepreciationCalculator";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Progress } from "@/components/ui/progress";
 
 interface FixedAsset {
   id: string;
@@ -55,9 +56,14 @@ export default function FixedAssetsPage() {
   const [purchaseDialogOpen, setPurchaseDialogOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [deprMonthStatus, setDeprMonthStatus] = useState<{ posted: boolean; count: number; label: string } | null>(null);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("Operation completed successfully");
   const { toast } = useToast();
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
 
   const [formData, setFormData] = useState({
     description: "",
@@ -241,7 +247,12 @@ export default function FixedAssetsPage() {
       return;
     }
 
-  try {
+    setDialogOpen(false);
+    try {
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Initializing Asset Posting...");
+
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
@@ -261,6 +272,10 @@ export default function FixedAssetsPage() {
       });
 
       if (error) throw error;
+
+      setProgress(40);
+      setProgressText("Posting to Ledger...");
+      await new Promise(r => setTimeout(r, 800));
 
       const companyId = String((profile as any)?.company_id || '');
       const nbv = Number((parseFloat(formData.cost) - Number(dep.accumulatedDepreciation)).toFixed(2));
@@ -304,12 +319,23 @@ export default function FixedAssetsPage() {
       }
 
       try { await supabase.rpc('refresh_afs_cache', { _company_id: profile!.company_id }); } catch {}
-      toast({ title: "Success", description: "Opening asset added successfully" });
-      setDialogOpen(false);
-      setFormData({ description: "", cost: "", purchase_date: "", useful_life_years: "5", depreciation_method: "straight_line", asset_account_id: formData.asset_account_id, funding_source: "bank", bank_account_id: "", loan_account_id: "" });
-      loadAssets();
+      
+      setProgress(100);
+      setProgressText("Finalizing...");
+      await new Promise(r => setTimeout(r, 600));
+
+      setSuccessMessage("Opening asset added successfully");
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        setIsSubmitting(false);
+        setFormData({ description: "", cost: "", purchase_date: "", useful_life_years: "5", depreciation_method: "straight_line", asset_account_id: formData.asset_account_id, funding_source: "bank", bank_account_id: "", loan_account_id: "" });
+        loadAssets();
+      }, 2000);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+      setIsSubmitting(false);
+      setDialogOpen(true);
     }
   };
 
@@ -340,7 +366,12 @@ export default function FixedAssetsPage() {
       }
     }
     let bankLedgerId = '';
+    setDisposalDialogOpen(false);
     try {
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Processing Disposal...");
+
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
@@ -442,6 +473,10 @@ export default function FixedAssetsPage() {
       const { error: ledErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
       if (ledErr) throw ledErr;
 
+      setProgress(60);
+      setProgressText("Updating Asset Status...");
+      await new Promise(r => setTimeout(r, 600));
+
       await supabase.from('transactions').update({ status: 'approved' }).eq('id', tx.id);
       await supabase.from('transaction_entries').update({ status: 'approved' }).eq('transaction_id', tx.id);
 
@@ -458,18 +493,28 @@ export default function FixedAssetsPage() {
 
       try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
 
-      toast({ title: 'Success', description: 'Asset disposal posted to transactions' });
-      setDisposalDialogOpen(false);
-      setSelectedAsset(null);
-      setDisposalData({ 
-        disposal_date: new Date().toISOString().split('T')[0], 
-        disposal_amount: '', 
-        asset_account_id: disposalData.asset_account_id || '', 
-        bank_account_id: disposalData.bank_account_id || '' 
-      });
-      loadAssets();
+      setProgress(100);
+      setProgressText("Disposal Complete...");
+      await new Promise(r => setTimeout(r, 600));
+
+      setSuccessMessage('Asset disposal posted successfully');
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        setIsSubmitting(false);
+        setSelectedAsset(null);
+        setDisposalData({ 
+          disposal_date: new Date().toISOString().split('T')[0], 
+          disposal_amount: '', 
+          asset_account_id: disposalData.asset_account_id || '', 
+          bank_account_id: disposalData.bank_account_id || '' 
+        });
+        loadAssets();
+      }, 2000);
     } catch (err: any) {
       toast({ title: 'Error', description: err.message, variant: 'destructive' });
+      setIsSubmitting(false);
+      setDisposalDialogOpen(true);
     }
   };
 
@@ -663,10 +708,12 @@ export default function FixedAssetsPage() {
             </div>
           </div>
 
-          <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
-            <SheetContent className="sm:max-w-[520px]">
-              <div className="space-y-4">
-                <div className="text-lg font-semibold">Quick Actions</div>
+          <Dialog open={actionsOpen} onOpenChange={setActionsOpen}>
+            <DialogContent className="sm:max-w-[400px]">
+              <DialogHeader>
+                <DialogTitle>Quick Actions</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 pt-2">
                 <div className="text-sm text-muted-foreground">Choose what you want to do. These actions will guide you through a friendly flow.</div>
                 <div className="grid gap-3">
                   <Button className="w-full" onClick={() => { setActionsOpen(false); setPurchaseDialogOpen(true); }}>
@@ -691,8 +738,8 @@ export default function FixedAssetsPage() {
                   </Button>
                 </div>
               </div>
-          </SheetContent>
-        </Sheet>
+            </DialogContent>
+          </Dialog>
 
         {/* Modern Metrics Grid */}
         <div className="grid gap-4 md:grid-cols-3">
@@ -922,7 +969,12 @@ export default function FixedAssetsPage() {
               <form id="purchase-form"
                 onSubmit={async (e) => {
                   e.preventDefault();
+                  setPurchaseDialogOpen(false);
                   try {
+                    setIsSubmitting(true);
+                    setProgress(10);
+                    setProgressText("Processing Purchase...");
+
                     const { data: profile } = await supabase
                       .from("profiles")
                       .select("company_id")
@@ -1008,6 +1060,10 @@ export default function FixedAssetsPage() {
                     const { error: leErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
                     if (leErr) throw leErr;
 
+                    setProgress(50);
+                    setProgressText("Posting to Ledger...");
+                    await new Promise(r => setTimeout(r, 600));
+
                     await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id);
                     if (purchaseForm.funding_source === 'bank' && purchaseForm.bank_account_id) {
                       try { await supabase.rpc('update_bank_balance', { _bank_account_id: purchaseForm.bank_account_id, _amount: amt, _operation: 'subtract' }); } catch {}
@@ -1054,27 +1110,37 @@ export default function FixedAssetsPage() {
                     } as any);
                     if (faErr) throw faErr;
 
+                    setProgress(100);
+                    setProgressText("Finalizing...");
+                    await new Promise(r => setTimeout(r, 600));
+
                     try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
-                    toast({ title: 'Success', description: 'Asset purchase posted successfully' });
-                    setPurchaseDialogOpen(false);
-                    setPurchaseForm({
-                      purchase_date: new Date().toISOString().split("T")[0],
-                      amount: "",
-                      asset_account_id: purchaseForm.asset_account_id || "",
-                      funding_source: "bank",
-                      bank_account_id: purchaseForm.bank_account_id || "",
-                      loan_account_id: purchaseForm.loan_account_id || "",
-                      interest_rate: "",
-                      loan_term: "",
-                      loan_term_type: "short",
-                      vat_applicable: "no",
-                      useful_life_years: purchaseForm.useful_life_years || "5",
-                      depreciation_method: purchaseForm.depreciation_method || "straight_line",
-                      description: ""
-                    });
-                    loadAssets();
+                    setSuccessMessage('Asset purchase posted successfully');
+                    setIsSuccess(true);
+                    setTimeout(() => {
+                      setIsSuccess(false);
+                      setIsSubmitting(false);
+                      setPurchaseForm({
+                        purchase_date: new Date().toISOString().split("T")[0],
+                        amount: "",
+                        asset_account_id: purchaseForm.asset_account_id || "",
+                        funding_source: "bank",
+                        bank_account_id: purchaseForm.bank_account_id || "",
+                        loan_account_id: purchaseForm.loan_account_id || "",
+                        interest_rate: "",
+                        loan_term: "",
+                        loan_term_type: "short",
+                        vat_applicable: "no",
+                        useful_life_years: purchaseForm.useful_life_years || "5",
+                        depreciation_method: purchaseForm.depreciation_method || "straight_line",
+                        description: ""
+                      });
+                      loadAssets();
+                    }, 2000);
                   } catch (err: any) {
                     toast({ title: 'Error', description: err.message, variant: 'destructive' });
+                    setIsSubmitting(false);
+                    setPurchaseDialogOpen(true);
                   }
                 }}
                 className="space-y-4"
@@ -1422,6 +1488,23 @@ export default function FixedAssetsPage() {
               </form>
             </DialogContent>
           </Dialog>
+          
+          {/* Success Dialog */}
+          <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+            <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+              <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+                <Check className="h-12 w-12 text-green-600" />
+              </div>
+              <DialogHeader>
+                <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+              </DialogHeader>
+              <div className="text-center space-y-2">
+                <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+                <p className="text-muted-foreground">The operation has been completed successfully.</p>
+              </div>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={deprDialogOpen} onOpenChange={(open) => {
             setDeprDialogOpen(open);
             if (!open) {
@@ -1500,8 +1583,13 @@ export default function FixedAssetsPage() {
                   className="w-full bg-gradient-primary gap-2"
                   disabled={!deprSelectedAsset || !deprAmount || deprPosting}
                   onClick={async () => {
+                    setDeprDialogOpen(false);
                     try {
                       setDeprPosting(true);
+                      setIsSubmitting(true);
+                      setProgress(10);
+                      setProgressText("Calculating Depreciation...");
+
                       if (!deprSelectedAsset) return;
                       const monthlyAmount = parseFloat(deprAmount);
                       if (!monthlyAmount || monthlyAmount <= 0) {
@@ -1611,6 +1699,11 @@ export default function FixedAssetsPage() {
                         }));
                         const { error: ledErr } = await supabase.from('ledger_entries').insert(ledgerRows as any);
                         if (ledErr) throw ledErr;
+                        
+                        setProgress(Math.min(90, progress + 10));
+                        setProgressText("Posting Monthly Entries...");
+                        await new Promise(r => setTimeout(r, 200));
+
                         await supabase.from('transactions').update({ status: 'posted' }).eq('id', tx.id);
                         
                         // Smart update logic:
@@ -1631,14 +1724,25 @@ export default function FixedAssetsPage() {
                       }
 
                       try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
+                      
+                      setProgress(100);
+                      setProgressText("Finalizing...");
+                      await new Promise(r => setTimeout(r, 600));
+
                       const monthsBackfilled = totalAddedToDb > 0 ? monthsToPost.length : 0;
-                      toast({ title: 'Depreciation Posted', description: `${deprSelectedAsset.description} backfill complete. Checked ${monthsToPost.length} months.` });
-                      setDeprDialogOpen(false);
-                      setDeprSelectedAsset(null);
-                      setDeprAmount('');
-                      loadAssets();
+                      setSuccessMessage(`Depreciation posted for ${deprSelectedAsset.description}`);
+                      setIsSuccess(true);
+                      setTimeout(() => {
+                        setIsSuccess(false);
+                        setIsSubmitting(false);
+                        setDeprSelectedAsset(null);
+                        setDeprAmount('');
+                        loadAssets();
+                      }, 2000);
                     } catch (err:any) {
                       toast({ title: 'Failed to post depreciation', description: err.message, variant: 'destructive' });
+                      setIsSubmitting(false);
+                      setDeprDialogOpen(true);
                     } finally {
                       setDeprPosting(false);
                     }
@@ -1650,8 +1754,13 @@ export default function FixedAssetsPage() {
                   className="w-full bg-gradient-primary gap-2"
                   disabled={deprPosting}
                   onClick={async () => {
+                    setDeprDialogOpen(false);
                     try {
                       setDeprPosting(true);
+                      setIsSubmitting(true);
+                      setProgress(10);
+                      setProgressText("Processing Bulk Depreciation...");
+
                       const { data: { user: authUser } } = await supabase.auth.getUser();
                       if (!authUser) throw new Error("Not authenticated");
                       const { data: profile } = await supabase
@@ -1759,13 +1868,24 @@ export default function FixedAssetsPage() {
                         }
                       }
                       try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
-                      toast({ title: 'Depreciation Posted', description: `Backfilled ${monthsPosted} month(s)` });
-                      setDeprDialogOpen(false);
-                      setDeprSelectedAsset(null);
-                      setDeprAmount('');
-                      loadAssets();
+                      
+                      setProgress(100);
+                      setProgressText("Finalizing...");
+                      await new Promise(r => setTimeout(r, 600));
+
+                      setSuccessMessage(`Backfilled ${monthsPosted} month(s)`);
+                      setIsSuccess(true);
+                      setTimeout(() => {
+                        setIsSuccess(false);
+                        setIsSubmitting(false);
+                        setDeprSelectedAsset(null);
+                        setDeprAmount('');
+                        loadAssets();
+                      }, 2000);
                     } catch (err:any) {
                       toast({ title: 'Failed to post depreciation', description: err.message, variant: 'destructive' });
+                      setIsSubmitting(false);
+                      setDeprDialogOpen(true);
                     } finally {
                       setDeprPosting(false);
                     }
@@ -1802,6 +1922,25 @@ export default function FixedAssetsPage() {
             </Alert>
           );
         })()}
+        
+        {isSubmitting && (
+          <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+            <div className="bg-background border shadow-xl rounded-xl flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
+              <LoadingSpinner size="lg" className="scale-125" />
+              <div className="w-full space-y-4">
+                <Progress value={progress} className="h-2 w-full" />
+                <div className="text-center space-y-2">
+                  <div className="text-xl font-semibold text-primary animate-pulse">
+                    {progressText}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    Please wait while we update your financial records...
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </DashboardLayout>
     </>
   );

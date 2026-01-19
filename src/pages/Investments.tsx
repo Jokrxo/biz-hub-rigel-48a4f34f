@@ -11,7 +11,6 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { transactionsApi } from "@/lib/transactions-api";
 import { 
@@ -30,10 +29,14 @@ import {
   Filter,
   LayoutDashboard,
   ArrowRightLeft,
-  Landmark
+  Landmark,
+  Check,
+  XCircle
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Progress } from "@/components/ui/progress";
 
 type InvestmentAccount = { id: string; name: string; currency: string; broker_name?: string };
 type Position = { id: string; account_id: string; symbol: string; instrument_type: string; quantity: number; avg_cost: number; current_price?: number; market_value?: number; unrealized_gain?: number };
@@ -69,6 +72,11 @@ export default function Investments() {
   const [transactions, setTransactions] = useState<InvestmentTx[]>([]);
   const [loading, setLoading] = useState(true);
   const [bankAccounts, setBankAccounts] = useState<Array<{ id: string; account_name: string }>>([]);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("Operation completed successfully");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
   
   // Dialog States
   const [buyOpen, setBuyOpen] = useState(false);
@@ -548,13 +556,13 @@ export default function Investments() {
             </TabsContent>
           </Tabs>
 
-          {/* Quick Actions Sheet */}
-          <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
-            <SheetContent className="sm:max-w-[400px]">
-              <SheetHeader>
-                <SheetTitle>Quick Actions</SheetTitle>
-                <SheetDescription>Record investment activities</SheetDescription>
-              </SheetHeader>
+          {/* Quick Actions Dialog */}
+          <Dialog open={actionsOpen} onOpenChange={setActionsOpen}>
+            <DialogContent className="sm:max-w-[400px]">
+              <DialogHeader>
+                <DialogTitle>Quick Actions</DialogTitle>
+                <DialogDescription>Record investment activities</DialogDescription>
+              </DialogHeader>
               <div className="grid gap-4 py-6">
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Trades</h4>
@@ -588,8 +596,8 @@ export default function Investments() {
                   </Button>
                 </div>
               </div>
-            </SheetContent>
-          </Sheet>
+            </DialogContent>
+          </Dialog>
 
           {/* Buy Dialog */}
           <Dialog open={buyOpen} onOpenChange={setBuyOpen}>
@@ -638,11 +646,22 @@ export default function Investments() {
                   <Button variant="outline" onClick={() => setBuyOpen(false)}>Cancel</Button>
                   <Button onClick={async () => {
                     try {
+                      setIsSubmitting(true);
+                      setProgress(30);
+                      setProgressText("Processing Buy Order...");
                       await transactionsApi.postInvestmentBuy({ accountId: actionAccountId, symbol, quantity: parseFloat(quantity||'0'), price: parseFloat(price||'0'), date: startDate, bankAccountId: actionBankId });
-                      toast({ title: 'Recorded', description: 'Investment buy posted' });
-                      setBuyOpen(false); loadAll();
+                      setProgress(100);
+                      await new Promise(r => setTimeout(r, 500));
+                      setSuccessMessage('Investment buy posted successfully');
+                      setIsSuccess(true);
+                      setTimeout(() => {
+                        setIsSuccess(false);
+                        setBuyOpen(false); loadAll();
+                        setIsSubmitting(false);
+                      }, 2000);
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
+                      setIsSubmitting(false);
                     }
                   }}>Record Buy</Button>
                 </DialogFooter>
@@ -698,8 +717,12 @@ export default function Investments() {
                   <Button variant="destructive" onClick={async () => {
                     try {
                       await transactionsApi.postInvestmentSell({ accountId: actionAccountId, symbol, quantity: parseFloat(quantity||'0'), price: parseFloat(price||'0'), date: startDate, bankAccountId: actionBankId });
-                      toast({ title: 'Recorded', description: 'Investment sell posted' });
-                      setSellOpen(false); loadAll();
+                      setSuccessMessage('Investment sell posted successfully');
+                      setIsSuccess(true);
+                      setTimeout(() => {
+                        setIsSuccess(false);
+                        setSellOpen(false); loadAll();
+                      }, 2000);
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
                     }
@@ -752,11 +775,26 @@ export default function Investments() {
                   <Button variant="outline" onClick={() => setDivOpen(false)}>Cancel</Button>
                   <Button className="bg-gradient-primary" onClick={async () => {
                     try {
+                      setIsSubmitting(true);
+                      setProgress(20);
+                      setProgressText("Processing Dividend...");
+
                       await transactionsApi.postInvestmentDividend({ accountId: actionAccountId, amount: parseFloat(amount||'0'), date: startDate, bankAccountId: actionBankId, symbol });
-                      toast({ title: 'Recorded', description: 'Dividend posted' });
-                      setDivOpen(false); loadAll();
+                      
+                      setProgress(100);
+                      setProgressText("Finalizing...");
+                      await new Promise(r => setTimeout(r, 500));
+
+                      setSuccessMessage('Dividend posted successfully');
+                      setIsSuccess(true);
+                      setTimeout(() => {
+                        setIsSuccess(false);
+                        setIsSubmitting(false);
+                        setDivOpen(false); loadAll();
+                      }, 2000);
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
+                      setIsSubmitting(false);
                     }
                   }}>Record Dividend</Button>
                 </DialogFooter>
@@ -803,13 +841,28 @@ export default function Investments() {
                   <Button variant="outline" onClick={() => setIntOpen(false)}>Cancel</Button>
                   <Button className="bg-gradient-primary" onClick={async () => {
                     try {
+                      setIsSubmitting(true);
+                      setProgress(20);
+                      setProgressText("Processing Interest...");
+
                       const auto = fdMonthlyInterest(actionAccountId);
                       const postAmt = (parseFloat(amount||'0') > 0) ? parseFloat(amount||'0') : auto;
                       await transactionsApi.postInvestmentInterest({ accountId: actionAccountId, amount: postAmt, date: startDate, bankAccountId: actionBankId, symbol });
-                      toast({ title: 'Recorded', description: 'Interest posted' });
-                      setIntOpen(false); loadAll();
+                      
+                      setProgress(100);
+                      setProgressText("Finalizing...");
+                      await new Promise(r => setTimeout(r, 500));
+
+                      setSuccessMessage('Interest posted successfully');
+                      setIsSuccess(true);
+                      setTimeout(() => {
+                        setIsSuccess(false);
+                        setIsSubmitting(false);
+                        setIntOpen(false); loadAll();
+                      }, 2000);
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
+                      setIsSubmitting(false);
                     }
                   }}>Record Interest</Button>
                 </DialogFooter>
@@ -859,19 +912,69 @@ export default function Investments() {
                   <Button variant="outline" onClick={() => setFdOpen(false)}>Cancel</Button>
                   <Button className="bg-gradient-primary" onClick={async () => {
                     try {
+                      setIsSubmitting(true);
+                      setProgress(20);
+                      setProgressText("Creating Fixed Deposit...");
+
                       const amt = parseFloat(amount||'0');
                       const r = parseFloat(rate||'0')/100;
                       await transactionsApi.postFixedDepositOpen({ name: symbol || `Fixed Deposit`, amount: amt, rate: r, termMonths: parseInt(termMonths||'0', 10), date: startDate, bankAccountId: actionBankId });
-                      toast({ title: 'Success', description: 'Fixed Deposit created' });
-                      setFdOpen(false); loadAll();
+                      
+                      setProgress(100);
+                      setProgressText("Finalizing...");
+                      await new Promise(r => setTimeout(r, 500));
+
+                      setSuccessMessage('Fixed Deposit created successfully');
+                      setIsSuccess(true);
+                      setTimeout(() => {
+                        setIsSuccess(false);
+                        setIsSubmitting(false);
+                        setFdOpen(false); loadAll();
+                      }, 2000);
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
+                      setIsSubmitting(false);
                     }
                   }}>Create Deposit</Button>
                 </DialogFooter>
               </div>
             </DialogContent>
           </Dialog>
+
+          {/* Success Dialog */}
+          <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+            <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+              <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+                <Check className="h-12 w-12 text-green-600" />
+              </div>
+              <DialogHeader>
+                <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+              </DialogHeader>
+              <div className="text-center space-y-2">
+                <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+                <p className="text-muted-foreground">The operation has been completed successfully.</p>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {isSubmitting && (
+            <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+              <div className="bg-background border shadow-xl rounded-xl flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
+                <LoadingSpinner size="lg" className="scale-125" />
+                <div className="w-full space-y-4">
+                  <Progress value={progress} className="h-2 w-full" />
+                  <div className="text-center space-y-2">
+                    <div className="text-xl font-semibold text-primary animate-pulse">
+                      {progressText}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Please wait while we update your financial records...
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </DashboardLayout>
     </>

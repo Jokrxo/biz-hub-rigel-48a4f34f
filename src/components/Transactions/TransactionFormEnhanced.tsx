@@ -12,12 +12,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { toast as notify } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search, Loader2, Check, XCircle } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandDialog } from "@/components/ui/command";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { z } from "zod";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Progress } from "@/components/ui/progress";
 
 // Loan calculation function
 const calculateMonthlyRepayment = (principal: number, monthlyRate: number, termMonths: number): number => {
@@ -181,6 +183,8 @@ const transactionSchema = z.object({
 export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editData, prefill, headless }: TransactionFormProps) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [postProgress, setPostProgress] = useState(0);
+  const [progressText, setProgressText] = useState("Posting Transaction...");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [loans, setLoans] = useState<Array<{ id: string; reference: string; outstanding_balance: number; status: string; loan_type: string; interest_rate: number; monthly_repayment?: number }>>([]);
@@ -274,6 +278,25 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
   
   const [depreciationMethod, setDepreciationMethod] = useState<string>("straight_line");
+  useEffect(() => {
+    if (loading) {
+      // Skip auto-progress for advanced asset posting as we handle it manually in handleSubmit
+      if (showFixedAssetsUI && form.element === 'asset') {
+        return;
+      }
+
+      setPostProgress(10);
+      const timer = setInterval(() => {
+        setPostProgress((p) => {
+          const next = p + Math.floor(Math.random() * 10) + 5;
+          return Math.min(next, 90);
+        });
+      }, 200);
+      return () => clearInterval(timer);
+    } else {
+      setPostProgress(0);
+    }
+  }, [loading, showFixedAssetsUI, form.element]);
 
   useEffect(() => {
     const selectedDebit = accounts.find((acc: any) => String(acc.id) === String(form.debitAccount));
@@ -833,6 +856,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const handleSubmit = useCallback(async () => {
     try {
       setLoading(true);
+      if (showFixedAssetsUI && form.element === 'asset') {
+        setProgressText("Initializing Asset Posting...");
+        setPostProgress(10);
+      }
 
       // Validation
       const validationResult = transactionSchema.safeParse(form);
@@ -2027,6 +2054,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         credit: e.credit 
       })));
 
+      if (showFixedAssetsUI && form.element === 'asset') {
+        setProgressText("Posting to General Ledger...");
+        setPostProgress(45);
+        await new Promise(r => setTimeout(r, 800));
+      }
+
       const { error: entriesError } = await supabase
         .from("transaction_entries")
         .insert(sanitizedEntries.map(e => ({
@@ -2090,6 +2123,13 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if (!effectiveCompanyId || effectiveCompanyId.trim() === '') {
           throw new Error('Company ID missing for ledger posting');
         }
+
+        if (showFixedAssetsUI && form.element === 'asset') {
+          setProgressText("Updating Financial Statements...");
+          setPostProgress(75);
+          await new Promise(r => setTimeout(r, 800));
+        }
+
         const ledgerRowsNew = sanitizedEntries.map(e => ({
           company_id: effectiveCompanyId,
           transaction_id: transaction.id,
@@ -2349,6 +2389,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
       } catch {}
 
+      if (showFixedAssetsUI && form.element === 'asset') {
+        setProgressText("Finalizing...");
+        setPostProgress(100);
+        await new Promise(r => setTimeout(r, 600));
+      }
+
       notify.success("Transaction posted");
 
       // Auto-insert Fixed Asset when transaction represents asset acquisition
@@ -2375,11 +2421,20 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           // Avoid duplicate inserts here.
         }
       } catch {}
-      onOpenChange(false);
-      onSuccess();
+      setSuccessMessage("Transaction posted successfully");
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        onOpenChange(false);
+        onSuccess();
+      }, 2000);
     } catch (error: any) {
       notify.error("Posting failed", { description: error.message, duration: 6000 });
+      setErrorMessage(error.message || "Posting failed");
+      setIsError(true);
+      setTimeout(() => setIsError(false), 2000);
     } finally {
+      setPostProgress(100);
       setLoading(false);
     }
   }, [form, accounts, bankAccounts, companyId, inventoryAccount, cogsAccount, cogsTotal, invoiceIdForRef, lockType, toast, depreciationMethod, autoClassification, assetUsefulLifeYears, chartMissing, editData, fixedAssets, onOpenChange, onSuccess, selectedAssetId, showFixedAssetsUI]);
@@ -2402,6 +2457,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const disableDebitSelection = form.element?.startsWith('loan_') || (lockAccounts && Boolean(form.debitAccount));
   const disableCreditSelection = lockType === 'sent' ? true : (form.element?.startsWith('loan_') ? false : (lockAccounts && Boolean(form.creditAccount)));
   const disableAccountSelection = lockAccounts && Boolean(form.debitAccount) && Boolean(form.creditAccount);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const [isError, setIsError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -3083,6 +3142,24 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             {loading ? (<><Loader2 className="h-4 w-4 animate-spin" /> Posting Transaction...</>) : "Post Transaction"}
           </Button>
         </DialogFooter>
+        {loading && showFixedAssetsUI && (
+          <div className="fixed inset-0 z-[100] bg-background/95 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+            <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
+              <LoadingSpinner size="lg" className="scale-125" />
+              <div className="w-full space-y-4">
+                <Progress value={postProgress} className="h-2 w-full" />
+                <div className="text-center space-y-2">
+                  <div className="text-xl font-semibold text-primary animate-pulse">
+                    {progressText}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    Please wait while we update your financial records...
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
           </div>
       </DialogContent>
     </Dialog>
@@ -3154,6 +3231,34 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         </CommandList>
       </Command>
     </CommandDialog>
+    <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+      <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+        <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+          <Check className="h-12 w-12 text-green-600" />
+        </div>
+        <DialogHeader>
+          <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+        </DialogHeader>
+        <div className="text-center space-y-2">
+          <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+          <p className="text-muted-foreground">The operation has been completed successfully.</p>
+        </div>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={isError} onOpenChange={setIsError}>
+      <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+        <div className="h-24 w-24 rounded-full bg-red-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+          <XCircle className="h-12 w-12 text-red-600" />
+        </div>
+        <DialogHeader>
+          <DialogTitle className="text-center text-2xl text-red-700">Failed</DialogTitle>
+        </DialogHeader>
+        <div className="text-center space-y-2">
+          <p className="text-xl font-semibold text-gray-900">{errorMessage}</p>
+          <p className="text-muted-foreground">Please review and try again.</p>
+        </div>
+      </DialogContent>
+    </Dialog>
     </>
   );
 };

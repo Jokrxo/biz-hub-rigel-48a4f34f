@@ -6,12 +6,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Plus, Building2, TrendingUp, TrendingDown, Menu } from "lucide-react";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Plus, Building2, TrendingUp, TrendingDown, Menu, Loader2, Check } from "lucide-react";
 import { CSVImport } from "./CSVImport";
 import { ConnectBank } from "./ConnectBank";
 import { BankReconciliation } from "./BankReconciliation";
@@ -48,6 +47,8 @@ export const BankManagement = () => {
   const navigate = useNavigate();
   const [banks, setBanks] = useState<BankAccount[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
   const [open, setOpen] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const [selectedBankForStatement, setSelectedBankForStatement] = useState<BankAccount | null>(null);
@@ -163,6 +164,8 @@ export const BankManagement = () => {
           return;
         }
       }
+
+      setIsSubmitting(true);
 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
@@ -307,12 +310,19 @@ export const BankManagement = () => {
           .eq('id', insertedBank.id);
       }
 
-      toast({ title: "Success", description: "Bank account added successfully" });
-      setOpen(false);
-      setForm({ account_name: "", account_number: "", bank_name: "", opening_balance: "", opening_balance_date: new Date().toISOString().slice(0,10) });
-      loadBanks();
-      navigate('/transactions');
+      setIsSubmitting(false);
+      setIsSuccess(true);
+      
+      setTimeout(() => {
+        setOpen(false);
+        setIsSuccess(false);
+        setForm({ account_name: "", account_number: "", bank_name: "", opening_balance: "", opening_balance_date: new Date().toISOString().slice(0,10) });
+        loadBanks();
+        navigate('/transactions');
+      }, 2000);
+      
     } catch (error: any) {
+      setIsSubmitting(false);
       toast({ title: "Error", description: error.message, variant: "destructive" });
     }
   };
@@ -327,19 +337,19 @@ export const BankManagement = () => {
           <p className="text-muted-foreground mt-1">Manage accounts, reconcile transactions, and track cash flow.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
-             <SheetTrigger asChild>
+          <Dialog open={actionsOpen} onOpenChange={setActionsOpen}>
+             <DialogTrigger asChild>
                <Button variant="outline" className="h-10 gap-2">
                  <Menu className="h-4 w-4" />
                  <span>Quick Actions</span>
                </Button>
-             </SheetTrigger>
-            <SheetContent className="sm:max-w-[400px]">
+             </DialogTrigger>
+            <DialogContent className="sm:max-w-[400px]">
+              <DialogHeader>
+                 <DialogTitle>Quick Actions</DialogTitle>
+                 <DialogDescription>Manage your banking data efficiently.</DialogDescription>
+              </DialogHeader>
               <div className="space-y-6 py-6">
-                <div>
-                   <h3 className="font-semibold text-lg">Quick Actions</h3>
-                   <p className="text-sm text-muted-foreground">Manage your banking data efficiently.</p>
-                </div>
                 <div className="grid gap-3">
                   <div className="grid gap-2">
                     <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Data Import</Label>
@@ -352,8 +362,8 @@ export const BankManagement = () => {
                   </div>
                 </div>
               </div>
-            </SheetContent>
-          </Sheet>
+            </DialogContent>
+          </Dialog>
 
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
@@ -363,97 +373,114 @@ export const BankManagement = () => {
               </Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-[500px]">
-              <DialogHeader>
-                <DialogTitle>Add Bank Account</DialogTitle>
-                <p className="text-sm text-muted-foreground">Enter your bank account details to track transactions.</p>
-              </DialogHeader>
-            <div className="grid gap-6 py-4">
-              <div className="grid gap-2">
-                <Label htmlFor="account_name">Account Name *</Label>
-                <Input
-                  id="account_name"
-                  value={form.account_name}
-                  onChange={(e) => setForm({ ...form, account_name: e.target.value })}
-                  placeholder="e.g. Business Cheque Account"
-                  className="h-9"
-                />
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label>Bank *</Label>
-                  <Select
-                    value={form.bank_name}
-                    onValueChange={(val) => {
-                      const selected = bankOptions.find(b => b.value === val);
-                      setForm({ ...form, bank_name: val });
-                      setBranchCode(selected?.branchCode || "");
-                      if (!val) setForm(prev => ({ ...prev, account_number: "" }));
-                    }}
-                  >
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Select bank" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {bankOptions.map((b) => (
-                        <SelectItem key={b.value} value={b.value}>
-                          {b.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              {isSubmitting ? (
+                <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                  <Loader2 className="h-12 w-12 animate-spin text-primary" />
+                  <p className="text-lg font-medium text-muted-foreground">Adding Bank Account...</p>
                 </div>
-                
-                {form.bank_name && (
-                  <div className="grid gap-2">
-                    <Label>Branch Code</Label>
-                    <Input value={branchCode} readOnly className="bg-muted h-9" />
+              ) : isSuccess ? (
+                <div className="flex flex-col items-center justify-center py-10 space-y-4">
+                  <div className="h-16 w-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
+                    <Check className="h-10 w-10" />
                   </div>
-                )}
-              </div>
+                  <h2 className="text-xl font-bold text-center">Success!</h2>
+                  <p className="text-center text-muted-foreground">YOU SUCCESSFULLY LOADED BANK</p>
+                </div>
+              ) : (
+                <>
+                  <DialogHeader>
+                    <DialogTitle>Add Bank Account</DialogTitle>
+                    <p className="text-sm text-muted-foreground">Enter your bank account details to track transactions.</p>
+                  </DialogHeader>
+                  <div className="grid gap-6 py-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="account_name">Account Name *</Label>
+                      <Input
+                        id="account_name"
+                        value={form.account_name}
+                        onChange={(e) => setForm({ ...form, account_name: e.target.value })}
+                        placeholder="e.g. Business Cheque Account"
+                        className="h-9"
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label>Bank *</Label>
+                        <Select
+                          value={form.bank_name}
+                          onValueChange={(val) => {
+                            const selected = bankOptions.find(b => b.value === val);
+                            setForm({ ...form, bank_name: val });
+                            setBranchCode(selected?.branchCode || "");
+                            if (!val) setForm(prev => ({ ...prev, account_number: "" }));
+                          }}
+                        >
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder="Select bank" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {bankOptions.map((b) => (
+                              <SelectItem key={b.value} value={b.value}>
+                                {b.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      
+                      {form.bank_name && (
+                        <div className="grid gap-2">
+                          <Label>Branch Code</Label>
+                          <Input value={branchCode} readOnly className="bg-muted h-9" />
+                        </div>
+                      )}
+                    </div>
 
-              <div className="grid gap-2">
-                <Label htmlFor="account_number">Account Number *</Label>
-                <Input
-                  id="account_number"
-                  value={form.account_number}
-                  onChange={(e) => setForm({ ...form, account_number: e.target.value })}
-                  placeholder="e.g. 62123456789"
-                  disabled={!form.bank_name}
-                  className="font-mono h-9"
-                />
-              </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="account_number">Account Number *</Label>
+                      <Input
+                        id="account_number"
+                        value={form.account_number}
+                        onChange={(e) => setForm({ ...form, account_number: e.target.value })}
+                        placeholder="e.g. 62123456789"
+                        disabled={!form.bank_name}
+                        className="font-mono h-9"
+                      />
+                    </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label>Opening Balance</Label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2.5 text-muted-foreground text-xs">R</span>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={form.opening_balance}
-                      onChange={(e) => setForm({ ...form, opening_balance: e.target.value })}
-                      placeholder="0.00"
-                      className="pl-7 h-9"
-                    />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label>Opening Balance</Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-muted-foreground text-xs">R</span>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            value={form.opening_balance}
+                            onChange={(e) => setForm({ ...form, opening_balance: e.target.value })}
+                            placeholder="0.00"
+                            className="pl-7 h-9"
+                          />
+                        </div>
+                      </div>
+                      <div className="grid gap-2">
+                        <Label>Opening Date</Label>
+                        <Input
+                          type="date"
+                          value={form.opening_balance_date}
+                          onChange={(e) => setForm({ ...form, opening_balance_date: e.target.value })}
+                          className="h-9"
+                        />
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label>Opening Date</Label>
-                  <Input
-                    type="date"
-                    value={form.opening_balance_date}
-                    onChange={(e) => setForm({ ...form, opening_balance_date: e.target.value })}
-                    className="h-9"
-                  />
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={handleSubmit}>Add Account</Button>
-            </DialogFooter>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+                    <Button onClick={handleSubmit}>Add Account</Button>
+                  </DialogFooter>
+                </>
+              )}
             </DialogContent>
           </Dialog>
         </div>

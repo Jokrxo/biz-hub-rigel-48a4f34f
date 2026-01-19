@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertTriangle, CheckCircle2, Building2, AlertCircle, Loader2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Building2, AlertCircle, Loader2, Check, XCircle } from "lucide-react";
 
 // Loan calculation function
 const calculateMonthlyRepayment = (principal: number, monthlyRate: number, termMonths: number): number => {
@@ -59,6 +59,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
   const [autoClassification, setAutoClassification] = useState<{ type: string; category: string } | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   const [loans, setLoans] = useState<any[]>([]);
+  const [isSuccess, setIsSuccess] = useState(false);
   
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -173,14 +174,7 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
     }
   }, [form.description]);
 
-  // Check for duplicates when form changes
-  useEffect(() => {
-    if (form.description && form.amount && form.date && form.bankAccount) {
-      checkDuplicate();
-    } else {
-      setDuplicateWarning(false);
-    }
-  }, [form.description, form.amount, form.date, form.bankAccount, checkDuplicate]);
+ 
 
   
 
@@ -229,6 +223,14 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
       console.error("Duplicate check error:", error);
     }
   }, [form.description, form.amount, form.date, form.bankAccount]);
+
+  useEffect(() => {
+    if (form.description && form.amount && form.date && form.bankAccount) {
+      checkDuplicate();
+    } else {
+      setDuplicateWarning(false);
+    }
+  }, [form.description, form.amount, form.date, form.bankAccount, checkDuplicate]);
 
   const handleTransactionTypeChange = async (txType: string) => {
     setForm({ 
@@ -882,27 +884,33 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
         title: "Success", 
         description: editData?.id ? "Transaction updated" : "Transaction posted successfully" 
       });
-      onOpenChange(false);
-      onSuccess();
       
-      // Reset form
-      setForm({
-        date: new Date().toISOString().slice(0, 10),
-        description: "",
-        reference: "",
-        bankAccount: "",
-        transactionType: "",
-        debitAccount: "",
-        creditAccount: "",
-        amount: "",
-        vatRate: "0",
-        loanId: "",
-        interestRate: "",
-        loanTerm: ""
-      });
-      setAutoClassification(null);
-      setDuplicateWarning(false);
-      setValidationError("");
+      setIsSuccess(true);
+      setTimeout(() => {
+        onOpenChange(false);
+        onSuccess();
+        setIsSuccess(false);
+
+        // Reset form
+        setForm({
+          date: new Date().toISOString().slice(0, 10),
+          description: "",
+          reference: "",
+          bankAccount: "",
+          transactionType: "",
+          debitAccount: "",
+          creditAccount: "",
+          amount: "",
+          vatRate: "0",
+          amountIncludesVat: false,
+          loanId: "",
+          interestRate: "",
+          loanTerm: ""
+        });
+        setAutoClassification(null);
+        setDuplicateWarning(false);
+        setValidationError("");
+      }, 2000);
     } catch (error: any) {
       console.error('Transaction posting error:', error);
       
@@ -919,15 +927,41 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           description: error.message || "Failed to post transaction", 
           variant: "destructive" 
         });
+        setValidationError(error.message || "Failed to post transaction");
       }
     } finally {
       setLoading(false);
     }
   };
 
+  if (isSuccess) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+          <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+            <Check className="h-12 w-12 text-green-600" />
+          </div>
+          <DialogHeader>
+            <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-2">
+            <p className="text-xl font-semibold text-gray-900">Transaction Posted Successfully</p>
+            <p className="text-muted-foreground">Your transaction has been recorded.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        {loading && (
+          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
+            <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+            <p className="text-lg font-semibold text-primary">Processing Transaction...</p>
+          </div>
+        )}
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Building2 className="h-5 w-5" />
@@ -1012,9 +1046,9 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
 
           {validationError && (
             <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-2">
-              <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
+              <XCircle className="h-5 w-5 text-destructive mt-0.5" />
               <div>
-                <p className="font-semibold text-destructive">Validation Error</p>
+                <p className="font-semibold text-destructive">Error</p>
                 <p className="text-sm text-muted-foreground">{validationError}</p>
               </div>
             </div>

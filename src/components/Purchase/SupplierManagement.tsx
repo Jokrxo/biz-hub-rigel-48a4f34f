@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Building2, Plus, Mail, Phone, FileText, Search, MoreHorizontal, Edit, Trash2 } from "lucide-react";
+import { Building2, Plus, Mail, Phone, FileText, Search, MoreHorizontal, Edit, Trash2, Check } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +37,8 @@ export const SupplierManagement = () => {
   const { user } = useAuth();
   const { isAdmin, isAccountant } = useRoles();
   const [searchTerm, setSearchTerm] = useState("");
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
 
   const [formData, setFormData] = useState({
     name: "",
@@ -117,8 +119,13 @@ export const SupplierManagement = () => {
 
       if (error) throw error;
 
-      toast({ title: "Success", description: "Supplier added successfully" });
-      setDialogOpen(false);
+      setSuccessMessage("Supplier added successfully");
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        setDialogOpen(false);
+      }, 2000);
+      
       // Post opening balance to Accounts Payable if provided
       try {
         const obAmt = Number(formData.opening_balance || 0);
@@ -371,6 +378,21 @@ export const SupplierManagement = () => {
           open={statementOpen}
           onOpenChange={(v) => { setStatementOpen(v); if (!v) setStatementSupplier(null); }}
         />
+
+        <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+          <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+            <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+              <Check className="h-12 w-12 text-green-600" />
+            </div>
+            <DialogHeader>
+              <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+            </DialogHeader>
+            <div className="text-center space-y-2">
+              <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+              <p className="text-muted-foreground">The operation has been completed successfully.</p>
+            </div>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );

@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Receipt, Trash2 } from "lucide-react";
+import { Plus, Receipt, Trash2, Check, XCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
@@ -39,6 +39,10 @@ export const ExpensesManagement = () => {
     category: "",
     reference: "",
   });
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+  const [isError, setIsError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const loadExpenses = useCallback(async () => {
     try {
@@ -77,30 +81,7 @@ export const ExpensesManagement = () => {
     };
   }, [loadExpenses]);
 
-  const loadExpenses = async () => {
-    try {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("company_id")
-        .eq("user_id", user?.id)
-        .maybeSingle();
-
-      if (!profile) return;
-
-      const { data, error } = await supabase
-        .from("expenses")
-        .select("*")
-        .eq("company_id", profile.company_id)
-        .order("expense_date", { ascending: false });
-
-      if (error) throw error;
-      setExpenses(data || []);
-    } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  };
+  
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,11 +111,19 @@ export const ExpensesManagement = () => {
       if (error) throw error;
 
       toast({ title: "Success", description: "Expense recorded successfully" });
-      setDialogOpen(false);
+      setSuccessMessage("Expense recorded successfully");
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        setDialogOpen(false);
+      }, 2000);
       resetForm();
       loadExpenses();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+      setErrorMessage(error.message || "Failed to record expense");
+      setIsError(true);
+      setTimeout(() => setIsError(false), 2000);
     }
   };
 
@@ -327,6 +316,34 @@ export const ExpensesManagement = () => {
               <Button type="submit" className="bg-gradient-primary">Record Expense</Button>
             </DialogFooter>
           </form>
+      </DialogContent>
+      </Dialog>
+      <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+          <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+            <Check className="h-12 w-12 text-green-600" />
+          </div>
+          <DialogHeader>
+            <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-2">
+            <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+            <p className="text-muted-foreground">The operation has been completed successfully.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={isError} onOpenChange={setIsError}>
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+          <div className="h-24 w-24 rounded-full bg-red-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+            <XCircle className="h-12 w-12 text-red-600" />
+          </div>
+          <DialogHeader>
+            <DialogTitle className="text-center text-2xl text-red-700">Failed</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-2">
+            <p className="text-xl font-semibold text-gray-900">{errorMessage}</p>
+            <p className="text-muted-foreground">Please review and try again.</p>
+          </div>
         </DialogContent>
       </Dialog>
     </Card>

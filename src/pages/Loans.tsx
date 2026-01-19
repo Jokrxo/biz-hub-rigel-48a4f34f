@@ -8,7 +8,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Badge } from "@/components/ui/badge";
 import { 
   CreditCard, 
@@ -29,7 +28,9 @@ import {
   Calendar,
   Percent,
   Search,
-  Filter
+  Filter,
+  Check,
+  XCircle
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
@@ -38,6 +39,8 @@ import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFo
 import { transactionsApi } from "@/lib/transactions-api";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Progress } from "@/components/ui/progress";
 
 type Loan = { id: string; company_id: string; reference: string; loan_type: "short" | "long"; principal: number; interest_rate: number; start_date: string; term_months: number; monthly_repayment: number | null; status: string; outstanding_balance: number };
 type LoanPayment = { id: string; loan_id: string; payment_date: string; amount: number; principal_component: number; interest_component: number };
@@ -69,6 +72,11 @@ export default function Loans() {
   const { toast } = useToast();
   const [companyId, setCompanyId] = useState<string>("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("Operation completed successfully");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
   
   // Dialog States
   const [addLoanOpen, setAddLoanOpen] = useState(false);
@@ -182,6 +190,11 @@ export default function Loans() {
       const principal = Number(directorPrincipal || '0');
       if (!principal || principal <= 0) { toast({ title: 'Principal required', variant: 'destructive' }); return; }
       if (!directorBankAccountId) { toast({ title: 'Select bank', variant: 'destructive' }); return; }
+
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Initializing Director Loan...");
+
       const ref = `DIR-${generateUniqueLoanRef()}`;
       const shortOrLong: 'short' | 'long' = Number(directorTermMonths || '0') >= 12 ? 'long' : 'short';
       const { error: loanErr } = await supabase
@@ -189,6 +202,9 @@ export default function Loans() {
         .insert({ company_id: companyId, reference: ref, loan_type: shortOrLong, principal, interest_rate: Number(directorInterestRate || '0') / 100, start_date: directorDate, term_months: Number(directorTermMonths || '0'), monthly_repayment: null, status: 'active', outstanding_balance: principal });
       if (loanErr) throw loanErr;
       
+      setProgress(40);
+      setProgressText("Processing Transaction...");
+
       if (directorLoanDirection === 'from_director') {
         let loanAssetId = directorLoanAccountId;
         try {
@@ -208,14 +224,29 @@ export default function Loans() {
       } else {
         await transactionsApi.postLoanReceived({ date: directorDate, amount: principal, reference: ref, bankAccountId: directorBankAccountId, loanType: shortOrLong, loanLedgerAccountId: directorLoanAccountId || undefined });
       }
+
+      setProgress(80);
+      setProgressText("Updating Financials...");
+
       try {
         const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user?.id || '').maybeSingle();
         if (profile?.company_id) await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
       } catch {}
-      toast({ title: 'Director loan recorded' });
-      setDirectorsLoanOpen(false);
+      
+      setProgress(100);
+      setProgressText("Finalizing...");
+      await new Promise(r => setTimeout(r, 500));
+
+      setSuccessMessage('Director loan recorded successfully');
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        setIsSubmitting(false);
+        setDirectorsLoanOpen(false);
+      }, 2000);
     } catch (e: any) {
       toast({ title: 'Error', description: e.message || 'Failed to create director loan', variant: 'destructive' });
+      setIsSubmitting(false);
     }
   }, [companyId, directorPrincipal, directorLoanAccountId, directorBankAccountId, directorTermMonths, directorInterestRate, directorDate, directorLoanDirection, user?.id, toast]);
 
@@ -271,9 +302,13 @@ export default function Loans() {
         await supabase.from("loan_payments" as any).delete().in("loan_id", loanIds as any);
       }
       await supabase.from("loans" as any).delete().eq("company_id", cid);
-      toast({ title: "Loans Cleared", description: "All company loans deleted" });
-      setClearLoansOpen(false);
-      setRefreshKey((k) => k + 1);
+      setSuccessMessage("All company loans deleted");
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        setClearLoansOpen(false);
+        setRefreshKey((k) => k + 1);
+      }, 2000);
     } catch (e: any) {
       toast({ title: "Error", description: e.message || "Failed to clear loans", variant: "destructive" });
     } finally {
@@ -345,12 +380,12 @@ export default function Loans() {
           </Tabs>
 
           {/* Quick Actions Sheet */}
-          <Sheet open={actionsOpen} onOpenChange={setActionsOpen}>
-            <SheetContent className="sm:max-w-[400px]">
-              <SheetHeader>
-                <SheetTitle>Quick Actions</SheetTitle>
-                <SheetDescription>Manage loans and repayments efficiently.</SheetDescription>
-              </SheetHeader>
+          <Dialog open={actionsOpen} onOpenChange={setActionsOpen}>
+            <DialogContent className="sm:max-w-[400px]">
+              <DialogHeader>
+                <DialogTitle>Quick Actions</DialogTitle>
+                <DialogDescription>Manage loans and repayments efficiently.</DialogDescription>
+              </DialogHeader>
               <div className="grid gap-4 py-6">
                 <div className="space-y-2">
                   <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">New Records</h4>
@@ -384,8 +419,8 @@ export default function Loans() {
                   </Button>
                 </div>
               </div>
-            </SheetContent>
-          </Sheet>
+            </DialogContent>
+          </Dialog>
 
           {/* Dialogs */}
           <Dialog open={tutorialOpen} onOpenChange={setTutorialOpen}>
@@ -414,13 +449,13 @@ export default function Loans() {
             </DialogContent>
           </Dialog>
 
-          {/* Add Loan Sheet */}
-          <Sheet open={addLoanOpen} onOpenChange={setAddLoanOpen}>
-            <SheetContent className="sm:max-w-[600px] overflow-y-auto">
-              <SheetHeader>
-                <SheetTitle>Add New Loan</SheetTitle>
-                <SheetDescription>Enter the details of the new loan agreement.</SheetDescription>
-              </SheetHeader>
+          {/* Add Loan Dialog */}
+          <Dialog open={addLoanOpen} onOpenChange={setAddLoanOpen}>
+            <DialogContent className="sm:max-w-[600px] overflow-y-auto max-h-[90vh]">
+              <DialogHeader>
+                <DialogTitle>Add New Loan</DialogTitle>
+                <DialogDescription>Enter the details of the new loan agreement.</DialogDescription>
+              </DialogHeader>
               <div className="grid gap-6 py-6">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
@@ -514,17 +549,21 @@ export default function Loans() {
                         date: loanForm.startDate, amount: principal, reference: ref, bankAccountId: loanForm.bankAccountId, loanType: loanType as any, loanLedgerAccountId: loanForm.loanAccountId,
                       });
                       
-                      toast({ title: 'Success', description: 'Loan recorded successfully' });
-                      setAddLoanOpen(false);
-                      setTab('list');
+                      setSuccessMessage('Loan recorded successfully');
+                      setIsSuccess(true);
+                      setTimeout(() => {
+                        setIsSuccess(false);
+                        setAddLoanOpen(false);
+                        setTab('list');
+                      }, 2000);
                     } catch (e: any) {
                       toast({ title: 'Error', description: e.message, variant: 'destructive' });
                     }
                   }}>Create Loan</Button>
                 </div>
               </div>
-            </SheetContent>
-          </Sheet>
+            </DialogContent>
+          </Dialog>
 
           {/* Director Loan Dialog */}
           <Dialog open={directorsLoanOpen} onOpenChange={setDirectorsLoanOpen}>
@@ -632,8 +671,12 @@ export default function Loans() {
                   try {
                     if (!actionBankId) throw new Error('Select bank');
                     await transactionsApi.postLoanInterest({ loanId: actionLoan!.id, date: actionDate, bankAccountId: actionBankId });
-                    toast({ title: 'Success', description: 'Interest recorded' });
-                    setInterestQuickOpen(false);
+                    setSuccessMessage('Interest recorded successfully');
+                    setIsSuccess(true);
+                    setTimeout(() => {
+                      setIsSuccess(false);
+                      setInterestQuickOpen(false);
+                    }, 2000);
                   } catch (err: any) {
                     toast({ title: 'Error', description: err.message, variant: 'destructive' });
                   }
@@ -682,8 +725,12 @@ export default function Loans() {
                     if (!(amountNum > 0)) throw new Error('Enter amount');
                     if (!actionBankId) throw new Error('Select bank');
                     await transactionsApi.postLoanRepayment({ loanId: actionLoan!.id, date: actionDate, bankAccountId: actionBankId, amountOverride: amountNum });
-                    toast({ title: 'Success', description: 'Repayment recorded' });
-                    setRepaymentQuickOpen(false);
+                    setSuccessMessage('Repayment recorded successfully');
+                    setIsSuccess(true);
+                    setTimeout(() => {
+                      setIsSuccess(false);
+                      setRepaymentQuickOpen(false);
+                    }, 2000);
                   } catch (err: any) {
                     toast({ title: 'Error', description: err.message, variant: 'destructive' });
                   }
@@ -707,7 +754,41 @@ export default function Loans() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          {/* Success Dialog */}
+          <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+            <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+              <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+                <Check className="h-12 w-12 text-green-600" />
+              </div>
+              <DialogHeader>
+                <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+              </DialogHeader>
+              <div className="text-center space-y-2">
+                <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+                <p className="text-muted-foreground">The operation has been completed successfully.</p>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
+        {isSubmitting && (
+          <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+            <div className="bg-background border shadow-xl rounded-xl flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
+              <LoadingSpinner size="lg" className="scale-125" />
+              <div className="w-full space-y-4">
+                <Progress value={progress} className="h-2 w-full" />
+                <div className="text-center space-y-2">
+                  <div className="text-xl font-semibold text-primary animate-pulse">
+                    {progressText}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    Please wait while we update your financial records...
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </DashboardLayout>
     </>
   );
@@ -1131,13 +1212,62 @@ function DirectorLoansList({ companyId }: { companyId: string }) {
               try {
                 const val = parseFloat(amount);
                 if (!(val > 0)) throw new Error('Invalid amount');
+                setIsSubmitting(true);
+                setProgress(30);
+                setProgressText("Processing Payment...");
                 await transactionsApi.postDirectorLoanPaymentReceived({ loanId: actionLoan!.id, date, bankAccountId: bankId, amountOverride: val });
-                toast({ title: 'Success' }); setPaymentOpen(false);
-              } catch (e: any) { toast({ title: 'Error', description: e.message }); }
+                setProgress(100);
+                await new Promise(r => setTimeout(r, 500));
+                setSuccessMessage('Payment received successfully');
+                setIsSuccess(true);
+                setTimeout(() => {
+                  setIsSuccess(false);
+                  setPaymentOpen(false);
+                  setIsSubmitting(false);
+                }, 2000);
+              } catch (e: any) { 
+                toast({ title: 'Error', description: e.message }); 
+                setIsSubmitting(false);
+              }
             }}>Post</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Success Dialog */}
+      <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+          <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+            <Check className="h-12 w-12 text-green-600" />
+          </div>
+          <DialogHeader>
+            <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+          </DialogHeader>
+          <div className="text-center space-y-2">
+            <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+            <p className="text-muted-foreground">The operation has been completed successfully.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {isSubmitting && (
+        <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+          <div className="bg-background border shadow-xl rounded-xl flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
+            <LoadingSpinner size="lg" className="scale-125" />
+            <div className="w-full space-y-4">
+              <Progress value={progress} className="h-2 w-full" />
+              <div className="text-center space-y-2">
+                <div className="text-xl font-semibold text-primary animate-pulse">
+                  {progressText}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Please wait while we update your financial records...
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
@@ -27,6 +27,8 @@ import * as XLSX from "xlsx";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet";
 import { MetricCard } from "@/components/ui/MetricCard";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Progress } from "@/components/ui/progress";
 
 type Employee = { id: string; first_name: string; last_name: string; email: string | null; id_number: string | null; start_date: string | null; salary_type: string | null; bank_name: string | null; bank_branch_code: string | null; bank_account_number: string | null; bank_account_type: string | null; active: boolean };
 type PayItem = { id: string; code: string; name: string; type: "earning" | "deduction" | "employer"; taxable: boolean };
@@ -169,6 +171,10 @@ export default function Payroll() {
   const [companyId, setCompanyId] = useState<string>("");
   const [isQuickActionsOpen, setIsQuickActionsOpen] = useState(false);
 
+  const [postDate, setPostDate] = useState<string>("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
   useEffect(() => {
     const loadCompany = async () => {
       if (!hasSupabaseEnv) { setCompanyId(""); return; }
@@ -208,17 +214,17 @@ export default function Payroll() {
                 <Info className="h-4 w-4 mr-2" />
                 Tutorial
               </Button>
-              <Sheet open={isQuickActionsOpen} onOpenChange={setIsQuickActionsOpen}>
-                <SheetTrigger asChild>
+              <Dialog open={isQuickActionsOpen} onOpenChange={setIsQuickActionsOpen}>
+                <DialogTrigger asChild>
                   <Button className="bg-gradient-primary shadow-lg hover:shadow-xl transition-all">
                     <Plus className="h-4 w-4 mr-2" /> Quick Actions
                   </Button>
-                </SheetTrigger>
-                <SheetContent>
-                  <SheetHeader>
-                    <SheetTitle>Payroll Actions</SheetTitle>
-                    <SheetDescription>Quick access to common payroll tasks</SheetDescription>
-                  </SheetHeader>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[400px]">
+                  <DialogHeader>
+                    <DialogTitle>Payroll Actions</DialogTitle>
+                    <DialogDescription>Quick access to common payroll tasks</DialogDescription>
+                  </DialogHeader>
                   <div className="grid gap-4 py-4">
                     <Button variant="outline" className="justify-start h-12" onClick={() => { setTab("run"); setIsQuickActionsOpen(false); }}>
                       <Calculator className="h-5 w-5 mr-3 text-primary" />
@@ -237,8 +243,8 @@ export default function Payroll() {
                       View History
                     </Button>
                   </div>
-                </SheetContent>
-              </Sheet>
+                </DialogContent>
+              </Dialog>
             </div>
           </div>
 
@@ -1427,6 +1433,10 @@ function PayslipPreview({ companyId }: { companyId: string }) {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [jsonOpen, setJsonOpen] = useState(false);
   const [jsonData, setJsonData] = useState<any>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
+
   useEffect(() => {
     const load = async () => {
       const { data: rs } = await supabase.from("pay_runs" as any).select("*").eq("company_id", companyId).order("period_start", { ascending: false });
@@ -1481,7 +1491,12 @@ function PayslipPreview({ companyId }: { companyId: string }) {
   };
   const postToLedger = async () => {
     if (!run || !line) return;
-    const paye = Number(line.paye || 0);
+    try {
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Processing Payroll...");
+
+      const paye = Number(line.paye || 0);
     const uifEmp = Number(line.uif_emp || 0);
     const uifEr = Number(line.uif_er || 0);
     const sdlEr = Number(line.sdl_er || 0);
@@ -1524,7 +1539,15 @@ function PayslipPreview({ companyId }: { companyId: string }) {
         .single();
       txRes = res2.data; txErr = res2.error;
     }
-    if (txErr) { return; }
+    if (txErr) { 
+      setIsSubmitting(false);
+      return; 
+    }
+    
+    setProgress(50);
+    setProgressText("Posting to Ledger...");
+    await new Promise(r => setTimeout(r, 600));
+
     const rows = [
       { transaction_id: (txRes as any).id, account_id: salaryExp, debit: gross, credit: 0, description: 'Salary Expense', status: 'approved' },
       { transaction_id: (txRes as any).id, account_id: uifExp, debit: uifEr, credit: 0, description: 'Employer UIF Expense', status: 'approved' },
@@ -1535,11 +1558,31 @@ function PayslipPreview({ companyId }: { companyId: string }) {
       { transaction_id: (txRes as any).id, account_id: sdlPayable, debit: 0, credit: sdlEr, description: 'SDL Payable', status: 'approved' },
     ];
     const { error: teErr } = await supabase.from('transaction_entries' as any).insert(rows as any);
-    if (teErr) { return; }
+    if (teErr) { 
+      setIsSubmitting(false);
+      return; 
+    }
+
+    setProgress(80);
+    setProgressText("Updating Financial Statements...");
+    await new Promise(r => setTimeout(r, 600));
+
     const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (txRes as any).id, description: r.description }));
     await supabase.from('ledger_entries' as any).insert(ledgerRows as any);
     await supabase.from('transactions' as any).update({ status: 'posted' } as any).eq('id', (txRes as any).id);
+    
+    try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
+
+    setProgress(100);
+    setProgressText("Payroll Posted");
+    await new Promise(r => setTimeout(r, 600));
+
     toast({ title: 'Success', description: 'Payroll posted to ledger' });
+    setIsSubmitting(false);
+    } catch (err: any) {
+      toast({ title: 'Error', description: err.message, variant: 'destructive' });
+      setIsSubmitting(false);
+    }
   };
   return (
     <>
@@ -1617,6 +1660,24 @@ function PayslipPreview({ companyId }: { companyId: string }) {
           <DialogFooter><Button variant="outline" onClick={() => setJsonOpen(false)}>Close</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+      {isSubmitting && (
+        <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+          <div className="bg-background border shadow-xl rounded-xl flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
+            <LoadingSpinner size="lg" className="scale-125" />
+            <div className="w-full space-y-4">
+              <Progress value={progress} className="h-2 w-full" />
+              <div className="text-center space-y-2">
+                <div className="text-xl font-semibold text-primary animate-pulse">
+                  {progressText}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  Please wait while we update your financial records...
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

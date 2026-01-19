@@ -4,12 +4,12 @@ import { useAuth } from "@/context/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Zap } from "lucide-react";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -69,15 +69,15 @@ export const QuickSetupSheet = ({ open, onOpenChange }: QuickSetupSheetProps) =>
   }, [user, open]);
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="left" className="w-full sm:max-w-xl overflow-y-auto z-50">
-        <SheetHeader>
-          <SheetTitle className="flex items-center gap-2">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[600px] overflow-y-auto max-h-[90vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
             <Zap className="h-5 w-5 text-amber-500" />
             Company Setup
-          </SheetTitle>
-          <SheetDescription>Add core records to get your business up and running.</SheetDescription>
-        </SheetHeader>
+          </DialogTitle>
+          <DialogDescription>Add core records to get your business up and running.</DialogDescription>
+        </DialogHeader>
         <div className="relative space-y-4 mt-6">
           {/* Watermark */}
           <div className="absolute inset-0 z-0 flex items-center justify-center opacity-5 pointer-events-none">
@@ -150,7 +150,7 @@ export const QuickSetupSheet = ({ open, onOpenChange }: QuickSetupSheetProps) =>
             </Card>
           </div>
         </div>
-      </SheetContent>
-    </Sheet>
+      </DialogContent>
+    </Dialog>
   );
 };

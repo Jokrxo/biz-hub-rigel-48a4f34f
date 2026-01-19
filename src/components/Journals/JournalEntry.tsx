@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Save, FileText, ArrowLeft, Loader2, AlertTriangle, CheckCircle2, Check, ChevronsUpDown } from "lucide-react";
+import { Plus, Trash2, Save, FileText, ArrowLeft, Loader2, AlertTriangle, CheckCircle2, Check, ChevronsUpDown, History } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
@@ -97,6 +97,16 @@ export const JournalEntry = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [view, setView] = useState<'entry' | 'history'>('entry');
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [journals, setJournals] = useState<Array<{
+    id: string;
+    transaction_date: string;
+    reference_number: string | null;
+    description: string;
+    total_amount: number;
+    status: string;
+  }>>([]);
   
   // Header state
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
@@ -171,6 +181,39 @@ export const JournalEntry = () => {
   const difference = totalDebits - totalCredits;
   const isBalanced = Math.abs(difference) < 0.01;
 
+  const loadJournalHistory = async () => {
+    try {
+      if (!user) return;
+      setHistoryLoading(true);
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("company_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!profile?.company_id) {
+        setJournals([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from("transactions")
+        .select("id, transaction_date, reference_number, description, total_amount, status")
+        .eq("company_id", profile.company_id)
+        .eq("transaction_type", "journal")
+        .order("transaction_date", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      setJournals((data || []) as any);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to load journal history");
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (view === "history") loadJournalHistory();
+  }, [view, user]);
+
   const handlePost = async () => {
     if (!date) {
       toast.error("Please select a date");
@@ -204,12 +247,12 @@ export const JournalEntry = () => {
         .insert({
           company_id: profile.company_id,
           transaction_date: date,
-          description: description,
-          reference: reference || `JNL-${format(new Date(), 'yyyyMMddHHmmss')}`,
-          amount: totalDebits,
-          type: 'JOURNAL',
-          status: 'posted',
-          created_by: user!.id
+          description,
+          reference_number: reference || `JNL-${format(new Date(), 'yyyyMMddHHmmss')}`,
+          total_amount: totalDebits,
+          transaction_type: "journal",
+          status: "posted",
+          user_id: user!.id
         })
         .select()
         .single();
@@ -223,8 +266,7 @@ export const JournalEntry = () => {
         description: line.description || description,
         debit: Number(line.debit) || 0,
         credit: Number(line.credit) || 0,
-        entry_date: date,
-        reference_id: transaction.reference
+        status: "approved"
       }));
 
       const { error: entriesError } = await supabase
@@ -251,6 +293,69 @@ export const JournalEntry = () => {
     }
   };
 
+  if (view === "history") {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+              Journal History
+            </h1>
+            <p className="text-muted-foreground mt-1">Review posted journal transactions</p>
+          </div>
+          <Button variant="outline" onClick={() => setView("entry")} className="gap-2">
+            <ArrowLeft className="h-4 w-4" /> Back to Entry
+          </Button>
+        </div>
+
+        <Card className="border shadow-sm">
+          <CardHeader className="bg-muted/10 pb-6 border-b">
+            <CardTitle>Recent Journals</CardTitle>
+            <CardDescription>Last 50 journal transactions</CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            {historyLoading ? (
+              <div className="p-6 text-sm text-muted-foreground">Loading...</div>
+            ) : journals.length === 0 ? (
+              <div className="p-10 text-center text-muted-foreground">
+                <FileText className="h-10 w-10 mx-auto mb-3 opacity-20" />
+                <div className="font-medium">No journals found</div>
+                <div className="text-sm">Post a journal entry to see it here.</div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-muted/50">
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Reference</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {journals.map((j) => (
+                      <TableRow key={j.id}>
+                        <TableCell>{new Date(j.transaction_date).toLocaleDateString("en-ZA")}</TableCell>
+                        <TableCell className="font-mono">{j.reference_number || "-"}</TableCell>
+                        <TableCell className="max-w-[520px] truncate">{j.description}</TableCell>
+                        <TableCell className="text-right font-mono">
+                          {Number(j.total_amount || 0).toLocaleString("en-ZA", { style: "currency", currency: "ZAR" })}
+                        </TableCell>
+                        <TableCell className="capitalize">{String(j.status || "-")}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -261,6 +366,9 @@ export const JournalEntry = () => {
           <p className="text-muted-foreground mt-1">Record general journal entries and adjustments</p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setView('history')} className="gap-2">
+            <History className="h-4 w-4" /> View History
+          </Button>
           <Button variant="outline" onClick={() => navigate(-1)} className="gap-2">
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>

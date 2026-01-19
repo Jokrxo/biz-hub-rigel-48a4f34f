@@ -15,10 +15,12 @@ import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFo
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
-import { Download, Mail, Plus, Trash2, FileText, MoreHorizontal, CheckCircle2, Clock, AlertTriangle, DollarSign, FilePlus, ArrowRight } from "lucide-react";
+import { Download, Mail, Plus, Trash2, FileText, MoreHorizontal, CheckCircle2, Clock, AlertTriangle, DollarSign, FilePlus, ArrowRight, Check } from "lucide-react";
 import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
 import { exportInvoicesToExcel } from '@/lib/export-utils';
 import { MetricCard } from "@/components/ui/MetricCard";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Progress } from "@/components/ui/progress";
 
 interface Invoice {
   id: string;
@@ -49,6 +51,8 @@ export const SalesInvoices = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [yearFilter, setYearFilter] = useState<string>('all');
   const [monthFilter, setMonthFilter] = useState<string>('all');
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
   const { user } = useAuth();
   const { toast } = useToast();
   const { isAdmin, isAccountant } = useRoles();
@@ -57,6 +61,9 @@ export const SalesInvoices = () => {
   const [lastPosting, setLastPosting] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [pageSize] = useState(7);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
 
   const [formData, setFormData] = useState({
     customer_name: "",
@@ -296,7 +303,12 @@ export const SalesInvoices = () => {
       toast({ title: "Invalid due date", description: "Due date cannot be earlier than invoice date.", variant: "destructive" });
       return;
     }
+    setDialogOpen(false);
     try {
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Creating Invoice...");
+
       const { data: profile } = await supabase
         .from("profiles")
         .select("company_id")
@@ -326,6 +338,10 @@ export const SalesInvoices = () => {
 
       if (invoiceError) throw invoiceError;
 
+      setProgress(40);
+      setProgressText("Saving Invoice Items...");
+      await new Promise(r => setTimeout(r, 400));
+
       // Create invoice items
       const items = formData.items.map(item => ({
         invoice_id: invoice.id,
@@ -343,6 +359,10 @@ export const SalesInvoices = () => {
 
       if (itemsError) throw itemsError;
 
+      setProgress(70);
+      setProgressText("Updating Inventory...");
+      await new Promise(r => setTimeout(r, 400));
+
       // Decrease stock for each product item
       for (const it of formData.items) {
         const prod = products.find((p: any) => String(p.id) === String(it.product_id));
@@ -357,8 +377,17 @@ export const SalesInvoices = () => {
         if (stockError) throw stockError;
       }
 
-      toast({ title: "Success", description: "Invoice created successfully" });
-      setDialogOpen(false);
+      setProgress(100);
+      setProgressText("Finalizing...");
+      await new Promise(r => setTimeout(r, 600));
+
+      setSuccessMessage("Invoice created successfully");
+      setIsSuccess(true);
+      setTimeout(() => {
+        setIsSuccess(false);
+        setIsSubmitting(false);
+      }, 2000);
+      
       // If cash sale: post issuance (AR/Revenue/VAT & COGS), mark sent, then open payment dialog
       try {
         if (invoicePaymentMode === 'cash') {
@@ -387,6 +416,8 @@ export const SalesInvoices = () => {
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+      setIsSubmitting(false);
+      setDialogOpen(true);
     }
   };
 
@@ -480,18 +511,33 @@ export const SalesInvoices = () => {
   const postInvoiceSent = async (inv: any, postDateStr?: string) => {
     try {
       setPosting(true);
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Posting Invoice to Ledger...");
+
       const postDate = postDateStr || inv.invoice_date;
       // Post full AR/Revenue/VAT and COGS/Inventory via client to guarantee all four accounts
       await transactionsApi.postInvoiceSentClient(inv, postDate);
+      
+      setProgress(70);
+      setProgressText("Updating Financial Statements...");
+      await new Promise(r => setTimeout(r, 600));
+
       const companyId = await getCompanyId();
       if (companyId) {
         try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
       }
+      
+      setProgress(100);
+      setProgressText("Posted Successfully");
+      await new Promise(r => setTimeout(r, 400));
+
       toast({ title: "Success", description: `Posted invoice ${inv.invoice_number}: Dr Receivable | Cr Revenue, Cr VAT; Dr COGS | Cr Inventory` });
     } catch (e: any) {
       toast({ title: "Error", description: e.message || 'Failed to post Sent invoice', variant: 'destructive' });
     } finally {
       setPosting(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -561,21 +607,36 @@ export const SalesInvoices = () => {
   const postInvoicePaid = async (inv: any, payDateStr?: string, bankAccountId?: string) => {
     try {
       setPosting(true);
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Processing Payment...");
+
       const amt = Number(inv._payment_amount || inv.total_amount || 0);
       try {
         await (supabase as any).rpc('post_invoice_paid', { _invoice_id: inv.id, _payment_date: payDateStr || todayStr, _bank_account_id: bankAccountId, _amount: amt });
       } catch (rpcErr) {
         await transactionsApi.postInvoicePaidClient(inv, payDateStr || todayStr, bankAccountId as string, amt);
       }
+      
+      setProgress(60);
+      setProgressText("Updating Bank Balance...");
+      await new Promise(r => setTimeout(r, 600));
+
       const companyId = await getCompanyId();
       if (companyId) {
         try { await supabase.rpc('refresh_afs_cache', { _company_id: companyId }); } catch {}
       }
+
+      setProgress(100);
+      setProgressText("Payment Recorded");
+      await new Promise(r => setTimeout(r, 400));
+
       toast({ title: "Success", description: `Posted payment for ${inv.invoice_number}` });
     } catch (e: any) {
       toast({ title: "Error", description: e.message || 'Failed to post payment', variant: 'destructive' });
     } finally {
       setPosting(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -682,6 +743,7 @@ export const SalesInvoices = () => {
 
   const handleConfirmPayment = async () => {
     if (!paymentInvoice) return;
+    setPaymentDialogOpen(false);
     try {
       const outstanding = Math.max(0, Number(paymentInvoice.total_amount || 0) - Number(paymentInvoice.amount_paid || 0));
       const amount = Number(paymentAmount || 0);
@@ -721,11 +783,11 @@ export const SalesInvoices = () => {
       // if your invoices table includes paid_at, you can enable the following:
       // await (supabase as any).from('invoices').update({ paid_at: new Date(paymentDate).toISOString() }).eq('id', paymentInvoice.id);
       toast({ title: "Success", description: "Opening journal to post payment" });
-      setPaymentDialogOpen(false);
       setPaymentInvoice(null);
       loadData();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
+      setPaymentDialogOpen(true);
     }
   };
 
@@ -1345,10 +1407,44 @@ export const SalesInvoices = () => {
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setSendDialogOpen(false)}>Cancel</Button>
-              <Button onClick={handleSendEmail} disabled={sending}>{sending ? 'Sending…' : 'Send'}</Button>
+              <Button onClick={handleSendEmail} disabled={sending}>{sending ? 'Sending...' : 'Send'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
+          <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
+            <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
+              <Check className="h-12 w-12 text-green-600" />
+            </div>
+            <DialogHeader>
+              <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+            </DialogHeader>
+            <div className="text-center space-y-2">
+              <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
+              <p className="text-muted-foreground">The operation has been completed successfully.</p>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {isSubmitting && (
+          <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+            <div className="bg-background border shadow-xl rounded-xl flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
+              <LoadingSpinner size="lg" className="scale-125" />
+              <div className="w-full space-y-4">
+                <Progress value={progress} className="h-2 w-full" />
+                <div className="text-center space-y-2">
+                  <div className="text-xl font-semibold text-primary animate-pulse">
+                    {progressText}
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    Please wait while we update your financial records...
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );

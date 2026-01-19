@@ -43,14 +43,11 @@ export const navGroups = [
     ]
   },
   {
-    title: "Sales & Purchase",
+    title: "Operations",
     items: [
-      { icon: FileText, label: "Invoices", href: "/invoices" },
+      { icon: TrendingUp, label: "Sales Management", href: "/sales" },
+      { icon: Receipt, label: "Purchase Management", href: "/purchase" },
       { icon: FileText, label: "Quotes", href: "/quotes" },
-      { icon: Users, label: "Customers", href: "/customers" },
-      { icon: Users, label: "Suppliers", href: "/suppliers" },
-      { icon: Receipt, label: "Expenses", href: "/expenses" },
-      { icon: FileText, label: "Purchase Orders", href: "/purchase-orders" },
     ]
   },
   {
