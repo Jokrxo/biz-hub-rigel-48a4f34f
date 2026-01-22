@@ -12,7 +12,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { toast as notify } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search, Loader2, Check, XCircle } from "lucide-react";
+import { emitDashboardCacheInvalidation } from "@/stores/dashboardCache";
+import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search, Loader2, Check, XCircle, DollarSign, Percent, Calculator, Save, ArrowRight, FileText, Calendar, Lock, Wallet, CreditCard, Globe, Plus, Briefcase, BookOpen, Package, Landmark, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem, CommandDialog } from "@/components/ui/command";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
@@ -34,6 +36,26 @@ const calculateLoanPaymentAmount = (loan: any, installmentNumber: number): numbe
   // For now, return the monthly repayment amount
   // In a more sophisticated system, this could calculate principal/interest split
   return loan.monthly_repayment;
+};
+
+// Initial form state
+const initialFormState = {
+  date: new Date().toISOString().slice(0, 10),
+  description: "",
+  reference: "",
+  bankAccountId: "",
+  element: "",
+  paymentMethod: "bank",
+  debitAccount: "",
+  creditAccount: "",
+  amount: "",
+  vatRate: "0",
+  loanId: "",
+  interestRate: "",
+  loanTerm: "",
+  loanTermType: "short",
+  installmentNumber: "",
+  assetFinancedByLoan: false
 };
 
 const ChartOfAccountsLazy = lazy(() => import("./ChartOfAccountsManagement").then(m => ({ default: m.ChartOfAccountsManagement })));
@@ -233,6 +255,25 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [cogsAccount, setCogsAccount] = useState<Account | null>(null);
   const [inventoryAccount, setInventoryAccount] = useState<Account | null>(null);
   const [invoiceIdForRef, setInvoiceIdForRef] = useState<string>("");
+  
+  // Split Transaction State
+  const [splitMode, setSplitMode] = useState(false);
+  const [splits, setSplits] = useState<{ id: string; accountId: string; amount: string; description: string; vatRate: string }[]>([
+    { id: "1", accountId: "", amount: "", description: "", vatRate: "0" }
+  ]);
+
+  // Update splits when total amount changes (if only 1 split)
+  useEffect(() => {
+    if (!splitMode && form.amount) {
+      setSplits([{ id: "1", accountId: form.debitAccount, amount: form.amount, description: form.description, vatRate: form.vatRate }]);
+    }
+  }, [form.amount, form.description, form.debitAccount, form.vatRate, splitMode]);
+
+  // Calculate remaining amount for splits
+  const splitTotal = splits.reduce((sum, split) => sum + (parseFloat(split.amount) || 0), 0);
+  const totalAmount = parseFloat(form.amount) || 0;
+  const remainingAmount = totalAmount - splitTotal;
+
 
   useEffect(() => {
     if (open && prefill) {
@@ -862,10 +903,49 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       }
 
       // Validation
-      const validationResult = transactionSchema.safeParse(form);
+      let validationResult;
+      if (splitMode) {
+          // Custom validation for split mode
+          const baseSchema = transactionSchema.omit({ debitAccount: true, creditAccount: true });
+          validationResult = baseSchema.safeParse(form);
+          
+          if (validationResult.success) {
+             const isDebitSplit = ['expense', 'asset', 'product_purchase', 'liability', 'loan_repayment', 'loan_interest', 'depreciation'].includes(form.element);
+             if (isDebitSplit && !form.creditAccount) {
+                 toast({ title: "Validation Error", description: "Credit account is required.", variant: "destructive" });
+                 setLoading(false);
+                 return;
+             }
+             if (!isDebitSplit && !form.debitAccount) {
+                 toast({ title: "Validation Error", description: "Debit account is required.", variant: "destructive" });
+                 setLoading(false);
+                 return;
+             }
+             
+             // Check split balance
+             const splitTotal = splits.reduce((sum, split) => sum + (parseFloat(split.amount) || 0), 0);
+             const totalAmount = parseFloat(form.amount) || 0;
+             if (Math.abs(totalAmount - splitTotal) > 0.01) {
+                toast({ title: "Unbalanced Split", description: `Split total (${splitTotal.toFixed(2)}) does not match transaction amount (${totalAmount.toFixed(2)})`, variant: "destructive" });
+                setLoading(false);
+                return;
+             }
+             
+             // Check if all accounts selected
+             if (splits.some(s => !s.accountId)) {
+                toast({ title: "Missing Account", description: "Please select an account for all split lines.", variant: "destructive" });
+                setLoading(false);
+                return;
+             }
+          }
+      } else {
+          validationResult = transactionSchema.safeParse(form);
+      }
+
       if (!validationResult.success) {
         const firstError = validationResult.error.errors[0];
         toast({ title: "Validation Error", description: firstError.message, variant: "destructive" });
+        setLoading(false);
         return;
       }
 
@@ -984,7 +1064,154 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         // Create VAT-aware entries for edit path (similar to create path)
         const entries: any[] = [];
         
-        if (vatAmount > 0 && vatAccount && vatAccount.id) {
+        if (splitMode) {
+            const isDebitSplit = ['expense', 'asset', 'product_purchase', 'liability', 'loan_repayment', 'loan_interest', 'depreciation'].includes(form.element);
+            
+            // 1. Add the Single Side (Bank/Source)
+            if (isDebitSplit) {
+                 // Credit Bank for Total Amount
+                 entries.push({
+                    transaction_id: editData.id,
+                    account_id: form.creditAccount,
+                    debit: 0,
+                    credit: amountAbs,
+                    description: sanitizedDescription,
+                    status: "approved"
+                 });
+            } else {
+                 // Debit Bank for Total Amount (Income)
+                 entries.push({
+                    transaction_id: editData.id,
+                    account_id: form.debitAccount,
+                    debit: amountAbs,
+                    credit: 0,
+                    description: sanitizedDescription,
+                    status: "approved"
+                 });
+            }
+
+            // 2. Add Split Entries
+            for (const split of splits) {
+                const splitAmount = parseFloat(split.amount) || 0;
+                const splitVatRate = parseFloat(split.vatRate) || 0;
+                const splitDesc = split.description || sanitizedDescription;
+                
+                let splitNet = splitAmount;
+                let splitVat = 0;
+                
+                if (splitVatRate > 0) {
+                   if (amountIncludesVAT) {
+                      const base = splitAmount / (1 + (splitVatRate / 100));
+                      splitVat = splitAmount - base;
+                      splitNet = base;
+                   } else {
+                      splitVat = (splitAmount * splitVatRate) / 100;
+                      // If excl VAT, the entry amount is Net, and we add VAT on top.
+                      // But wait, if amount is excl VAT, the Bank Amount (Total) should be Net + VAT.
+                      // My Bank Entry above used `amountAbs` which comes from `form.amount`.
+                      // If `amountIncludesVAT` is false, `form.amount` is Net.
+                      // So Total Bank = Net + VAT.
+                      // The loop above adds Bank = `amountAbs`.
+                      // This implies `amountAbs` MUST be the Total Payment.
+                      // If user enters Net Amount (excl VAT), then `form.amount` is Net.
+                      // I need to adjust the Bank Amount if Excl VAT.
+                      
+                      // Actually, let's look at existing logic:
+                      // const amountNum = parseFloat(form.amount || "0");
+                      // if inclusive: base = amount / (1+r); vat = amount - base; net = base;
+                      // if exclusive: vat = amount * r; net = amount;
+                      // entries: Debit Net, Debit Vat, Credit (Net + Vat).
+                      
+                      // So `form.amount` is treated as Base if Exclusive.
+                      // And `form.amount` is treated as Total if Inclusive.
+                      
+                      // In Split Mode:
+                      // Each split has an amount.
+                      // If Inclusive: Split Amount is Total. Net = Split / (1+r). Vat = Split - Net.
+                      // If Exclusive: Split Amount is Base. Net = Split. Vat = Split * r.
+                      
+                      // Bank Amount = Sum of (Net + Vat) for all splits.
+                      // The `amountAbs` variable is just `form.amount`.
+                      // If Exclusive, `form.amount` is sum of Bases.
+                      // So Bank Amount should be calculated from splits, NOT `form.amount` directly if Exclusive.
+                   }
+                }
+                
+                if (!amountIncludesVAT && splitVatRate > 0) {
+                   splitVat = (splitAmount * splitVatRate) / 100;
+                   // Net is splitAmount
+                }
+                
+                // Find VAT Account
+                let splitVatAccount = null;
+                if (splitVat > 0) {
+                   splitVatAccount = accounts.find(acc => (acc.account_name || '').toLowerCase().includes('vat') || (acc.account_name || '').toLowerCase().includes('tax'));
+                }
+
+                if (isDebitSplit) {
+                    entries.push({
+                        transaction_id: editData.id,
+                        account_id: split.accountId,
+                        debit: splitNet,
+                        credit: 0,
+                        description: splitDesc,
+                        status: "approved"
+                    });
+                    if (splitVat > 0 && splitVatAccount) {
+                        entries.push({
+                            transaction_id: editData.id,
+                            account_id: splitVatAccount.id,
+                            debit: splitVat,
+                            credit: 0,
+                            description: "VAT Input",
+                            status: "approved"
+                        });
+                    }
+                } else {
+                    entries.push({
+                        transaction_id: editData.id,
+                        account_id: split.accountId,
+                        debit: 0,
+                        credit: splitNet,
+                        description: splitDesc,
+                        status: "approved"
+                    });
+                    if (splitVat > 0 && splitVatAccount) {
+                         entries.push({
+                            transaction_id: editData.id,
+                            account_id: splitVatAccount.id,
+                            debit: 0,
+                            credit: splitVat,
+                            description: "VAT Output",
+                            status: "approved"
+                        });
+                    }
+                }
+            }
+            
+            // Re-calculate Total Bank Amount from splits to be safe
+             const totalBankAmount = splits.reduce((sum, split) => {
+                const amt = parseFloat(split.amount) || 0;
+                const rate = parseFloat(split.vatRate) || 0;
+                if (amountIncludesVAT) return sum + amt;
+                return sum + amt + (amt * rate / 100);
+             }, 0);
+             
+             // Update the Bank Entry amount
+             if (entries.length > 0) {
+                 if (isDebitSplit) {
+                     entries[0].credit = totalBankAmount;
+                 } else {
+                     entries[0].debit = totalBankAmount;
+                 }
+             }
+             
+             // Update Transaction Total Amount in DB?
+             // The code earlier did: .update({ total_amount: amountNum ... })
+             // If Exclusive, amountNum is Base. But total_amount usually implies final money movement.
+             // I should probably update `transactions` table with `totalBankAmount` if it differs.
+             // But let's stick to entries for now.
+        } else if (vatAmount > 0 && vatAccount && vatAccount.id) {
           // VAT-inclusive transaction
           if (form.element === 'expense') {
             // Expense with VAT: Debit Expense (net), Debit VAT Input (vat), Credit Bank (total)
@@ -1341,6 +1568,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
         // Optional: mark transaction approved for clarity in UI
         await supabase.from("transactions").update({ status: "approved" }).eq("id", editData.id);
+        emitDashboardCacheInvalidation(effectiveCompanyId);
 
         // Optional: refresh AFS/trial balance cache (if available)
         try {
@@ -1823,6 +2051,118 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         } else if (gainLoss < 0 && lossAccId) {
           entries.push({ transaction_id: transaction.id, account_id: lossAccId, debit: Math.abs(gainLoss), credit: 0, description: 'Loss on Asset Disposal', status: 'pending' });
         }
+      } else if (splitMode) {
+             const isDebitSplit = ['expense', 'asset', 'product_purchase', 'liability', 'loan_repayment', 'loan_interest', 'depreciation'].includes(form.element);
+             
+             // 1. Add the Single Side (Bank/Source)
+             if (isDebitSplit) {
+                  // Credit Bank for Total Amount
+                  entries.push({
+                     transaction_id: transaction.id,
+                     account_id: form.creditAccount,
+                     debit: 0,
+                     credit: amount, // Use 'amount' which is parsed from form
+                     description: sanitizedDescription,
+                     status: "pending"
+                  });
+             } else {
+                  // Debit Bank for Total Amount (Income)
+                  entries.push({
+                     transaction_id: transaction.id,
+                     account_id: form.debitAccount,
+                     debit: amount,
+                     credit: 0,
+                     description: sanitizedDescription,
+                     status: "pending"
+                  });
+             }
+ 
+             // 2. Add Split Entries
+             for (const split of splits) {
+                 const splitAmount = parseFloat(split.amount) || 0;
+                 const splitVatRate = parseFloat(split.vatRate) || 0;
+                 const splitDesc = split.description || sanitizedDescription;
+                 
+                 let splitNet = splitAmount;
+                 let splitVat = 0;
+                 
+                 if (splitVatRate > 0) {
+                    if (amountIncludesVAT) {
+                       const base = splitAmount / (1 + (splitVatRate / 100));
+                       splitVat = splitAmount - base;
+                       splitNet = base;
+                    } else {
+                       splitVat = (splitAmount * splitVatRate) / 100;
+                    }
+                 }
+                 
+                 if (!amountIncludesVAT && splitVatRate > 0) {
+                    splitVat = (splitAmount * splitVatRate) / 100;
+                 }
+                 
+                 // Find VAT Account
+                 let splitVatAccount = null;
+                 if (splitVat > 0) {
+                    splitVatAccount = accounts.find(acc => (acc.account_name || '').toLowerCase().includes('vat') || (acc.account_name || '').toLowerCase().includes('tax'));
+                 }
+ 
+                 if (isDebitSplit) {
+                     entries.push({
+                         transaction_id: transaction.id,
+                         account_id: split.accountId,
+                         debit: splitNet,
+                         credit: 0,
+                         description: splitDesc,
+                         status: "pending"
+                     });
+                     if (splitVat > 0 && splitVatAccount) {
+                         entries.push({
+                             transaction_id: transaction.id,
+                             account_id: splitVatAccount.id,
+                             debit: splitVat,
+                             credit: 0,
+                             description: "VAT Input",
+                             status: "pending"
+                         });
+                     }
+                 } else {
+                     entries.push({
+                         transaction_id: transaction.id,
+                         account_id: split.accountId,
+                         debit: 0,
+                         credit: splitNet,
+                         description: splitDesc,
+                         status: "pending"
+                     });
+                     if (splitVat > 0 && splitVatAccount) {
+                          entries.push({
+                             transaction_id: transaction.id,
+                             account_id: splitVatAccount.id,
+                             debit: 0,
+                             credit: splitVat,
+                             description: "VAT Output",
+                             status: "pending"
+                         });
+                     }
+                 }
+             }
+             
+             // Re-calculate Total Bank Amount from splits
+              const totalBankAmount = splits.reduce((sum, split) => {
+                 const amt = parseFloat(split.amount) || 0;
+                 const rate = parseFloat(split.vatRate) || 0;
+                 if (amountIncludesVAT) return sum + amt;
+                 return sum + amt + (amt * rate / 100);
+              }, 0);
+              
+              if (entries.length > 0) {
+                  if (isDebitSplit) {
+                      entries[0].credit = totalBankAmount;
+                  } else {
+                      entries[0].debit = totalBankAmount;
+                  }
+              }
+
       } else if (vatAmount > 0 && vatAccount && vatAccount.id) {
         // General VAT-inclusive transaction (non-locked)
         if (form.element === 'expense') {
@@ -2097,6 +2437,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         if (transaction?.id) {
           await supabase.from("transactions").delete().eq("id", transaction.id);
         }
+        if (companyId) emitDashboardCacheInvalidation(companyId);
         return;
       }
       try {
@@ -2491,18 +2832,19 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   return (
     <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl overflow-visible">
-          <div className="max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-          <DialogTitle className="text-2xl flex items-center gap-2">
-            Smart Double-Entry Transaction
-            <Badge variant="outline">Automated Accounting Logic</Badge>
+      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden bg-card text-card-foreground">
+          <DialogHeader className="p-6 pb-4 border-b shrink-0 bg-card z-10">
+          <DialogTitle className="text-2xl font-bold flex items-center gap-2 bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent">
+            {editData ? 'Edit Transaction' : 'Smart Double-Entry Transaction'}
+            <Badge variant="outline" className="ml-2 font-normal text-foreground shadow-sm">Automated Accounting Logic</Badge>
           </DialogTitle>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground flex items-center gap-2">
+            <Sparkles className="w-3 h-3 text-primary animate-pulse" />
             Intelligent debit/credit posting with payment method detection
           </p>
         </DialogHeader>
-        
+
+        <div className="flex-1 overflow-y-auto p-6 pt-4 space-y-6 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
         {/* Alerts */}
         {chartMissing && (
           <Alert variant="destructive">
@@ -2535,12 +2877,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         
         <div className="space-y-6">
           {/* Step 1: Basic Info */}
-          <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
-            <h3 className="font-semibold text-lg flex items-center gap-2">
-              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">1</span>
+          <div className="space-y-6 p-6 border rounded-xl bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-4">
+            <h3 className="font-semibold text-lg flex items-center gap-3 text-foreground/90">
+              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary border border-primary/20 text-sm font-bold shadow-sm">1</span>
               Transaction Details
             </h3>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <Label htmlFor="date">Transaction Date *</Label>
                 <Input
@@ -2559,17 +2901,20 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     const bankAccountValue = val === "__none__" ? "" : val;
                     setForm({ ...form, bankAccountId: bankAccountValue });
                   }}>
-                    <SelectTrigger id="bankAccount">
+                    <SelectTrigger id="bankAccount" className={cn(
+                      "h-11 border-muted-foreground/20 transition-all hover:border-primary/50 focus:ring-2 focus:ring-primary/20 bg-muted/5",
+                      !form.bankAccountId && "text-muted-foreground"
+                    )}>
                       <SelectValue placeholder="Select bank account" />
                     </SelectTrigger>
                     <SelectContent position="popper" className="max-h-64 overflow-auto">
-                      <SelectItem value="__none__">None</SelectItem>
+                      <SelectItem value="__none__" className="cursor-pointer">None</SelectItem>
                       {(!bankAccounts || bankAccounts.length === 0) && form.bankAccountId && form.bankAccountId !== "__none__" && (
                         <SelectItem value={form.bankAccountId}>Selected Bank</SelectItem>
                       )}
                       {bankAccounts.map((bank) => (
-                        <SelectItem key={bank.id} value={bank.id}>
-                          {bank.bank_name} - {bank.account_number}
+                        <SelectItem key={bank.id} value={bank.id} className="cursor-pointer">
+                          <span className="font-medium">{bank.bank_name}</span> - <span className="text-muted-foreground">{bank.account_number}</span>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -2614,12 +2959,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             const asset = fixedAssets.find(a => a.id === val);
             if (asset?.description) setForm(prev => ({ ...prev, description: asset.description }));
           }}>
-            <SelectTrigger>
+            <SelectTrigger className="h-10 border-muted-foreground/20 bg-muted/5 focus:ring-primary/20 hover:border-primary/50 transition-all">
               <SelectValue placeholder="Choose asset" />
             </SelectTrigger>
             <SelectContent>
               {fixedAssets.map(a => (
-                <SelectItem key={a.id} value={a.id}>{a.description}</SelectItem>
+                <SelectItem key={a.id} value={a.id} className="cursor-pointer">{a.description}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -2631,12 +2976,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   <div>
                     <Label>Depreciation Method</Label>
                     <Select value={depreciationMethod} onValueChange={setDepreciationMethod}>
-                      <SelectTrigger>
+                      <SelectTrigger className="h-10 border-muted-foreground/20 bg-muted/5 focus:ring-primary/20 hover:border-primary/50 transition-all">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="straight_line">Straight Line</SelectItem>
-                        <SelectItem value="diminishing">Diminishing Balance</SelectItem>
+                        <SelectItem value="straight_line" className="cursor-pointer">Straight Line</SelectItem>
+                        <SelectItem value="diminishing" className="cursor-pointer">Diminishing Balance</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -2650,61 +2995,133 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           </div>
 
           {/* Step 2: Accounting Element & Payment Method */}
-          <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
-            <h3 className="font-semibold text-lg flex items-center gap-2">
-              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">2</span>
+          <div className="space-y-6 p-6 border rounded-xl bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-4 delay-100 group">
+            <h3 className="font-semibold text-lg flex items-center gap-3 text-foreground/90 group-hover:text-primary transition-colors">
+              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary border border-primary/20 text-sm font-bold shadow-sm group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-300">2</span>
               Accounting Classification
             </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="element">Accounting Element *</Label>
-                <Select value={form.element} onValueChange={(val) => setForm({ ...form, element: val, debitAccount: "", creditAccount: "" })} disabled={lockAccounts}>
-                  <SelectTrigger id="element">
-                    <SelectValue placeholder="Select element" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ACCOUNTING_ELEMENTS.map((elem) => (
-                      <SelectItem key={elem.value} value={elem.value}>
-                        {elem.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="element" className="text-sm font-medium flex items-center gap-2">
+                  <Briefcase className="w-4 h-4 text-primary/70" />
+                  Accounting Element <span className="text-red-500">*</span>
+                </Label>
+                <div className="relative">
+                  <Select value={form.element} onValueChange={(val) => setForm({ ...form, element: val, debitAccount: "", creditAccount: "" })} disabled={lockAccounts}>
+                    <SelectTrigger id="element" className="h-12 pl-4 border-muted-foreground/20 transition-all hover:border-primary/50 focus:ring-2 focus:ring-primary/20 bg-muted/5">
+                      <div className="flex items-center gap-2">
+                        <SelectValue placeholder="Select transaction type..." />
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      {ACCOUNTING_ELEMENTS.map((elem) => (
+                        <SelectItem key={elem.value} value={elem.value} className="cursor-pointer py-3 border-b border-border/50 last:border-0">
+                          <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-full ${elem.debitType === 'asset' || elem.debitType === 'expense' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'}`}>
+                              {elem.icon ? <elem.icon className="h-4 w-4" /> : <TrendingUp className="h-4 w-4" />}
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-medium">{elem.label}</span>
+                              <span className="text-xs text-muted-foreground">{elem.description}</span>
+                            </div>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedElement && (
+                  <div className="mt-3 p-3 text-xs bg-primary/5 text-primary/80 rounded-lg border border-primary/10 flex items-start gap-3 animate-in fade-in slide-in-from-top-1 shadow-sm">
+                    <div className="p-1 bg-primary/10 rounded-full mt-0.5">
+                      <Info className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <div className="leading-relaxed">
+                      <span className="font-semibold block mb-0.5 text-primary">{selectedElement.label}</span>
+                      {selectedElement.description}
+                    </div>
+                  </div>
+                )}
               </div>
+
               {showFixedAssetsUI && (form.element === 'asset' || (form.element === 'equity' && form.paymentMethod === 'asset')) && (
-                <div>
-                  <Label htmlFor="assetUsefulLife">Useful Life (years)</Label>
-                  <Input id="assetUsefulLife" type="number" min={1} value={assetUsefulLifeYears} onChange={(e) => setAssetUsefulLifeYears(e.target.value)} />
-                  <Label htmlFor="assetUsefulLifeStartDate" className="mt-2">Useful Life Start Date</Label>
-                  <Input id="assetUsefulLifeStartDate" type="date" value={assetUsefulLifeStartDate} onChange={(e) => setAssetUsefulLifeStartDate(e.target.value)} />
+                <div className="space-y-4 p-5 bg-gradient-to-br from-muted/30 to-muted/10 rounded-xl border border-border/50 animate-in fade-in zoom-in-95 shadow-sm">
+                  <h4 className="text-sm font-semibold flex items-center gap-2 text-foreground/80">
+                    <div className="p-1.5 bg-background rounded-md shadow-sm border">
+                      <Package className="w-4 h-4 text-primary" />
+                    </div>
+                    Asset Details
+                  </h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="assetUsefulLife" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Useful Life (years)</Label>
+                      <div className="relative">
+                        <Input 
+                          id="assetUsefulLife" 
+                          type="number" 
+                          min={1} 
+                          value={assetUsefulLifeYears} 
+                          onChange={(e) => setAssetUsefulLifeYears(e.target.value)}
+                          className="h-10 bg-background border-muted-foreground/20 focus:border-primary/50 transition-all" 
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="assetUsefulLifeStartDate" className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Start Date</Label>
+                      <Input 
+                        id="assetUsefulLifeStartDate" 
+                        type="date" 
+                        value={assetUsefulLifeStartDate} 
+                        onChange={(e) => setAssetUsefulLifeStartDate(e.target.value)}
+                        className="h-10 bg-background border-muted-foreground/20 focus:border-primary/50 transition-all" 
+                      />
+                    </div>
+                  </div>
                 </div>
               )}
+
               {showFixedAssetsUI && form.element === 'depreciation' && (
-                <div>
-                  <Label>Select Asset *</Label>
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <Package className="w-4 h-4 text-primary/70" />
+                    Select Asset <span className="text-red-500">*</span>
+                  </Label>
                   <Select value={selectedAssetId} onValueChange={(val) => setSelectedAssetId(val)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select asset" />
+                    <SelectTrigger className="h-12 bg-muted/5 border-muted-foreground/20 transition-all hover:border-primary/50 focus:ring-2 focus:ring-primary/20">
+                      <div className="flex items-center gap-2">
+                        <SelectValue placeholder="Select asset to depreciate" />
+                      </div>
                     </SelectTrigger>
                     <SelectContent>
                       {fixedAssets.map(a => (
-                        <SelectItem key={a.id} value={a.id}>{a.description}</SelectItem>
+                        <SelectItem key={a.id} value={a.id} className="cursor-pointer py-2">
+                          <span className="font-medium">{a.description}</span>
+                          <span className="ml-2 text-muted-foreground text-xs">(Cost: R{a.cost})</span>
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
               )}
 
-              <div>
-                <Label htmlFor="paymentMethod">Payment Method *</Label>
+              <div className="space-y-2">
+                <Label htmlFor="paymentMethod" className="text-sm font-medium flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-primary/70" />
+                  Payment Method <span className="text-red-500">*</span>
+                </Label>
                 <Select value={form.paymentMethod} onValueChange={(val) => setForm({ ...form, paymentMethod: val })} disabled={lockAccounts || form.element === 'depreciation'}>
-                  <SelectTrigger id="paymentMethod">
-                    <SelectValue />
+                  <SelectTrigger id="paymentMethod" className="h-12 border-muted-foreground/20 transition-all hover:border-primary/50 focus:ring-2 focus:ring-primary/20 bg-muted/5">
+                    <div className="flex items-center gap-2">
+                      <SelectValue />
+                    </div>
                   </SelectTrigger>
                   <SelectContent>
                     {PAYMENT_METHODS.map((method) => (
-                      <SelectItem key={method.value} value={method.value}>
-                        {method.label}
+                      <SelectItem key={method.value} value={method.value} className="cursor-pointer py-3">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-medium">{method.label}</span>
+                          <span className="text-xs text-muted-foreground">Affects: {method.accountKeyword}</span>
+                        </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -2713,73 +3130,178 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             </div>
 
             {(form.element === 'loan_repayment' || form.element === 'loan_interest') && (
-              <div className="mt-3 grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Select Loan *</Label>
-                  <Select value={form.loanId} onValueChange={(val) => setForm({ ...form, loanId: val })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a loan" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {loans.length === 0 ? (
-                        <div className="p-4 text-center text-sm text-gray-500">
-                          No active loans found. Please create loans first.
-                        </div>
-                      ) : (
-                        loans.map(loan => (
-                          <SelectItem key={loan.id} value={loan.id}>
-                            {loan.reference} - {loan.loan_type === 'long' ? 'Long-term' : 'Short-term'} - Outstanding: R {loan.outstanding_balance?.toFixed(2)}
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {form.element === 'loan_repayment' && (
-                  <div>
-                    <Label htmlFor="installmentNumber">Installment Number</Label>
-                    <Input
-                      id="installmentNumber"
-                      type="number"
-                      step="1"
-                      min="1"
-                      placeholder="e.g. 1"
-                      value={form.installmentNumber}
-                      onChange={(e) => setForm({ ...form, installmentNumber: e.target.value })}
-                    />
+              <div className="mt-6 p-5 bg-gradient-to-r from-orange-50/80 to-amber-50/80 dark:from-orange-950/20 dark:to-amber-950/20 border border-orange-200/50 dark:border-orange-800/30 rounded-xl animate-in fade-in slide-in-from-top-2 shadow-sm">
+                <h4 className="text-sm font-bold text-orange-800 dark:text-orange-200 mb-4 flex items-center gap-2">
+                  <div className="p-1.5 bg-orange-100 dark:bg-orange-900/40 rounded-md">
+                    <Landmark className="w-4 h-4 text-orange-600 dark:text-orange-400" />
                   </div>
-                )}
+                  Loan Details
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold text-orange-700 dark:text-orange-300 uppercase tracking-wide">Select Loan <span className="text-red-500">*</span></Label>
+                    <Select value={form.loanId} onValueChange={(val) => setForm({ ...form, loanId: val })}>
+                      <SelectTrigger className={cn(
+                        "h-10 bg-white/50 dark:bg-black/20 border-orange-200 dark:border-orange-800 focus:ring-orange-500/20 transition-all hover:border-orange-300 dark:hover:border-orange-700",
+                        !form.loanId && "text-muted-foreground"
+                      )}>
+                        <SelectValue placeholder="Select a loan" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {loans.length === 0 ? (
+                          <div className="p-4 text-center text-sm text-muted-foreground">
+                            No active loans found. Please create loans first.
+                          </div>
+                        ) : (
+                          loans.map(loan => (
+                            <SelectItem key={loan.id} value={loan.id} className="cursor-pointer">
+                              <span className="font-medium">{loan.reference}</span>
+                              <span className="ml-2 text-muted-foreground text-xs">
+                                ({loan.loan_type === 'long' ? 'Long-term' : 'Short-term'}) - Bal: R {loan.outstanding_balance?.toFixed(2)}
+                              </span>
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {form.element === 'loan_repayment' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="installmentNumber" className="text-xs font-semibold text-orange-700 dark:text-orange-300 uppercase tracking-wide">Installment No.</Label>
+                      <Input
+                        id="installmentNumber"
+                        type="number"
+                        step="1"
+                        min="1"
+                        placeholder="#"
+                        value={form.installmentNumber}
+                        onChange={(e) => setForm({ ...form, installmentNumber: e.target.value })}
+                        className="h-10 bg-white/50 dark:bg-black/20 border-orange-200 dark:border-orange-800 focus:ring-orange-500/20"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
-
-            {selectedElement && (
-              <Alert className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
-                <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                <AlertDescription className="text-blue-900 dark:text-blue-100">
-                  <strong>{selectedElement.label}:</strong> {selectedElement.description}
-                </AlertDescription>
-              </Alert>
             )}
           </div>
 
           {/* Step 3: Account Selection */}
           {form.element && (
-            <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
-              <div className="flex items-center justify-between">
-                <h3 className="font-semibold text-lg flex items-center gap-2">
-                  <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">3</span>
+            <div className="space-y-6 p-6 border rounded-xl bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-4 delay-200 group">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <h3 className="font-semibold text-lg flex items-center gap-3 text-foreground/90 group-hover:text-primary transition-colors">
+                  <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary border border-primary/20 text-sm font-bold shadow-sm group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-300">3</span>
                   Account Selection (Double-Entry)
                 </h3>
-                <div className="flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => setChartOpen(true)} disabled={disableAccountSelection}>Chart of Accounts</Button>
-                  <Button type="button" variant="outline" onClick={() => { setAccountSearchTarget("debit"); setAccountSearchOpen(true); }} disabled={disableAccountSelection}>Search Accounts (Ctrl+K)</Button>
+                <div className="flex gap-2 w-full sm:w-auto">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setChartOpen(true)} disabled={disableAccountSelection} className="flex-1 sm:flex-none hover:bg-primary/5 hover:text-primary transition-colors border-primary/20 h-9">
+                    <BookOpen className="w-3.5 h-3.5 mr-2" />
+                    Chart of Accounts
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => { setAccountSearchTarget("debit"); setAccountSearchOpen(true); }} disabled={disableAccountSelection} className="flex-1 sm:flex-none hover:bg-primary/5 hover:text-primary transition-colors border-primary/20 h-9">
+                    <Search className="w-3.5 h-3.5 mr-2" />
+                    Search (Ctrl+K)
+                  </Button>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="debitAccount">Debit Account *</Label>
+              
+              <div className="flex items-center justify-between mb-4">
+                 <div className="flex items-center space-x-2">
+                    <Switch id="split-mode" checked={splitMode} onCheckedChange={setSplitMode} />
+                    <Label htmlFor="split-mode">Split Transaction</Label>
+                 </div>
+                 {splitMode && (
+                    <Badge variant={Math.abs(remainingAmount) < 0.01 ? "outline" : "destructive"}>
+                      Remaining: R {remainingAmount.toFixed(2)}
+                    </Badge>
+                 )}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* Debit Side */}
+                {(splitMode && ['expense', 'asset', 'product_purchase', 'liability', 'loan_repayment', 'loan_interest', 'depreciation'].includes(form.element)) ? (
+                  <div className="col-span-2 space-y-3 p-4 rounded-lg bg-emerald-50/30 dark:bg-emerald-950/10 border border-emerald-100 dark:border-emerald-900/20">
+                     <Label className="text-sm font-bold flex items-center gap-2 text-emerald-800 dark:text-emerald-300">
+                        Split Debit Allocation
+                        <Badge variant="outline" className="ml-auto text-[10px] h-5 px-1.5 border-emerald-200 text-emerald-700 bg-white/50">DR</Badge>
+                     </Label>
+                     <div className="space-y-3">
+                       {splits.map((split, index) => (
+                         <div key={split.id} className="grid grid-cols-12 gap-2 items-start">
+                            <div className="col-span-6">
+                               <Select value={split.accountId} onValueChange={(val) => {
+                                  const newSplits = [...splits];
+                                  newSplits[index].accountId = val;
+                                  setSplits(newSplits);
+                               }}>
+                                 <SelectTrigger className="bg-white dark:bg-card"><SelectValue placeholder="Select Account" /></SelectTrigger>
+                                 <SelectContent className="max-h-60">
+                                   {debitSource.map(acc => (
+                                      <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                                   ))}
+                                 </SelectContent>
+                               </Select>
+                            </div>
+                            <div className="col-span-3">
+                               <Input 
+                                  type="number" 
+                                  placeholder="Amount" 
+                                  value={split.amount} 
+                                  onChange={(e) => {
+                                     const newSplits = [...splits];
+                                     newSplits[index].amount = e.target.value;
+                                     setSplits(newSplits);
+                                  }} 
+                                  className="bg-white dark:bg-card"
+                               />
+                            </div>
+                             <div className="col-span-2">
+                               <Select value={split.vatRate} onValueChange={(val) => {
+                                  const newSplits = [...splits];
+                                  newSplits[index].vatRate = val;
+                                  setSplits(newSplits);
+                               }}>
+                                 <SelectTrigger className="bg-white dark:bg-card"><SelectValue placeholder="VAT" /></SelectTrigger>
+                                 <SelectContent>
+                                    <SelectItem value="0">0%</SelectItem>
+                                    <SelectItem value="15">15%</SelectItem>
+                                 </SelectContent>
+                               </Select>
+                            </div>
+                            <div className="col-span-1 flex justify-end">
+                               <Button variant="ghost" size="icon" onClick={() => {
+                                  const newSplits = splits.filter(s => s.id !== split.id);
+                                  setSplits(newSplits);
+                               }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </div>
+                            <div className="col-span-12">
+                               <Input 
+                                  placeholder="Description (Optional)" 
+                                  value={split.description} 
+                                  onChange={(e) => {
+                                     const newSplits = [...splits];
+                                     newSplits[index].description = e.target.value;
+                                     setSplits(newSplits);
+                                  }} 
+                                  className="h-8 text-xs bg-white dark:bg-card"
+                               />
+                            </div>
+                         </div>
+                       ))}
+                       <Button variant="outline" size="sm" onClick={() => setSplits([...splits, { id: Math.random().toString(), accountId: "", amount: "", description: "", vatRate: "0" }])} className="w-full border-dashed">
+                         <Plus className="h-4 w-4 mr-2" /> Add Split Line
+                       </Button>
+                     </div>
+                  </div>
+                ) : (
+                <div className="space-y-3 p-4 rounded-lg bg-emerald-50/30 dark:bg-emerald-950/10 border border-emerald-100 dark:border-emerald-900/20">
+                  <Label htmlFor="debitAccount" className="text-sm font-bold flex items-center gap-2 text-emerald-800 dark:text-emerald-300">
+                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)] animate-pulse"></div>
+                    Debit Account <span className="text-red-500">*</span>
+                    <Badge variant="outline" className="ml-auto text-[10px] h-5 px-1.5 border-emerald-200 text-emerald-700 bg-white/50">DR</Badge>
+                  </Label>
                   <div className="flex items-center gap-2">
-                    <div className="flex-1">
+                    <div className="flex-1 relative">
                       <Select value={form.debitAccount} onValueChange={(val) => {
                         // Update atomically to avoid overwriting with stale state
                         setForm(prev => ({
@@ -2788,13 +3310,16 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           creditAccount: prev.creditAccount === val ? "" : prev.creditAccount,
                         }));
                       }} disabled={disableDebitSelection || debitSource.length === 0}>
-                        <SelectTrigger id="debitAccount">
+                        <SelectTrigger id="debitAccount" className={cn(
+                          "h-11 border-l-4 border-l-emerald-500 transition-all hover:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 bg-white dark:bg-card",
+                          !form.debitAccount && "text-muted-foreground"
+                        )}>
                           <SelectValue placeholder="Select debit account" />
                         </SelectTrigger>
                         <SelectContent position="popper" className="max-h-64 overflow-auto">
                           {debitSource.map((acc) => (
-                            <SelectItem key={acc.id} value={acc.id}>
-                              {acc.account_code} - {acc.account_name}
+                            <SelectItem key={acc.id} value={acc.id} className="cursor-pointer">
+                              <span className="font-medium text-emerald-700 dark:text-emerald-400">{acc.account_code}</span> - {acc.account_name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -2802,7 +3327,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     </div>
                     <Popover open={debitSearchOpen} onOpenChange={setDebitSearchOpen}>
                       <PopoverTrigger asChild>
-                        <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search debit accounts" disabled={disableAccountSelection}>
+                        <Button type="button" variant="outline" className="h-11 w-11 p-0 hover:border-emerald-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-all shadow-sm" aria-label="Search debit accounts" disabled={disableAccountSelection}>
                           <Search className="h-4 w-4" />
                         </Button>
                       </PopoverTrigger>
@@ -2814,10 +3339,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                                value={debitSearch}
                                onValueChange={(val: string) => setDebitSearch(val)}
                                autoFocus
+                               className="h-9"
                              />
                             <div className="flex items-center justify-between px-2 py-2 text-xs text-muted-foreground">
                               <span>Include all accounts</span>
-                              <Switch checked={debitIncludeAll} onCheckedChange={setDebitIncludeAll} />
+                              <Switch checked={debitIncludeAll} onCheckedChange={setDebitIncludeAll} className="scale-75 origin-right" />
                             </div>
                           </div>
                           <CommandList>
@@ -2835,8 +3361,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                                     setDebitSearchOpen(false);
                                     setDebitSearch("");
                                   }}
+                                  className="cursor-pointer"
                                 >
-                                  {acc.account_code} - {acc.account_name}
+                                  <span className="font-medium text-emerald-600 dark:text-emerald-400 mr-2">{acc.account_code}</span> {acc.account_name}
                                 </CommandItem>
                               ))}
                             </CommandGroup>
@@ -2844,26 +3371,107 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                         </Command>
                       </PopoverContent>
                   </Popover>
+                </div>
+                <div className="flex items-center justify-between text-xs text-emerald-700/70 dark:text-emerald-400/70 mt-1 px-1 font-medium">
+                  <span>Target: {selectedElement?.debitType}</span>
                   <Button
                     type="button"
                     variant="link"
                     size="sm"
-                    className="px-2"
+                    className="h-auto p-0 text-xs text-emerald-600 hover:text-emerald-700 underline decoration-dotted"
                     onClick={() => { setAccountSearchTarget("debit"); setAccountSearchOpen(true); }}
                     disabled={disableAccountSelection}
                   >
-                    Search
+                    Advanced Search
                   </Button>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Showing {selectedElement?.debitType} accounts
-                </p>
               </div>
+              )}
 
-                <div>
-                  <Label htmlFor="creditAccount">Credit Account *</Label>
+                {/* Credit Side */}
+                {(splitMode && ['income', 'equity', 'receipt', 'loan_received', 'asset_disposal'].includes(form.element)) ? (
+                  <div className="col-span-2 space-y-3 p-4 rounded-lg bg-blue-50/30 dark:bg-blue-950/10 border border-blue-100 dark:border-blue-900/20">
+                     <Label className="text-sm font-bold flex items-center gap-2 text-blue-800 dark:text-blue-300">
+                        Split Credit Allocation
+                        <Badge variant="outline" className="ml-auto text-[10px] h-5 px-1.5 border-blue-200 text-blue-700 bg-white/50">CR</Badge>
+                     </Label>
+                     <div className="space-y-3">
+                       {splits.map((split, index) => (
+                         <div key={split.id} className="grid grid-cols-12 gap-2 items-start">
+                            <div className="col-span-6">
+                               <Select value={split.accountId} onValueChange={(val) => {
+                                  const newSplits = [...splits];
+                                  newSplits[index].accountId = val;
+                                  setSplits(newSplits);
+                               }}>
+                                 <SelectTrigger className="bg-white dark:bg-card"><SelectValue placeholder="Select Account" /></SelectTrigger>
+                                 <SelectContent className="max-h-60">
+                                   {creditSource.map(acc => (
+                                      <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                                   ))}
+                                 </SelectContent>
+                               </Select>
+                            </div>
+                            <div className="col-span-3">
+                               <Input 
+                                  type="number" 
+                                  placeholder="Amount" 
+                                  value={split.amount} 
+                                  onChange={(e) => {
+                                     const newSplits = [...splits];
+                                     newSplits[index].amount = e.target.value;
+                                     setSplits(newSplits);
+                                  }} 
+                                  className="bg-white dark:bg-card"
+                               />
+                            </div>
+                             <div className="col-span-2">
+                               <Select value={split.vatRate} onValueChange={(val) => {
+                                  const newSplits = [...splits];
+                                  newSplits[index].vatRate = val;
+                                  setSplits(newSplits);
+                               }}>
+                                 <SelectTrigger className="bg-white dark:bg-card"><SelectValue placeholder="VAT" /></SelectTrigger>
+                                 <SelectContent>
+                                    <SelectItem value="0">0%</SelectItem>
+                                    <SelectItem value="15">15%</SelectItem>
+                                 </SelectContent>
+                               </Select>
+                            </div>
+                            <div className="col-span-1 flex justify-end">
+                               <Button variant="ghost" size="icon" onClick={() => {
+                                  const newSplits = splits.filter(s => s.id !== split.id);
+                                  setSplits(newSplits);
+                               }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                            </div>
+                            <div className="col-span-12">
+                               <Input 
+                                  placeholder="Description (Optional)" 
+                                  value={split.description} 
+                                  onChange={(e) => {
+                                     const newSplits = [...splits];
+                                     newSplits[index].description = e.target.value;
+                                     setSplits(newSplits);
+                                  }} 
+                                  className="h-8 text-xs bg-white dark:bg-card"
+                               />
+                            </div>
+                         </div>
+                       ))}
+                       <Button variant="outline" size="sm" onClick={() => setSplits([...splits, { id: Math.random().toString(), accountId: "", amount: "", description: "", vatRate: "0" }])} className="w-full border-dashed">
+                         <Plus className="h-4 w-4 mr-2" /> Add Split Line
+                       </Button>
+                     </div>
+                  </div>
+                ) : (
+                <div className="space-y-3 p-4 rounded-lg bg-blue-50/30 dark:bg-blue-950/10 border border-blue-100 dark:border-blue-900/20">
+                  <Label htmlFor="creditAccount" className="text-sm font-bold flex items-center gap-2 text-blue-800 dark:text-blue-300">
+                    <div className="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)] animate-pulse"></div>
+                    Credit Account <span className="text-red-500">*</span>
+                    <Badge variant="outline" className="ml-auto text-[10px] h-5 px-1.5 border-blue-200 text-blue-700 bg-white/50">CR</Badge>
+                  </Label>
                   <div className="flex items-center gap-2">
-                    <div className="flex-1">
+                    <div className="flex-1 relative">
                       <Select value={form.creditAccount} onValueChange={(val) => {
                         // Update atomically to avoid overwriting with stale state
                         setForm(prev => ({
@@ -2872,13 +3480,16 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           debitAccount: prev.debitAccount === val ? "" : prev.debitAccount,
                         }));
                       }} disabled={disableCreditSelection || creditSource.length === 0}>
-                        <SelectTrigger id="creditAccount">
+                        <SelectTrigger id="creditAccount" className={cn(
+                          "h-11 border-l-4 border-l-blue-500 transition-all hover:border-blue-500 focus:ring-2 focus:ring-blue-500/20 bg-white dark:bg-card",
+                          !form.creditAccount && "text-muted-foreground"
+                        )}>
                           <SelectValue placeholder="Select credit account" />
                         </SelectTrigger>
                         <SelectContent position="popper" className="max-h-64 overflow-auto">
                           {creditSource.map((acc) => (
-                            <SelectItem key={acc.id} value={acc.id}>
-                              {acc.account_code} - {acc.account_name}
+                            <SelectItem key={acc.id} value={acc.id} className="cursor-pointer">
+                              <span className="font-medium text-blue-700 dark:text-blue-400">{acc.account_code}</span> - {acc.account_name}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -2886,7 +3497,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     </div>
                     <Popover open={creditSearchOpen} onOpenChange={setCreditSearchOpen}>
                       <PopoverTrigger asChild>
-                        <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search credit accounts" disabled={disableAccountSelection}>
+                        <Button type="button" variant="outline" className="h-11 w-11 p-0 hover:border-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-all shadow-sm" aria-label="Search credit accounts" disabled={disableAccountSelection}>
                           <Search className="h-4 w-4" />
                         </Button>
                       </PopoverTrigger>
@@ -2898,10 +3509,11 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                                value={creditSearch}
                                onValueChange={(val: string) => setCreditSearch(val)}
                                autoFocus
+                               className="h-9"
                              />
                             <div className="flex items-center justify-between px-2 py-2 text-xs text-muted-foreground">
                               <span>Include all accounts</span>
-                              <Switch checked={creditIncludeAll} onCheckedChange={setCreditIncludeAll} />
+                              <Switch checked={creditIncludeAll} onCheckedChange={setCreditIncludeAll} className="scale-75 origin-right" />
                             </div>
                           </div>
                           <CommandList>
@@ -2919,8 +3531,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                                     setCreditSearchOpen(false);
                                     setCreditSearch("");
                                   }}
+                                  className="cursor-pointer"
                                 >
-                                  {acc.account_code} - {acc.account_name}
+                                  <span className="font-medium text-blue-600 dark:text-blue-400 mr-2">{acc.account_code}</span> {acc.account_name}
                                 </CommandItem>
                               ))}
                             </CommandGroup>
@@ -2928,70 +3541,111 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                         </Command>
                       </PopoverContent>
                       </Popover>
-                      <Button
-                        type="button"
-                        variant="link"
-                        size="sm"
-                        className="px-2"
-                        onClick={() => { setAccountSearchTarget("credit"); setAccountSearchOpen(true); }}
-                        disabled={disableAccountSelection}
-                      >
-                        Search
-                      </Button>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Showing {selectedElement?.creditTypes?.join('/')} accounts
-                  </p>
+                  <div className="flex items-center justify-between text-xs text-blue-700/70 dark:text-blue-400/70 mt-1 px-1 font-medium">
+                    <span>Target: {selectedElement?.creditTypes?.join('/')}</span>
+                    <Button
+                      type="button"
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-xs text-blue-600 hover:text-blue-700 underline decoration-dotted"
+                      onClick={() => { setAccountSearchTarget("credit"); setAccountSearchOpen(true); }}
+                      disabled={disableAccountSelection}
+                    >
+                      Advanced Search
+                    </Button>
+                  </div>
                   {lockAccounts && lockType === 'sent' && (
-                    <p className="text-xs mt-1 text-primary font-medium">Locked: 4000 - Sales Revenue</p>
+                    <p className="text-xs mt-1 text-primary font-medium flex items-center gap-1 bg-primary/5 p-1.5 rounded">
+                      <Lock className="w-3 h-3" /> Locked: 4000 - Sales Revenue
+                    </p>
                   )}
                 </div>
+              )}
               </div>
 
               {debitAccountName && creditAccountName && (
-              <Alert className="bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800">
-                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                <AlertDescription className="text-green-900 dark:text-green-100">
-                  <strong>Journal Entry:</strong> Dr {debitAccountName} / Cr {creditAccountName}
-                </AlertDescription>
-              </Alert>
+              <div className="mt-4 p-5 rounded-xl bg-gradient-to-r from-emerald-50/50 via-white to-blue-50/50 dark:from-emerald-950/20 dark:via-background dark:to-blue-950/20 border border-border/60 shadow-sm relative overflow-hidden">
+                <div className="absolute inset-0 bg-grid-black/[0.02] dark:bg-grid-white/[0.02]" />
+                <div className="relative flex flex-col sm:flex-row items-center gap-4 justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-background rounded-full border shadow-sm">
+                      <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <div>
+                      <h5 className="font-semibold text-foreground text-sm">Double Entry Preview</h5>
+                      <p className="text-xs text-muted-foreground">The transaction is balanced</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex-1 w-full sm:w-auto bg-background/80 backdrop-blur-sm rounded-lg border shadow-sm p-3 font-mono text-xs space-y-2 min-w-[280px]">
+                    <div className="flex justify-between items-center text-emerald-700 dark:text-emerald-400">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="h-4 text-[9px] px-1 border-emerald-200 bg-emerald-50">DR</Badge>
+                        <span className="truncate max-w-[150px]">{debitAccountName}</span>
+                      </div>
+                      <span className="font-bold">{form.amount ? `R ${parseFloat(form.amount).toFixed(2)}` : '---'}</span>
+                    </div>
+                    <div className="h-px bg-border/50 w-full" />
+                    <div className="flex justify-between items-center text-blue-700 dark:text-blue-400">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="h-4 text-[9px] px-1 border-blue-200 bg-blue-50">CR</Badge>
+                        <span className="truncate max-w-[150px]">{creditAccountName}</span>
+                      </div>
+                      <span className="font-bold">{form.amount ? `R ${parseFloat(form.amount).toFixed(2)}` : '---'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             )}
             {lockAccounts && lockType === 'sent' && cogsTotal > 0 && cogsAccount && inventoryAccount && (
-              <Alert className="bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800">
-                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                <AlertDescription className="text-green-900 dark:text-green-100">
-                  <strong>Additional Entry:</strong> Dr {cogsAccount.account_name} / Cr {inventoryAccount.account_name} • R {cogsTotal.toFixed(2)}
+              <Alert className="bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/30">
+                <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                <AlertDescription className="text-amber-900 dark:text-amber-100 text-xs">
+                  <strong>Additional Entry (Perpetual Inventory):</strong> Dr {cogsAccount.account_name} / Cr {inventoryAccount.account_name} • R {cogsTotal.toFixed(2)}
                 </AlertDescription>
               </Alert>
             )}
           </div>
           )}
 
-          {/* Step 4: Amount & VAT / Interest (for loans) */}
-          <div className="space-y-4 p-4 border rounded-lg bg-muted/30">
-            <h3 className="font-semibold text-lg flex items-center gap-2">
-              <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-sm">4</span>
-              Amount & Tax
+          {/* Step 4: Amount & Tax */}
+          <div className="space-y-6 p-6 border rounded-xl bg-card text-card-foreground shadow-sm hover:shadow-md transition-all duration-300 animate-in fade-in slide-in-from-bottom-4 delay-300 group">
+            <h3 className="font-semibold text-lg flex items-center gap-3 text-foreground/90 group-hover:text-primary transition-colors">
+              <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary border border-primary/20 text-sm font-bold shadow-sm group-hover:bg-primary group-hover:text-primary-foreground transition-all duration-300">4</span>
+              Values & Taxation
             </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-              <Label htmlFor="amount">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' || form.element === 'asset_disposal' ? '' : (amountIncludesVAT ? '(incl. VAT)' : '(excl. VAT)')} *</Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.amount}
-                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                  required
-                />
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <Label htmlFor="amount" className="text-sm font-medium flex items-center gap-2">
+                  <DollarSign className="w-4 h-4 text-primary/70" />
+                  Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' || form.element === 'asset_disposal' ? '' : (amountIncludesVAT ? '(incl. VAT)' : '(excl. VAT)')} <span className="text-red-500">*</span>
+                </Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">R</span>
+                  <Input
+                    id="amount"
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={form.amount}
+                    onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                    required
+                    className="pl-8 text-lg font-semibold h-11 bg-muted/5 border-muted-foreground/20 focus:border-primary/50 transition-all focus:ring-2 focus:ring-primary/20"
+                  />
+                </div>
               </div>
+
               {form.element?.startsWith('loan_') ? (
                 <div className="grid grid-cols-2 gap-4">
                   {form.element === 'loan_received' && (
                     <>
-                      <div>
-                        <Label htmlFor="interestRate">Interest Rate (%)</Label>
+                      <div className="space-y-2">
+                        <Label htmlFor="interestRate" className="text-sm font-medium flex items-center gap-2">
+                          <Percent className="w-4 h-4 text-primary/70" />
+                          Interest Rate (%)
+                        </Label>
                         <Input
                           id="interestRate"
                           type="number"
@@ -2999,10 +3653,14 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           placeholder="e.g. 10"
                           value={form.interestRate}
                           onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
+                          className="h-11 bg-muted/5"
                         />
                       </div>
-                      <div>
-                        <Label htmlFor="loanTerm">Term (months)</Label>
+                      <div className="space-y-2">
+                        <Label htmlFor="loanTerm" className="text-sm font-medium flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-primary/70" />
+                          Term (months)
+                        </Label>
                         <Input
                           id="loanTerm"
                           type="number"
@@ -3010,17 +3668,18 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                           placeholder="e.g. 12"
                           value={form.loanTerm}
                           onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
+                          className="h-11 bg-muted/5"
                         />
                       </div>
-                      <div>
+                      <div className="col-span-2 space-y-2">
                         <Label htmlFor="loanTermType">Loan Term Type</Label>
                         <Select value={form.loanTermType} onValueChange={(val) => setForm({ ...form, loanTermType: val })}>
-                          <SelectTrigger id="loanTermType">
+                          <SelectTrigger id="loanTermType" className="h-11 bg-muted/5 border-muted-foreground/20 focus:ring-primary/20 hover:border-primary/50 transition-all">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="short">Short-term</SelectItem>
-                            <SelectItem value="long">Long-term</SelectItem>
+                            <SelectItem value="short" className="cursor-pointer">Short-term</SelectItem>
+                            <SelectItem value="long" className="cursor-pointer">Long-term</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -3029,30 +3688,43 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 </div>
               ) : (
                 form.element !== 'depreciation' && form.element !== 'asset_disposal' && (
-                  <div>
-                    <Label htmlFor="vatRate">VAT Rate (%)</Label>
+                  <div className="space-y-2">
+                    <Label htmlFor="vatRate" className="text-sm font-medium flex items-center gap-2">
+                      <Percent className="w-4 h-4 text-primary/70" />
+                      VAT Rate (%)
+                    </Label>
                     <Select value={form.vatRate} onValueChange={(val) => setForm({ ...form, vatRate: val })}>
-                      <SelectTrigger id="vatRate">
+                      <SelectTrigger id="vatRate" className="h-11 bg-muted/5 transition-all hover:border-primary/50 focus:ring-2 focus:ring-primary/20 border-muted-foreground/20">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="0">0% (No VAT)</SelectItem>
-                        <SelectItem value="15">15% (Standard)</SelectItem>
+                        <SelectItem value="0" className="cursor-pointer">0% (No VAT)</SelectItem>
+                        <SelectItem value="15" className="cursor-pointer">15% (Standard)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 )
               )}
+              
               {(!form.element?.startsWith('loan_') && form.element !== 'depreciation' && form.element !== 'asset_disposal') && (
-                <div className="flex items-center gap-3">
-                  <Label htmlFor="vatInclusive">VAT Inclusive?</Label>
+                <div className="flex items-center gap-3 p-4 rounded-lg border bg-muted/30 md:col-span-2 transition-colors hover:bg-muted/50">
                   <Switch id="vatInclusive" checked={amountIncludesVAT} onCheckedChange={(v: boolean) => setAmountIncludesVAT(!!v)} />
-                  <span className="text-xs text-muted-foreground">Yes = amount includes VAT • No = amount excludes VAT</span>
+                  <div className="space-y-0.5 cursor-pointer" onClick={() => setAmountIncludesVAT(!amountIncludesVAT)}>
+                    <Label htmlFor="vatInclusive" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                      Amount includes VAT?
+                      {amountIncludesVAT && <Badge variant="secondary" className="text-[10px] h-4 px-1">Active</Badge>}
+                    </Label>
+                    <p className="text-xs text-muted-foreground">Toggle on if the entered amount already includes VAT.</p>
+                  </div>
                 </div>
               )}
+              
               {form.element === 'asset' && (isLoanCreditSelected || form.assetFinancedByLoan) && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
+                <div className="grid grid-cols-2 gap-4 md:col-span-2 p-5 bg-orange-50/50 dark:bg-orange-950/10 rounded-lg border border-orange-100 dark:border-orange-900/30 border-dashed">
+                  <div className="col-span-2 text-sm font-semibold text-orange-800 dark:text-orange-400 flex items-center gap-2 mb-1">
+                    <Info className="w-4 h-4" /> Loan Details for Asset Financing
+                  </div>
+                  <div className="space-y-2">
                     <Label htmlFor="interestRate">Interest Rate (%)</Label>
                     <Input
                       id="interestRate"
@@ -3061,9 +3733,10 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                       placeholder="e.g. 10"
                       value={form.interestRate}
                       onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
+                      className="h-9 bg-background border-orange-200 dark:border-orange-800 focus:border-orange-500 focus:ring-orange-500/20"
                     />
                   </div>
-                  <div>
+                  <div className="space-y-2">
                     <Label htmlFor="loanTerm">Term (months)</Label>
                     <Input
                       id="loanTerm"
@@ -3072,17 +3745,18 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                       placeholder="e.g. 12"
                       value={form.loanTerm}
                       onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
+                      className="h-9 bg-background border-orange-200 dark:border-orange-800 focus:border-orange-500 focus:ring-orange-500/20"
                     />
                   </div>
-                  <div>
+                  <div className="col-span-2 space-y-2">
                     <Label htmlFor="loanTermType">Loan Term Type</Label>
                     <Select value={form.loanTermType} onValueChange={(val) => setForm({ ...form, loanTermType: val })}>
-                      <SelectTrigger id="loanTermType">
+                      <SelectTrigger id="loanTermType" className="h-9 bg-background border-orange-200 dark:border-orange-800 focus:ring-orange-500/20">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="short">Short-term</SelectItem>
-                        <SelectItem value="long">Long-term</SelectItem>
+                        <SelectItem value="short" className="cursor-pointer">Short-term</SelectItem>
+                        <SelectItem value="long" className="cursor-pointer">Long-term</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -3092,43 +3766,65 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
 
             {/* Summary */}
             {form.amount && parseFloat(form.amount) > 0 && (
-              <div className="p-4 bg-background rounded-lg border space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' || form.element === 'asset_disposal' ? '' : '(incl. VAT)'}:</span>
-                  <span className="font-mono">R {parseFloat(form.amount).toFixed(2)}</span>
+              <div className="mt-6 p-6 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900/40 dark:to-slate-900/20 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm relative overflow-hidden group/summary">
+                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover/summary:opacity-10 transition-opacity">
+                  <Calculator className="w-24 h-24" />
                 </div>
-                {!form.element?.startsWith('loan_') && form.element !== 'depreciation' && form.element !== 'asset_disposal' && (
-                  <>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">VAT ({form.vatRate}%):</span>
-                      <span className="font-mono">
-                        R {(amountIncludesVAT ? (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate))) : (parseFloat(form.amount) * parseFloat(form.vatRate) / 100)).toFixed(2)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-base font-semibold border-t pt-2">
-                      <span>Net Amount:</span>
-                      <span className="font-mono">
-                        R {(amountIncludesVAT ? (parseFloat(form.amount) - (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate)))) : parseFloat(form.amount)).toFixed(2)}
-                      </span>
-                    </div>
-                  </>
-                )}
-
-                {form.debitAccount && form.creditAccount && (
-                  <div className="mt-3 pt-3 border-t">
-                    <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span className="font-medium">Double-entry validated: Debit = Credit</span>
-                    </div>
+                
+                <h4 className="font-semibold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
+                  <Calculator className="w-4 h-4" /> Transaction Summary
+                </h4>
+                
+                <div className="space-y-3 relative z-10">
+                  <div className="flex justify-between text-sm items-center">
+                    <span className="text-muted-foreground font-medium">Total Amount {form.element?.startsWith('loan_') || form.element === 'depreciation' || form.element === 'asset_disposal' ? '' : '(incl. VAT)'}</span>
+                    <span className="font-mono text-lg font-bold">R {parseFloat(form.amount).toFixed(2)}</span>
                   </div>
-                )}
+                  
+                  {!form.element?.startsWith('loan_') && form.element !== 'depreciation' && form.element !== 'asset_disposal' && (
+                    <>
+                      <div className="flex justify-between text-sm items-center">
+                        <span className="text-muted-foreground flex items-center gap-1">
+                          VAT Amount <Badge variant="outline" className="text-[10px] h-4 px-1">{form.vatRate}%</Badge>
+                        </span>
+                        <span className="font-mono text-amber-600 dark:text-amber-400 font-medium">
+                          + R {(amountIncludesVAT ? (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate))) : (parseFloat(form.amount) * parseFloat(form.vatRate) / 100)).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="h-px bg-slate-300/50 dark:bg-slate-700/50 my-2" />
+                      <div className="flex justify-between text-base font-bold items-center">
+                        <span className="text-slate-800 dark:text-slate-200">Net Amount (excl. VAT)</span>
+                        <span className="font-mono text-primary text-lg">
+                          R {(amountIncludesVAT ? (parseFloat(form.amount) - (parseFloat(form.amount) * parseFloat(form.vatRate) / (100 + parseFloat(form.vatRate)))) : parseFloat(form.amount)).toFixed(2)}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {form.debitAccount && form.creditAccount && (
+                    <div className="mt-4 pt-3 border-t border-slate-200 dark:border-slate-700/50">
+                      <div className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-50/80 dark:bg-emerald-950/30 p-2.5 rounded-lg justify-center border border-emerald-100 dark:border-emerald-900/30">
+                        <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                        <span className="font-semibold">Balanced: Debit = Credit</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
         </div>
 
-        <DialogFooter className="gap-2">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+        </div>
+
+        <DialogFooter className="p-6 border-t bg-muted/10 shrink-0 flex-col-reverse sm:flex-row gap-3 items-center sm:justify-end backdrop-blur-sm">
+          <Button 
+            type="button" 
+            variant="outline" 
+            onClick={() => onOpenChange(false)} 
+            disabled={loading} 
+            className="w-full sm:w-auto hover:bg-destructive/5 hover:text-destructive hover:border-destructive/30 transition-all duration-200 h-11"
+          >
             Cancel
           </Button>
           <Button 
@@ -3137,13 +3833,18 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               loading || chartMissing || !form.element || !form.debitAccount || !form.creditAccount ||
               (showFixedAssetsUI && ((form.element === 'asset') || (form.element === 'equity' && form.paymentMethod === 'asset')) && (!assetUsefulLifeYears || !assetUsefulLifeStartDate))
             }
-            className="bg-gradient-primary hover:opacity-90"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/25 w-full sm:w-auto min-w-[180px] h-11 transition-all duration-300 transform hover:-translate-y-0.5 hover:shadow-xl active:translate-y-0 active:scale-[0.98] group"
           >
-            {loading ? (<><Loader2 className="h-4 w-4 animate-spin" /> Posting Transaction...</>) : "Post Transaction"}
+            {loading ? (
+              <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Processing...</>
+            ) : (
+              <><Save className="h-4 w-4 mr-2 group-hover:animate-bounce" /> Post Transaction <ArrowRight className="w-4 h-4 ml-2 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all" /></>
+            )}
           </Button>
         </DialogFooter>
+
         {loading && showFixedAssetsUI && (
-          <div className="fixed inset-0 z-[100] bg-background/95 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
+          <div className="absolute inset-0 z-[100] bg-background/95 backdrop-blur-sm flex items-center justify-center transition-all duration-500">
             <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full animate-in fade-in zoom-in-95 duration-300">
               <LoadingSpinner size="lg" className="scale-125" />
               <div className="w-full space-y-4">
@@ -3160,7 +3861,6 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
             </div>
           </div>
         )}
-          </div>
       </DialogContent>
     </Dialog>
 
@@ -3179,29 +3879,63 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       setAccountSearchOpen(o);
       if (!o) { setGlobalSearch(""); }
     }}>
-      <div className="flex items-center justify-between px-4 pt-4">
-        <div className="text-sm text-muted-foreground">Assign to:</div>
-        <div className="flex gap-1">
-          <Button variant={accountSearchTarget === "debit" ? "default" : "outline"} size="sm" onClick={() => setAccountSearchTarget("debit")}>Debit</Button>
-          <Button variant={accountSearchTarget === "credit" ? "default" : "outline"} size="sm" onClick={() => setAccountSearchTarget("credit")}>Credit</Button>
-        </div>
-      </div>
-      <Command>
-        <div className="p-2">
-          <CommandInput
-            placeholder="Search accounts by code or name..."
-            value={globalSearch}
-            onValueChange={(val: string) => setGlobalSearch(val)}
-            autoFocus
-          />
-          <div className="flex items-center justify-between px-2 py-2 text-xs text-muted-foreground">
-            <span>Include all accounts</span>
-            <Switch checked={globalIncludeAll} onCheckedChange={setGlobalIncludeAll} />
+      <div className="flex flex-col gap-2 p-3 bg-muted/20 border-b">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Search className="w-3.5 h-3.5" /> Advanced Account Search
+          </span>
+          <div className="flex items-center gap-2 bg-background p-1 rounded-lg border shadow-sm">
+            <Button 
+              variant={accountSearchTarget === "debit" ? "secondary" : "ghost"} 
+              size="sm" 
+              onClick={() => setAccountSearchTarget("debit")}
+              className={cn("h-7 text-xs px-3", accountSearchTarget === "debit" && "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-bold")}
+            >
+              Debit
+            </Button>
+            <Button 
+              variant={accountSearchTarget === "credit" ? "secondary" : "ghost"} 
+              size="sm" 
+              onClick={() => setAccountSearchTarget("credit")}
+              className={cn("h-7 text-xs px-3", accountSearchTarget === "credit" && "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 font-bold")}
+            >
+              Credit
+            </Button>
           </div>
         </div>
-        <CommandList>
-          <CommandEmpty>No accounts found.</CommandEmpty>
-          <CommandGroup heading={accountSearchTarget === "debit" ? "Debit Accounts" : "Credit Accounts"}>
+      </div>
+      
+      <Command className="rounded-none border-0">
+        <div className="px-3 pb-2 pt-2">
+          <div className="relative">
+            <CommandInput
+              placeholder="Search by code or name..."
+              value={globalSearch}
+              onValueChange={(val: string) => setGlobalSearch(val)}
+              autoFocus
+              className="h-10 bg-muted/30 border rounded-md px-3 text-sm focus-visible:ring-1 focus-visible:ring-primary/20"
+            />
+          </div>
+          <div className="flex items-center justify-between px-1 py-2 mt-1">
+             <Label htmlFor="global-include-all" className="text-xs text-muted-foreground flex items-center gap-2 cursor-pointer">
+               <Globe className="w-3 h-3" /> Search entire chart of accounts
+             </Label>
+             <Switch 
+               id="global-include-all" 
+               checked={globalIncludeAll} 
+               onCheckedChange={setGlobalIncludeAll} 
+               className="scale-75 origin-right"
+             />
+          </div>
+        </div>
+        
+        <div className="h-px bg-border/50 mx-3" />
+        
+        <CommandList className="max-h-[350px] overflow-y-auto p-2">
+          <CommandEmpty className="py-6 text-center text-sm text-muted-foreground">
+            No accounts found matching your search.
+          </CommandEmpty>
+          <CommandGroup heading={accountSearchTarget === "debit" ? "Select Debit Account" : "Select Credit Account"} className="text-xs font-medium text-muted-foreground">
             {(() => {
               const source = accountSearchTarget === "debit"
                 ? (globalIncludeAll ? accounts : debitSource)
@@ -3222,8 +3956,26 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                     }));
                     setAccountSearchOpen(false);
                   }}
+                  className="cursor-pointer py-2.5 px-3 rounded-md mb-1 aria-selected:bg-primary/5 aria-selected:text-primary transition-colors"
                 >
-                  {acc.account_code} - {acc.account_name}
+                  <div className="flex items-center gap-3 w-full">
+                    <div className={cn(
+                      "flex items-center justify-center w-8 h-8 rounded-md text-xs font-bold border shadow-sm shrink-0",
+                      accountSearchTarget === "debit" 
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-900/30" 
+                        : "bg-blue-50 text-blue-700 border-blue-100 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-900/30"
+                    )}>
+                      {acc.account_code.slice(0, 2)}
+                    </div>
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className="font-medium truncate text-foreground/90">{acc.account_name}</span>
+                      <span className="text-xs text-muted-foreground font-mono">{acc.account_code}</span>
+                    </div>
+                    {((accountSearchTarget === "debit" && form.debitAccount === acc.id) || 
+                      (accountSearchTarget === "credit" && form.creditAccount === acc.id)) && (
+                      <Check className="w-4 h-4 text-primary shrink-0" />
+                    )}
+                  </div>
                 </CommandItem>
               ));
             })()}
@@ -3232,31 +3984,77 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
       </Command>
     </CommandDialog>
     <Dialog open={isSuccess} onOpenChange={setIsSuccess}>
-      <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
-        <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
-          <Check className="h-12 w-12 text-green-600" />
+      <DialogContent className="sm:max-w-[450px] p-0 overflow-hidden border-0 shadow-2xl">
+        <div className="absolute inset-0 bg-gradient-to-b from-green-50 to-white dark:from-green-950/20 dark:to-background z-0" />
+        
+        <div className="relative z-10 flex flex-col items-center justify-center p-8 pt-10 text-center">
+          <div className="relative mb-6">
+            <div className="absolute inset-0 rounded-full bg-green-200/50 animate-ping duration-[2000ms]" />
+            <div className="h-20 w-20 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center border-4 border-white dark:border-background shadow-lg relative z-10 animate-in zoom-in-50 duration-500">
+              <Check className="h-10 w-10 text-green-600 dark:text-green-400" strokeWidth={3} />
+            </div>
+          </div>
+          
+          <DialogHeader className="mb-2">
+            <DialogTitle className="text-2xl font-bold text-green-700 dark:text-green-400 tracking-tight">Success!</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-2 mb-8 max-w-[300px]">
+            <p className="text-lg font-medium text-foreground">{successMessage}</p>
+            <p className="text-sm text-muted-foreground">The transaction has been successfully posted to the ledger.</p>
+          </div>
+          
+          <div className="grid grid-cols-2 gap-3 w-full">
+            <Button variant="outline" onClick={() => setIsSuccess(false)} className="w-full hover:bg-muted border-muted-foreground/20">
+              Close
+            </Button>
+            <Button 
+              onClick={() => { setIsSuccess(false); setForm(initialFormState); }}
+              className="w-full bg-green-600 hover:bg-green-700 text-white shadow-lg shadow-green-200 dark:shadow-green-900/20"
+            >
+              <Plus className="w-4 h-4 mr-2" /> New Transaction
+            </Button>
+          </div>
         </div>
-        <DialogHeader>
-          <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
-        </DialogHeader>
-        <div className="text-center space-y-2">
-          <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
-          <p className="text-muted-foreground">The operation has been completed successfully.</p>
-        </div>
+        
+        <div className="h-1.5 w-full bg-gradient-to-r from-green-300 via-green-500 to-green-300" />
       </DialogContent>
     </Dialog>
+
     <Dialog open={isError} onOpenChange={setIsError}>
-      <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
-        <div className="h-24 w-24 rounded-full bg-red-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
-          <XCircle className="h-12 w-12 text-red-600" />
+      <DialogContent className="sm:max-w-[450px] p-0 overflow-hidden border-0 shadow-2xl">
+        <div className="absolute inset-0 bg-gradient-to-b from-red-50 to-white dark:from-red-950/20 dark:to-background z-0" />
+        
+        <div className="relative z-10 flex flex-col items-center justify-center p-8 pt-10 text-center">
+          <div className="relative mb-6">
+            <div className="h-20 w-20 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center border-4 border-white dark:border-background shadow-lg relative z-10 animate-in zoom-in-50 duration-500 swing">
+              <XCircle className="h-10 w-10 text-red-600 dark:text-red-400" strokeWidth={2} />
+            </div>
+          </div>
+          
+          <DialogHeader className="mb-2">
+            <DialogTitle className="text-2xl font-bold text-red-700 dark:text-red-400 tracking-tight">Transaction Failed</DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-2 mb-8 max-w-[320px]">
+            <p className="text-base font-medium text-foreground bg-red-50 dark:bg-red-900/10 p-3 rounded-lg border border-red-100 dark:border-red-900/20">
+              {errorMessage}
+            </p>
+            <p className="text-sm text-muted-foreground">Please review your entries and try again.</p>
+          </div>
+          
+          <div className="w-full">
+            <Button 
+              variant="destructive" 
+              onClick={() => setIsError(false)} 
+              className="w-full shadow-lg shadow-red-200 dark:shadow-red-900/20"
+            >
+              Dismiss
+            </Button>
+          </div>
         </div>
-        <DialogHeader>
-          <DialogTitle className="text-center text-2xl text-red-700">Failed</DialogTitle>
-        </DialogHeader>
-        <div className="text-center space-y-2">
-          <p className="text-xl font-semibold text-gray-900">{errorMessage}</p>
-          <p className="text-muted-foreground">Please review and try again.</p>
-        </div>
+        
+        <div className="h-1.5 w-full bg-gradient-to-r from-red-300 via-red-500 to-red-300" />
       </DialogContent>
     </Dialog>
     </>

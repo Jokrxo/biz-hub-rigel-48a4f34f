@@ -25,6 +25,14 @@ class PWAManager {
   }
 
   private initializeServiceWorker(): void {
+    if (import.meta.env.DEV) {
+      try {
+        navigator.serviceWorker?.getRegistrations?.().then((regs) => {
+          regs.forEach((r) => r.unregister());
+        });
+      } catch {}
+      return;
+    }
     if ('serviceWorker' in navigator) {
       const updateSW = registerSW({
         onRegistered(reg) {

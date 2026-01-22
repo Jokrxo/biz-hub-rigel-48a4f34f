@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 5173",
+    "dev": "vite",
     "dev:5109": "vite --port 5109",
     "dev:5187": "vite --port 5187",
     "dev:5209": "vite --port 5209",
@@ -51,6 +51,8 @@
     "cmdk": "^1.1.1",
     "core-js": "^3.46.0",
     "date-fns": "^3.6.0",
+    "dexie": "^4.2.1",
+    "dexie-react-hooks": "^4.2.0",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
     "jspdf": "^3.0.3",
@@ -70,7 +72,8 @@
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.9",
     "xlsx": "^0.18.5",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "zustand": "^5.0.10"
   },
   "devDependencies": {
     "@eslint/js": "^9.32.0",

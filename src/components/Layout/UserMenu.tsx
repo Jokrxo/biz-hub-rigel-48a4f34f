@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { Settings, CreditCard, LogOut, User, Building2 } from "lucide-react";
+import { RateUsDialog } from "@/components/Support/RateUsDialog";
 
 export const UserMenu = () => {
   const { user, logout } = useAuth();
@@ -24,6 +25,8 @@ export const UserMenu = () => {
   const [openAccount, setOpenAccount] = useState(false);
   const [accountInfo, setAccountInfo] = useState<{ name?: string; email?: string; plan?: string; status?: string; expiry?: string; license_key?: string; users_count?: number }>({});
   const { isAdmin, isAccountant, isManager } = useRoles();
+  const [rateUsOpen, setRateUsOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const loadCompanyInfo = useCallback(async () => {
     try {
@@ -55,6 +58,76 @@ export const UserMenu = () => {
   useEffect(() => { loadCompanyInfo(); }, [loadCompanyInfo]);
 
   const initials = (accountInfo.name || "U").charAt(0).toUpperCase();
+
+  const rateUsKey = "rigel_rate_us_v1_done";
+
+  const handleLogoutClick = async () => {
+    if (loggingOut) return;
+    if (!user?.id) {
+      logout();
+      return;
+    }
+
+    try {
+      const localDone = typeof localStorage !== "undefined" ? localStorage.getItem(rateUsKey) === "1" : false;
+      if (localDone) {
+        logout();
+        return;
+      }
+    } catch {}
+
+    setLoggingOut(true);
+
+    try {
+      const { data } = await (supabase as any)
+        .from("app_rating_responses")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (data?.user_id) {
+        try {
+          localStorage.setItem(rateUsKey, "1");
+        } catch {}
+        logout();
+        return;
+      }
+    } catch {
+      try {
+        const localDone = typeof localStorage !== "undefined" ? localStorage.getItem(rateUsKey) === "1" : false;
+        if (localDone) {
+          logout();
+          return;
+        }
+      } catch {}
+    }
+
+    setRateUsOpen(true);
+    setLoggingOut(false);
+  };
+
+  const persistRateUsResponse = async (payload: { rating: number | null; comment: string | null }) => {
+    if (!user?.id) return;
+    try {
+      await (supabase as any)
+        .from("app_rating_responses")
+        .upsert(
+          {
+            user_id: user.id,
+            rating: payload.rating,
+            comment: payload.comment,
+          },
+          { onConflict: "user_id" },
+        );
+    } catch {}
+  };
+
+  const finishLogout = async () => {
+    try {
+      localStorage.setItem(rateUsKey, "1");
+    } catch {}
+    logout();
+  };
 
   return (
     <DropdownMenu>
@@ -96,11 +169,27 @@ export const UserMenu = () => {
           <span>Account & Billing</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={logout} className="text-destructive cursor-pointer focus:text-destructive py-2.5 bg-destructive/5 focus:bg-destructive/10 mt-1">
+        <DropdownMenuItem onClick={handleLogoutClick} className="text-destructive cursor-pointer focus:text-destructive py-2.5 bg-destructive/5 focus:bg-destructive/10 mt-1">
           <LogOut className="mr-2 h-4 w-4" />
           <span>Log out</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
+
+      <RateUsDialog
+        open={rateUsOpen}
+        onOpenChange={(nextOpen) => {
+          setRateUsOpen(nextOpen);
+          if (!nextOpen) setLoggingOut(false);
+        }}
+        onSkip={async () => {
+          await persistRateUsResponse({ rating: null, comment: null });
+          await finishLogout();
+        }}
+        onSubmit={async ({ rating, comment }) => {
+          await persistRateUsResponse({ rating, comment: comment || null });
+          await finishLogout();
+        }}
+      />
 
       <Dialog open={openAccount} onOpenChange={setOpenAccount}>
         <DialogContent className="sm:max-w-md">

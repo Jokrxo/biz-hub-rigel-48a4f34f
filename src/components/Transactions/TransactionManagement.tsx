@@ -1,16 +1,19 @@
-import React, { useEffect, useMemo, useState, Suspense, lazy } from "react";
+import React, { useEffect, useMemo, useState, Suspense, lazy, useCallback } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Filter, Download, Edit, Trash2, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle, MoreHorizontal, Loader2, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownLeft, Copy, FileText, Paperclip, Eye, SlidersHorizontal, ShoppingCart, FileSpreadsheet } from "lucide-react";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Plus, Search, Filter, Download, Edit, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle, MoreHorizontal, Loader2, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownLeft, Copy, FileText, Paperclip, Eye, SlidersHorizontal, ShoppingCart, FileSpreadsheet, Landmark, Percent, ArrowLeft, PieChart, CreditCard, Upload, AlertTriangle, AlertOctagon, RefreshCw, History, Trash2, Check, ChevronsUpDown, BookOpen } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -19,6 +22,74 @@ const TransactionFormLazy = lazy(() =>
   import("./TransactionFormEnhanced").then((m) => ({ default: m.TransactionFormEnhanced }))
 );
 import { exportTransactionsToExcel, exportTransactionsToPDF } from "@/lib/export-utils";
+
+interface AccountComboboxProps {
+  accounts: any[];
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}
+
+const AccountCombobox = ({ accounts, value, onChange, placeholder = "Select Account...", disabled = false }: AccountComboboxProps) => {
+  const [open, setOpen] = useState(false);
+  const selectedAccount = accounts.find((account) => String(account.id) === String(value));
+
+  return (
+    <Popover open={open} onOpenChange={setOpen} modal={true}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          className="w-full justify-between font-normal pl-3 h-10 text-left bg-background hover:bg-muted/50"
+        >
+          {selectedAccount ? (
+             <span className="truncate flex items-center gap-2">
+                <span className="font-mono font-medium text-primary bg-primary/10 px-1.5 py-0.5 rounded text-xs">{selectedAccount.account_code}</span>
+                <span className="truncate">{selectedAccount.account_name}</span>
+             </span>
+          ) : (
+            <span className="text-muted-foreground">{placeholder}</span>
+          )}
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[400px] p-0 z-[1100]" align="start">
+        <Command>
+          <CommandInput placeholder="Search account code or name..." />
+          <CommandList className="max-h-[300px] overflow-y-auto custom-scrollbar">
+            <CommandEmpty>No account found.</CommandEmpty>
+            <CommandGroup>
+              {accounts.map((account) => (
+                <CommandItem
+                  key={account.id}
+                  value={`${account.account_code} ${account.account_name}`}
+                  onSelect={() => {
+                    onChange(String(account.id));
+                    setOpen(false);
+                  }}
+                  className="cursor-pointer"
+                >
+                  <Check
+                    className={cn(
+                      "mr-2 h-4 w-4",
+                      String(value) === String(account.id) ? "opacity-100" : "opacity-0"
+                    )}
+                  />
+                  <span className="font-mono text-muted-foreground mr-2 w-16">{account.account_code}</span>
+                  <span className="flex-1 truncate">{account.account_name}</span>
+                  <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-2 capitalize">{account.account_type || account.type}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+};
 
 interface Transaction {
   id: string;
@@ -38,7 +109,7 @@ export const TransactionManagement = () => {
   const { toast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
-  const [posting, setPosting] = useState(false);
+  const [posting, setPosting] = useState<Record<string, boolean>>({});
   const [newFlowOpen, setNewFlowOpen] = useState(false);
   const [quickType, setQuickType] = useState<'income' | 'expense' | 'receipt' | 'asset' | 'product_purchase' | 'liability' | 'equity' | 'loan_received' | 'loan_repayment' | 'loan_interest' | 'depreciation' | 'asset_disposal' | null>(null);
   const [quickDate, setQuickDate] = useState<string>(new Date().toISOString().slice(0,10));
@@ -103,9 +174,255 @@ export const TransactionManagement = () => {
   const [attachmentsOpen, setAttachmentsOpen] = useState(false);
   const [attachmentsData, setAttachmentsData] = useState<any>(null);
 
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteId, setDeleteId] = useState<string | null>(null);
-  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [adjustmentReason, setAdjustmentReason] = useState("");
+  const [adjustmentDate, setAdjustmentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [adjustmentAmount, setAdjustmentAmount] = useState("");
+  const [debitAccount, setDebitAccount] = useState("");
+  const [creditAccount, setCreditAccount] = useState("");
+  const [adjustmentFile, setAdjustmentFile] = useState<File | null>(null);
+  const [isAdjusting, setIsAdjusting] = useState(false);
+  const [transactionToAdjust, setTransactionToAdjust] = useState<any>(null);
+
+  // Attachments Logic
+  const [fileList, setFileList] = useState<any[]>([]);
+  const [uploading, setUploading] = useState(false);
+
+  const loadAttachments = useCallback(async () => {
+    if (!attachmentsData?.id) return;
+    try {
+      const { data, error } = await supabase
+        .from('transaction_attachments' as any)
+        .select('*')
+        .eq('transaction_id', attachmentsData.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("Attachments error:", error);
+        // If table doesn't exist, we should probably let the user know, but gracefully
+        if (error.code === '42P01') { // undefined_table
+           console.warn("Table transaction_attachments does not exist");
+        } else {
+           toast({ 
+             title: "Error loading attachments", 
+             description: "Failed to load attachments. " + error.message,
+             variant: "destructive" 
+           });
+        }
+        return;
+      }
+      setFileList(data || []);
+    } catch (error) {
+      console.error("Error loading attachments:", error);
+    }
+  }, [attachmentsData?.id]);
+
+  useEffect(() => {
+    if (attachmentsOpen && attachmentsData) {
+      loadAttachments();
+    }
+  }, [attachmentsOpen, attachmentsData, loadAttachments]);
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    if (!attachmentsData) return;
+
+    const file = e.target.files[0];
+    setUploading(true);
+
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${attachmentsData.id}/${Date.now()}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('transactions')
+        .upload(fileName, file);
+
+      if (uploadError) throw uploadError;
+
+      const { error: dbError } = await supabase
+        .from('transaction_attachments' as any)
+        .insert({
+          transaction_id: attachmentsData.id,
+          file_name: file.name,
+          file_path: fileName,
+          file_size: file.size,
+          content_type: file.type,
+          // user_id will be handled by default or RLS if column exists and default matches
+        });
+
+      if (dbError) throw dbError;
+
+      toast({ title: "Success", description: "File uploaded successfully" });
+      loadAttachments();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleDeleteAttachment = async (id: string, path: string) => {
+    try {
+      const { error: storageError } = await supabase.storage
+        .from('transactions')
+        .remove([path]);
+      
+      if (storageError) console.warn("Storage delete failed:", storageError);
+
+      const { error: dbError } = await supabase
+        .from('transaction_attachments' as any)
+        .delete()
+        .eq('id', id);
+
+      if (dbError) throw dbError;
+
+      toast({ title: "Success", description: "Attachment deleted" });
+      loadAttachments();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const initiateAdjustment = (transaction: any) => {
+    setTransactionToAdjust(transaction);
+    setAdjustmentReason("");
+    setAdjustmentDate(new Date().toISOString().split('T')[0]);
+    setAdjustmentAmount(transaction.total_amount ? String(Math.abs(transaction.total_amount)) : "");
+    // Default to bank as credit (paying out) and expense as debit if possible, or blank
+    setDebitAccount("");
+    setCreditAccount("");
+    setAdjustmentFile(null);
+    setAdjustmentOpen(true);
+  };
+
+  const handleAdjustment = async () => {
+    if (!transactionToAdjust) return;
+    
+    if (!adjustmentReason.trim()) {
+      toast({ title: "Reason required", description: "Please provide a reason for the adjustment.", variant: "destructive" });
+      return;
+    }
+    
+    const amountVal = parseFloat(adjustmentAmount);
+    if (isNaN(amountVal) || amountVal <= 0) {
+        toast({ title: "Invalid Amount", description: "Please enter a valid adjustment amount.", variant: "destructive" });
+        return;
+    }
+
+    if (!debitAccount || !creditAccount) {
+         toast({ title: "Accounts required", description: "Please select both Debit and Credit accounts for double entry.", variant: "destructive" });
+         return;
+    }
+
+    if (debitAccount === creditAccount) {
+        toast({ title: "Invalid Entry", description: "Debit and Credit accounts cannot be the same.", variant: "destructive" });
+        return;
+    }
+
+    if (adjustmentFile && adjustmentFile.size > 500 * 1024) {
+        toast({ title: "File too large", description: "File size must be less than 500KB.", variant: "destructive" });
+        return;
+    }
+
+    setIsAdjusting(true);
+    try {
+      // Get current user ID
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Authentication required");
+
+      let attachmentUrl = null;
+      if (adjustmentFile) {
+        const fileExt = adjustmentFile.name.split('.').pop();
+        const filePath = `adjustments/${Date.now()}.${fileExt}`;
+        const { error: uploadError } = await supabase.storage
+            .from('transactions')
+            .upload(filePath, adjustmentFile);
+            
+        if (uploadError) {
+             // Try 'documents' bucket if transactions fails, or just warn
+             console.warn("Upload failed to transactions bucket:", uploadError);
+             const { error: retryError } = await supabase.storage
+                .from('documents')
+                .upload(filePath, adjustmentFile);
+             
+             if (!retryError) {
+                 const { data } = supabase.storage.from('documents').getPublicUrl(filePath);
+                 attachmentUrl = data.publicUrl;
+             }
+        } else {
+             const { data } = supabase.storage.from('transactions').getPublicUrl(filePath);
+             attachmentUrl = data.publicUrl;
+        }
+      }
+
+      const description = `Adjustment: ${adjustmentReason} ${attachmentUrl ? `[File: ${attachmentUrl}]` : ''}`;
+      
+      const newEntries = [
+          { account_id: debitAccount, debit: amountVal, credit: 0, description, status: 'approved' },
+          { account_id: creditAccount, debit: 0, credit: amountVal, description, status: 'approved' }
+      ];
+
+      const adjustmentData = {
+        company_id: transactionToAdjust.company_id,
+        transaction_date: adjustmentDate,
+        description: description,
+        reference_number: `ADJ-${transactionToAdjust.reference_number || Date.now()}`,
+        transaction_type: 'adjustment', // Changed to 'adjustment' (lowercase) to match ledger constraint
+        status: 'pending', // Set to pending first to allow entry creation
+        total_amount: amountVal,
+        // attachment_url: attachmentUrl // Uncomment if column exists
+      };
+
+      const { data: newTx, error: txError } = await supabase
+        .from('transactions')
+        .insert({
+          company_id: adjustmentData.company_id,
+          transaction_date: adjustmentData.transaction_date,
+          description: adjustmentData.description,
+          reference_number: adjustmentData.reference_number,
+          transaction_type: adjustmentData.transaction_type,
+          status: adjustmentData.status,
+          total_amount: adjustmentData.total_amount,
+          user_id: user.id
+        })
+        .select()
+        .single();
+
+      if (txError) throw txError;
+
+      if (newTx && newEntries.length > 0) {
+        const entriesWithTxId = newEntries.map((e: any) => ({
+          ...e,
+          transaction_id: newTx.id
+        }));
+        
+        const { error: entriesError } = await supabase
+          .from('transaction_entries')
+          .insert(entriesWithTxId);
+          
+        if (entriesError) throw entriesError;
+
+        // Update status to posted (for journal type) after entries are created
+        const { error: updateError } = await supabase
+          .from('transactions')
+          .update({ status: 'posted' })
+          .eq('id', newTx.id);
+          
+        if (updateError) throw updateError;
+      }
+
+      toast({ title: "Success", description: "Successfully adjusted." });
+      setAdjustmentOpen(false);
+      load();
+    } catch (error: any) {
+      console.error("Adjustment error:", error);
+      toast({ title: "Error", description: error.message || "Failed to process adjustment.", variant: "destructive" });
+    } finally {
+      setIsAdjusting(false);
+    }
+  };
 
   // Edit Warning State
   const [editWarningOpen, setEditWarningOpen] = useState(false);
@@ -358,7 +675,7 @@ export const TransactionManagement = () => {
   useEffect(() => {
     (async () => {
       try {
-        if (!allocationOpen && !newFlowOpen) return;
+        if (!allocationOpen && !newFlowOpen && !adjustmentOpen) return;
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) return;
         const { data: profile } = await supabase
@@ -402,7 +719,7 @@ export const TransactionManagement = () => {
         setBanks(bankList || []);
       } catch {}
     })();
-  }, [allocationOpen, newFlowOpen]);
+  }, [allocationOpen, newFlowOpen, adjustmentOpen]);
 
   useEffect(() => {
     if (allocVatOn === 'no') setAllocVatRate('0');
@@ -528,7 +845,7 @@ export const TransactionManagement = () => {
   };
 
   const setTransactionStatus = async (id: string, status: 'approved' | 'pending' | 'rejected' | 'unposted') => {
-    setPosting(true);
+    setPosting(prev => ({ ...prev, [id]: true }));
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("User not authenticated.");
@@ -835,47 +1152,7 @@ export const TransactionManagement = () => {
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
     } finally {
-      setPosting(false);
-    }
-  };
-
-  const initiateDelete = (id: string) => {
-    setDeleteId(id);
-    setDeleteConfirmText("");
-    setDeleteConfirmOpen(true);
-  };
-
-  const confirmDelete = async () => {
-    if (!deleteId) return;
-    const id = deleteId;
-    
-    try {
-      // Remove entries and ledger postings first
-      await supabase.from("transaction_entries").delete().eq("transaction_id", id);
-      await supabase.from("ledger_entries").delete().eq("transaction_id", id);
-      await supabase.from("ledger_entries").delete().eq("reference_id", id);
-      const { error } = await supabase.from("transactions").delete().eq("id", id);
-      if (error) throw error;
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("company_id")
-            .eq("user_id", user.id)
-            .maybeSingle();
-          if (profile?.company_id) {
-            await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
-          }
-        }
-      } catch {}
-      toast({ title: "Success", description: "Transaction deleted" });
-      load();
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally {
-      setDeleteConfirmOpen(false);
-      setDeleteId(null);
+      setPosting(prev => ({ ...prev, [id]: false }));
     }
   };
 
@@ -912,27 +1189,64 @@ export const TransactionManagement = () => {
         </Suspense>
 
         <Dialog open={newFlowOpen} onOpenChange={(v) => { setNewFlowOpen(v); if (!v) { setQuickType(null); setQuickAmount(''); setQuickDesc(''); } }}>
-          <DialogContent className="sm:max-w-[620px]">
-            <DialogHeader>
-              <DialogTitle>Start a Transaction</DialogTitle>
+          <DialogContent className="sm:max-w-[700px] overflow-hidden p-0 gap-0">
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary/50 via-primary to-primary/50" />
+            <DialogHeader className="p-6 pb-4 bg-muted/5">
+              <DialogTitle className="text-xl flex items-center gap-2">
+                <div className="p-2 rounded-lg bg-primary/10 text-primary">
+                  <Plus className="h-5 w-5" />
+                </div>
+                Start a Transaction
+              </DialogTitle>
+              <DialogDescription>
+                Choose the type of transaction you want to record.
+              </DialogDescription>
             </DialogHeader>
+            <div className="p-6 pt-2 max-h-[70vh] overflow-y-auto">
             {!quickType ? (
-              <div className="grid grid-cols-2 gap-3">
-                <Button variant="outline" onClick={() => setQuickType('income')}>Income Received</Button>
-                <Button variant="outline" onClick={() => setQuickType('expense')}>Expense Payment</Button>
-                <Button variant="outline" onClick={() => setQuickType('receipt')}>Receivable Collection</Button>
-                <Button variant="outline" onClick={() => setQuickType('product_purchase')}>Product Purchase</Button>
-                <Button variant="outline" onClick={() => setQuickType('asset')}>Asset Purchase</Button>
-                <Button variant="outline" onClick={() => setQuickType('liability')}>Liability Payment</Button>
-                <Button variant="outline" onClick={() => setQuickType('equity')}>Equity / Capital</Button>
-                <Button variant="outline" onClick={() => setQuickType('loan_received')}>Loan Received</Button>
-                <Button variant="outline" onClick={() => setQuickType('loan_repayment')}>Loan Repayment</Button>
-                <Button variant="outline" onClick={() => setQuickType('loan_interest')}>Loan Interest</Button>
-                <Button variant="outline" onClick={() => setQuickType('depreciation')}>Depreciation</Button>
-                <Button variant="outline" onClick={() => setQuickType('asset_disposal')}>Asset Disposal</Button>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {[
+                  { id: 'income', label: 'Income Received', icon: TrendingUp, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'hover:border-emerald-200' },
+                  { id: 'expense', label: 'Expense Payment', icon: TrendingDown, color: 'text-rose-500', bg: 'bg-rose-500/10', border: 'hover:border-rose-200' },
+                  { id: 'receipt', label: 'Receivable Collection', icon: FileText, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'hover:border-blue-200' },
+                  { id: 'product_purchase', label: 'Product Purchase', icon: ShoppingCart, color: 'text-indigo-500', bg: 'bg-indigo-500/10', border: 'hover:border-indigo-200' },
+                  { id: 'asset', label: 'Asset Purchase', icon: Wallet, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'hover:border-purple-200' },
+                  { id: 'liability', label: 'Liability Payment', icon: CreditCard, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'hover:border-amber-200' },
+                  { id: 'equity', label: 'Equity / Capital', icon: PieChart, color: 'text-cyan-500', bg: 'bg-cyan-500/10', border: 'hover:border-cyan-200' },
+                  { id: 'loan_received', label: 'Loan Received', icon: Landmark, color: 'text-teal-500', bg: 'bg-teal-500/10', border: 'hover:border-teal-200' },
+                  { id: 'loan_repayment', label: 'Loan Repayment', icon: ArrowUpRight, color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'hover:border-orange-200' },
+                  { id: 'loan_interest', label: 'Loan Interest', icon: Percent, color: 'text-pink-500', bg: 'bg-pink-500/10', border: 'hover:border-pink-200' },
+                  { id: 'depreciation', label: 'Depreciation', icon: ArrowDownLeft, color: 'text-slate-500', bg: 'bg-slate-500/10', border: 'hover:border-slate-200' },
+                  { id: 'asset_disposal', label: 'Asset Disposal', icon: XCircle, color: 'text-red-500', bg: 'bg-red-500/10', border: 'hover:border-red-200' },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setQuickType(item.id as any)}
+                    className={cn(
+                      "flex flex-col items-center justify-center gap-3 p-4 rounded-xl border bg-card text-card-foreground shadow-sm transition-all hover:shadow-md hover:scale-[1.02]",
+                      item.border
+                    )}
+                  >
+                    <div className={cn("p-3 rounded-full", item.bg, item.color)}>
+                      <item.icon className="h-6 w-6" />
+                    </div>
+                    <span className="font-medium text-sm text-center">{item.label}</span>
+                  </button>
+                ))}
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                <div className="flex items-center gap-2 mb-4 pb-4 border-b">
+                   <Button variant="ghost" size="sm" onClick={() => { setQuickType(null); setQuickAmount(''); setQuickDesc(''); }} className="gap-1 pl-0 hover:bg-transparent hover:text-primary">
+                     <ArrowLeft className="h-4 w-4" /> Back
+                   </Button>
+                   <div className="h-4 w-px bg-border mx-2" />
+                   <h3 className="font-semibold text-lg">
+                     {quickType === 'income' ? 'Record Income' : 
+                      quickType === 'expense' ? 'Record Expense' : 
+                      quickType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                   </h3>
+                </div>
                 {(quickType === 'product_purchase' || quickType === 'asset' || quickType === 'asset_disposal' || quickType === 'depreciation' || (quickType && quickType.startsWith('loan_'))) && (
                   <div className="relative p-6 border rounded-lg bg-muted/30 overflow-hidden">
                     <div className="absolute inset-0 pointer-events-none opacity-10 flex items-center justify-center">
@@ -1016,18 +1330,21 @@ export const TransactionManagement = () => {
                 {!(quickType === 'product_purchase' || quickType === 'asset' || quickType === 'asset_disposal' || quickType === 'depreciation' || (quickType && quickType.startsWith('loan_'))) && (
                 <>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Date</Label>
-                    <Input type="date" value={quickDate} onChange={(e) => setQuickDate(e.target.value)} />
+                  <div className="space-y-1.5">
+                    <Label className="font-semibold text-foreground/80">Date</Label>
+                    <Input type="date" value={quickDate} onChange={(e) => setQuickDate(e.target.value)} className="h-11 transition-all focus:ring-2 focus:ring-primary/20 hover:border-primary/50" />
                   </div>
-                  <div>
-                    <Label>Amount</Label>
-                    <Input type="number" value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} placeholder="0.00" />
+                  <div className="space-y-1.5">
+                    <Label className="font-semibold text-foreground/80">Amount</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">R</span>
+                      <Input type="number" value={quickAmount} onChange={(e) => setQuickAmount(e.target.value)} placeholder="0.00" className="pl-7 h-11 font-mono text-lg transition-all focus:ring-2 focus:ring-primary/20 hover:border-primary/50" />
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <Label>Description</Label>
-                  <Input value={quickDesc} onChange={(e) => setQuickDesc(e.target.value)} placeholder={quickType === 'expense' ? 'Expense details' : 'Description'} />
+                <div className="space-y-1.5">
+                  <Label className="font-semibold text-foreground/80">Description</Label>
+                  <Input value={quickDesc} onChange={(e) => setQuickDesc(e.target.value)} placeholder={quickType === 'expense' ? 'Expense details' : 'Description'} className="h-11 transition-all focus:ring-2 focus:ring-primary/20 hover:border-primary/50" />
                 </div>
                 </>
                 )}
@@ -1300,232 +1617,301 @@ export const TransactionManagement = () => {
                 )}
               </div>
             )}
+            </div>
           </DialogContent>
         </Dialog>
         <Dialog open={allocationOpen} onOpenChange={setAllocationOpen}>
-          <DialogContent className="sm:max-w-[600px]">
-        <DialogHeader>
-          <DialogTitle>EXpense and income allocation</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Date</Label>
-                  <Input type="date" value={allocDate} onChange={(e) => setAllocDate(e.target.value)} />
-                </div>
-                <div>
-                  <Label>Type</Label>
-                  <Select value={allocType} onValueChange={(v: any) => setAllocType(v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="income">Income</SelectItem>
-                      <SelectItem value="expense">Expense</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+          <DialogContent className="sm:max-w-[900px] border-none shadow-2xl p-0 overflow-hidden gap-0">
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary/50 via-primary to-primary/50" />
+            
+            <div className="grid md:grid-cols-5 h-full">
+              {/* Left Side: Summary & Basics */}
+              <div className="md:col-span-2 bg-muted/30 p-6 border-r flex flex-col gap-6">
+                 <div className="flex items-center gap-3 mb-2">
+                    <div className="p-2.5 bg-primary/10 rounded-xl text-primary shadow-sm border border-primary/20">
+                      <SlidersHorizontal className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h2 className="font-bold text-lg leading-tight">Allocation</h2>
+                      <p className="text-xs text-muted-foreground">Categorize this transaction</p>
+                    </div>
+                 </div>
+
+                 <Card className="shadow-sm border-primary/20 bg-background/50">
+                    <CardHeader className="p-4 pb-2">
+                       <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Total Amount</CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-4 pt-0">
+                       <div className="text-3xl font-bold text-primary tabular-nums tracking-tight">
+                         R {Number(allocationTx?.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                       </div>
+                    </CardContent>
+                 </Card>
+
+                 <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold uppercase text-muted-foreground">Transaction Date</Label>
+                      <div className="relative">
+                         <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                         <Input type="date" value={allocDate} onChange={(e) => setAllocDate(e.target.value)} className="pl-9 bg-background" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold uppercase text-muted-foreground">Description</Label>
+                      <Textarea 
+                        value={allocDesc} 
+                        onChange={(e) => setAllocDesc(e.target.value)} 
+                        placeholder="Enter description..." 
+                        className="bg-background resize-none min-h-[80px]" 
+                      />
+                    </div>
+                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Amount</Label>
-                <Input readOnly value={String(Math.abs(Number(allocationTx?.total_amount || 0)))} />
-              </div>
-              <div>
-                <Label>Description</Label>
-                <Input value={allocDesc} onChange={(e) => setAllocDesc(e.target.value)} placeholder="Enter description for approval" />
+
+              {/* Right Side: Allocation Logic */}
+              <div className="md:col-span-3 p-6 space-y-6 bg-background">
+                 <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                       <Label className="flex items-center gap-2">
+                          <Filter className="h-3.5 w-3.5 text-primary" />
+                          Transaction Type
+                       </Label>
+                       <Select value={allocType} onValueChange={(v: any) => setAllocType(v)}>
+                        <SelectTrigger className="bg-muted/10 border-muted-foreground/20 h-10">
+                           <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="income">Income Received</SelectItem>
+                          <SelectItem value="expense">Expense Payment</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                       <Label className="flex items-center gap-2">
+                          <CreditCard className="h-3.5 w-3.5 text-primary" />
+                          Payment Method
+                       </Label>
+                       <Select value={allocPayment} onValueChange={(v: any) => setAllocPayment(v)}>
+                        <SelectTrigger className="bg-muted/10 border-muted-foreground/20 h-10"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cash">Cash / Bank</SelectItem>
+                          <SelectItem value="accrual">Accrual (Credit)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                 </div>
+
+                 {allocPayment === 'cash' && (
+                    <div className="space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                      <Label className="flex items-center gap-2">
+                         <Wallet className="h-3.5 w-3.5 text-primary" />
+                         Bank Account
+                      </Label>
+                      <Select value={allocBankId} onValueChange={(v: any) => setAllocBankId(v)}>
+                        <SelectTrigger className="bg-muted/10 border-muted-foreground/20 h-10"><SelectValue placeholder="Select Bank Account" /></SelectTrigger>
+                        <SelectContent>
+                          {banks.map(b => (
+                            <SelectItem key={b.id} value={String(b.id)}>{b.bank_name} ({b.account_number})</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                 )}
+
+                 <div className="space-y-2">
+                    <Label className="flex items-center gap-2">
+                       <BookOpen className="h-3.5 w-3.5 text-primary" />
+                       {allocType === 'income' ? 'Income Account' : 'Expense Account'}
+                    </Label>
+                    <AccountCombobox 
+                       accounts={allocType === 'income' ? coaIncome : coaExpense}
+                       value={allocAccountId}
+                       onChange={setAllocAccountId}
+                       placeholder={allocType === 'income' ? "Select Income Account..." : "Select Expense Account..."}
+                    />
+                 </div>
+
+                 <div className="p-4 rounded-lg bg-muted/20 border border-dashed border-muted-foreground/20 space-y-4">
+                    <div className="flex items-center justify-between">
+                       <Label className="flex items-center gap-2 cursor-pointer" htmlFor="vat-toggle">
+                          <Percent className="h-3.5 w-3.5 text-primary" />
+                          Apply VAT?
+                       </Label>
+                       <div className="flex items-center gap-2">
+                          <Select value={allocVatOn} onValueChange={(v: any) => setAllocVatOn(v)}>
+                            <SelectTrigger className="h-8 w-[80px] text-xs"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="yes">Yes</SelectItem>
+                              <SelectItem value="no">No</SelectItem>
+                            </SelectContent>
+                          </Select>
+                       </div>
+                    </div>
+                    
+                    {allocVatOn === 'yes' && (
+                       <div className="grid grid-cols-2 gap-4 animate-in fade-in zoom-in-95 duration-200">
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">VAT Rate (%)</Label>
+                             <Input 
+                               type="number" min="0" max="100" 
+                               value={allocVatRate} 
+                               onChange={(e) => setAllocVatRate(e.target.value)} 
+                               className="h-9 bg-background"
+                             />
+                          </div>
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">VAT Amount</Label>
+                             <div className="h-9 px-3 flex items-center bg-muted/50 rounded-md border text-sm font-medium text-muted-foreground">
+                                R {((Number(allocationTx?.total_amount || 0) * Number(allocVatRate || 0)) / (100 + Number(allocVatRate || 0))).toFixed(2)}
+                             </div>
+                          </div>
+                       </div>
+                    )}
+                 </div>
+
+                 {allocPayment === 'accrual' && (
+                    <div className="space-y-4 pt-2 border-t animate-in fade-in slide-in-from-top-2 duration-300">
+                      <div className="grid grid-cols-2 gap-4">
+                         <div className="space-y-2">
+                           <Label>Settlement Type</Label>
+                           <Select value={allocSettlement} onValueChange={(v: any) => setAllocSettlement(v)} disabled>
+                            <SelectTrigger disabled className="bg-muted"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="receivable">Receivable</SelectItem>
+                              <SelectItem value="payable">Payable</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                         </div>
+                         <div className="space-y-2">
+                            <Label>{allocSettlement === 'receivable' ? 'Receivable Account' : allocSettlement === 'payable' ? 'Payable Account' : 'Other Account'}</Label>
+                            <AccountCombobox 
+                               accounts={allocSettlement === 'receivable' ? coaReceivable : allocSettlement === 'payable' ? coaPayable : coaOther}
+                               value={allocSettlementAccountId}
+                               onChange={setAllocSettlementAccountId}
+                               placeholder="Select Settlement Account..."
+                            />
+                         </div>
+                      </div>
+                    </div>
+                 )}
               </div>
             </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Payment Method</Label>
-                  <Select value={allocPayment} onValueChange={(v: any) => setAllocPayment(v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cash">Cash</SelectItem>
-                      <SelectItem value="accrual">Accrual</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {allocPayment === 'cash' && (
-                  <div>
-                    <Label>Bank</Label>
-                    <Select value={allocBankId} onValueChange={(v: any) => setAllocBankId(v)}>
-                      <SelectTrigger><SelectValue placeholder="Select bank" /></SelectTrigger>
-                      <SelectContent>
-                        {banks.map(b => (
-                          <SelectItem key={b.id} value={String(b.id)}>{b.bank_name} ({b.account_number})</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>VAT</Label>
-                  <Select value={allocVatOn} onValueChange={(v: any) => setAllocVatOn(v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="yes">Yes</SelectItem>
-                      <SelectItem value="no">No</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>VAT Rate (%)</Label>
-                  <Input type="number" min="0" max="100" value={allocVatRate} onChange={(e) => setAllocVatRate(e.target.value)} disabled={allocVatOn === 'no'} />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>{allocType === 'income' ? 'Income Account' : 'Expense Account'}</Label>
-                  <div className="flex gap-2 items-center mt-1">
-                    <Input placeholder="Search account" value={allocAccountSearch} onChange={(e) => setAllocAccountSearch(e.target.value)} />
-                  </div>
-                  <Select value={allocAccountId} onValueChange={(v: any) => setAllocAccountId(v)}>
-                    <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
-                    <SelectContent>
-                      {(allocType === 'income' ? coaIncome : coaExpense)
-                        .filter(a => {
-                          const q = allocAccountSearch.toLowerCase();
-                          if (!q) return true;
-                          return String(a.account_name || '').toLowerCase().includes(q) || String(a.account_code || '').toLowerCase().includes(q);
-                        })
-                        .map(a => (
-                        <SelectItem key={a.id} value={String(a.id)}>{a.account_code} - {a.account_name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {allocPayment === 'accrual' && (
-                  <div>
-                    <Label>Settlement</Label>
-                    <Select value={allocSettlement} onValueChange={(v: any) => setAllocSettlement(v)} disabled>
-                      <SelectTrigger disabled><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="receivable">Receivable</SelectItem>
-                        <SelectItem value="payable">Payable</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </div>
-              {allocPayment === 'accrual' && (
-                <div>
-                  <Label>{allocSettlement === 'receivable' ? 'Receivable Account' : allocSettlement === 'payable' ? 'Payable Account' : 'Other Account'}</Label>
-                  <div className="flex gap-2 items-center mt-1">
-                    <Input placeholder="Search account" value={allocSettlementSearch} onChange={(e) => setAllocSettlementSearch(e.target.value)} />
-                  </div>
-                  <Select value={allocSettlementAccountId} onValueChange={(v: any) => setAllocSettlementAccountId(v)}>
-                    <SelectTrigger><SelectValue placeholder="Select account" /></SelectTrigger>
-                    <SelectContent>
-                      {(allocSettlement === 'receivable' ? coaReceivable : allocSettlement === 'payable' ? coaPayable : coaOther)
-                        .filter(a => {
-                          const q = allocSettlementSearch.toLowerCase();
-                          if (!q) return true;
-                          return String(a.account_name || '').toLowerCase().includes(q) || String(a.account_code || '').toLowerCase().includes(q);
-                        })
-                        .map(a => (
-                        <SelectItem key={a.id} value={String(a.id)}>{a.account_code} - {a.account_name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setAllocationOpen(false)}>Cancel</Button>
-              <Button onClick={async () => {
-                try {
-                  if (allocPayment === 'cash' && !allocBankId) return;
-                  if (!allocAccountId) return;
-                  if (allocPayment === 'accrual' && !allocSettlementAccountId) return;
-              const txId = String(allocationTx?.id || '');
-              if (!txId) return;
-              const isIncome = allocType === 'income';
-              const total = Math.abs(Number(allocationTx?.total_amount || 0));
-              let debitAccount = '';
-              let creditAccount = '';
-                  if (allocPayment === 'cash') {
-                    if (isIncome) { debitAccount = ''; creditAccount = allocAccountId; }
-                    else { debitAccount = allocAccountId; creditAccount = ''; }
-                  } else {
-                    const settleId = allocSettlementAccountId;
-                    if (isIncome) { debitAccount = settleId; creditAccount = allocAccountId; }
-                    else { debitAccount = allocAccountId; creditAccount = settleId; }
-                  }
 
-                  const rate = allocVatOn === 'yes' ? Number(allocVatRate || '0') : 0;
-                  const isPurchase = allocType === 'expense';
-                  const vatAmount = rate > 0 ? ((total * rate) / (100 + rate)) : 0;
-                  const netAmount = rate > 0 ? (total - vatAmount) : total;
+            <DialogFooter className="p-4 bg-muted/10 border-t gap-2 sm:gap-0">
+              <Button variant="ghost" onClick={() => setAllocationOpen(false)} disabled={allocationTx && posting[allocationTx.id]}>Cancel</Button>
+              <Button onClick={() => {
+                // Capture all necessary state variables in local scope
+                const txId = String(allocationTx?.id || '');
+                if (!txId) return;
+                
+                if (allocPayment === 'cash' && !allocBankId) { toast({ title: "Bank Required", description: "Please select a bank account.", variant: "destructive" }); return; }
+                if (!allocAccountId) { toast({ title: "Account Required", description: "Please select an income/expense account.", variant: "destructive" }); return; }
+                if (allocPayment === 'accrual' && !allocSettlementAccountId) { toast({ title: "Settlement Account Required", description: "Please select a settlement account.", variant: "destructive" }); return; }
 
-                  if (rate > 0 && vatAmount > 0) {
-                    try {
-                      const { data: { user } } = await supabase.auth.getUser();
-                      if (user) {
-                        const { data: profile } = await supabase
-                          .from('profiles')
-                          .select('company_id')
-                          .eq('user_id', user.id)
-                          .single();
-                        const companyId = (profile as any)?.company_id;
-                        if (companyId) {
-                          const { data: vatAccounts } = await supabase
-                            .from('chart_of_accounts')
-                            .select('id, account_name, account_code, account_type')
-                            .eq('company_id', companyId)
-                            .or('account_name.ilike.%vat%,account_name.ilike.%tax%');
-                          const hasVat = (vatAccounts || []).length > 0;
-                          if (!hasVat) {
-                            if (isIncome) {
-                              await supabase
-                                .from('chart_of_accounts')
-                                .insert({ company_id: companyId, account_code: '2100', account_name: 'VAT Output', account_type: 'liability', is_active: true });
-                            } else {
-                              await supabase
-                                .from('chart_of_accounts')
-                                .insert({ company_id: companyId, account_code: '1400', account_name: 'VAT Input', account_type: 'asset', is_active: true });
+                // Optimistic UI updates
+                setPosting(prev => ({ ...prev, [txId]: true }));
+                setAllocationOpen(false);
+                toast({ title: "Posting Started", description: "Transaction is being processed in the background. You can continue working." });
+
+                // Define the async operation
+                const processTransaction = async () => {
+                  try {
+                    const isIncome = allocType === 'income';
+                    const total = Math.abs(Number(allocationTx?.total_amount || 0));
+                    let debitAccount = '';
+                    let creditAccount = '';
+                    
+                    if (allocPayment === 'cash') {
+                      if (isIncome) { debitAccount = ''; creditAccount = allocAccountId; }
+                      else { debitAccount = allocAccountId; creditAccount = ''; }
+                    } else {
+                      const settleId = allocSettlementAccountId;
+                      if (isIncome) { debitAccount = settleId; creditAccount = allocAccountId; }
+                      else { debitAccount = allocAccountId; creditAccount = settleId; }
+                    }
+
+                    const rate = allocVatOn === 'yes' ? Number(allocVatRate || '0') : 0;
+                    const vatAmount = rate > 0 ? ((total * rate) / (100 + rate)) : 0;
+                    const netAmount = rate > 0 ? (total - vatAmount) : total;
+
+                    // Auto-create VAT accounts if needed (Simplified check)
+                    if (rate > 0 && vatAmount > 0) {
+                      try {
+                        const { data: { user } } = await supabase.auth.getUser();
+                        if (user) {
+                          const { data: profile } = await supabase
+                            .from('profiles')
+                            .select('company_id')
+                            .eq('user_id', user.id)
+                            .single();
+                          const companyId = (profile as any)?.company_id;
+                          if (companyId) {
+                            const { data: vatAccounts } = await supabase
+                              .from('chart_of_accounts')
+                              .select('id, account_name, account_code, account_type')
+                              .eq('company_id', companyId)
+                              .or('account_name.ilike.%vat%,account_name.ilike.%tax%');
+                            const hasVat = (vatAccounts || []).length > 0;
+                            if (!hasVat) {
+                              if (isIncome) {
+                                await supabase
+                                  .from('chart_of_accounts')
+                                  .insert({ company_id: companyId, account_code: '2100', account_name: 'VAT Output', account_type: 'liability', is_active: true });
+                              } else {
+                                await supabase
+                                  .from('chart_of_accounts')
+                                  .insert({ company_id: companyId, account_code: '1400', account_name: 'VAT Input', account_type: 'asset', is_active: true });
+                              }
                             }
                           }
                         }
-                      }
-                    } catch {}
+                      } catch {}
+                    }
+
+                    const { error: upErr } = await supabase
+                      .from('transactions')
+                    .update({
+                      transaction_date: allocDate,
+                      description: String(allocDesc || '').trim() || (allocationTx?.description || null),
+                      bank_account_id: allocPayment === 'cash' ? allocBankId : null,
+                      debit_account_id: debitAccount || null,
+                      credit_account_id: creditAccount || null,
+                      vat_rate: rate > 0 ? rate : null,
+                      vat_amount: vatAmount > 0 ? vatAmount : null,
+                      base_amount: netAmount,
+                      vat_inclusive: (allocVatOn === 'yes')
+                    })
+                    .eq('id', txId);
+                    
+                    if (upErr) throw upErr;
+
+                    await setTransactionStatus(txId, 'approved');
+                    toast({ title: 'Success', description: 'Transaction successfully allocated and approved.' });
+                  } catch (e: any) {
+                    console.error(e);
+                    toast({ title: 'Allocation Failed', description: e.message || 'Failed to allocate transaction', variant: 'destructive' });
+                  } finally {
+                    setPosting(prev => ({ ...prev, [txId]: false }));
                   }
+                };
 
-                  const { error: upErr } = await supabase
-                    .from('transactions')
-                  .update({
-                    transaction_date: allocDate,
-                    description: String(allocDesc || '').trim() || (allocationTx?.description || null),
-                    bank_account_id: allocPayment === 'cash' ? allocBankId : null,
-                    debit_account_id: debitAccount || null,
-                    credit_account_id: creditAccount || null,
-                    vat_rate: rate > 0 ? rate : null,
-                    vat_amount: vatAmount > 0 ? vatAmount : null,
-                    base_amount: netAmount,
-                    vat_inclusive: (allocVatOn === 'yes')
-                  })
-                  .eq('id', txId);
-                  if (upErr) throw upErr;
-
-                  await setTransactionStatus(txId, 'approved');
-                  setAllocationOpen(false);
-                  toast({ title: 'Success', description: 'Transaction posted/allocated' });
-                } catch (e: any) {
-                  toast({ title: 'Error', description: e.message || 'Failed to allocate', variant: 'destructive' });
-                }
-              }} disabled={posting}>
-                {posting ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Posting...</>) : (<>Continue</>)}
+                // Fire and forget
+                processTransaction();
+              }} disabled={allocationTx && posting[allocationTx.id]} className="min-w-[140px] shadow-md">
+                {allocationTx && posting[allocationTx.id] ? (<><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing...</>) : (<><CheckCircle className="mr-2 h-4 w-4" /> Confirm & Post</>)}
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
         {/* Advanced Control Panel */}
-        <div className="bg-card border rounded-xl p-4 shadow-sm space-y-4">
+        <Card className="border-none shadow-lg bg-gradient-to-br from-card via-card/50 to-muted/20 overflow-hidden relative">
+          <div className="absolute inset-0 bg-grid-slate-100 [mask-image:linear-gradient(0deg,white,rgba(255,255,255,0.6))] dark:bg-grid-slate-700/25 dark:[mask-image:linear-gradient(0deg,rgba(255,255,255,0.1),rgba(255,255,255,0.5))]" />
+          <CardContent className="p-6 space-y-6 relative z-10">
           {/* Source Filters (Pills) */}
           <div className="flex flex-wrap gap-2">
             {[
@@ -1540,172 +1926,248 @@ export const TransactionManagement = () => {
                 key={tab.id}
                 onClick={() => setSourceTab(tab.id as any)}
                 className={cn(
-                  "px-3 py-1.5 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-2 border select-none",
+                  "px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 flex items-center gap-2 border select-none ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
                   sourceTab === tab.id 
-                    ? "bg-primary text-primary-foreground border-primary shadow-md" 
-                    : "bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground"
+                    ? "bg-primary text-primary-foreground border-primary shadow-md scale-105" 
+                    : "bg-background/80 backdrop-blur-sm text-muted-foreground border-border hover:bg-muted hover:text-foreground hover:border-primary/50"
                 )}
               >
-                 <tab.icon className="h-3.5 w-3.5" />
+                 <tab.icon className="h-4 w-4" />
                  <span>{tab.label}</span>
               </button>
             ))}
           </div>
 
-          <div className="h-px bg-border/50" />
+          <div className="h-px bg-gradient-to-r from-transparent via-border to-transparent" />
 
           {/* Filters Toolbar */}
-          <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
-              <div className="relative w-full lg:w-64">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <div className="flex flex-col xl:flex-row gap-4 items-start xl:items-center justify-between">
+              <div className="relative w-full xl:w-72 group">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground group-hover:text-primary transition-colors" />
                 <Input 
-                  placeholder="Search description or ref..." 
+                  placeholder="Search description or reference..." 
                   value={searchTerm} 
                   onChange={(e) => setSearchTerm(e.target.value)} 
-                  className="pl-9 bg-background/50 focus:bg-background transition-colors h-9" 
+                  className="pl-10 bg-background/50 focus:bg-background transition-all h-10 border-muted-foreground/20 focus:border-primary shadow-sm hover:shadow-md" 
                 />
               </div>
 
-              <div className="flex flex-wrap gap-2 items-center w-full lg:w-auto">
-                 <Select value={filterType} onValueChange={setFilterType}>
-                    <SelectTrigger className="w-[110px] h-9 text-xs"><SelectValue placeholder="Type" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Types</SelectItem>
-                      <SelectItem value="income">Income</SelectItem>
-                      <SelectItem value="expense">Expense</SelectItem>
-                    </SelectContent>
-                  </Select>
+              <div className="flex flex-wrap gap-3 items-center w-full xl:w-auto">
+                 <div className="flex items-center gap-2 p-1 bg-muted/20 rounded-lg border border-border/50">
+                   <Select value={filterType} onValueChange={setFilterType}>
+                      <SelectTrigger className="w-[130px] h-9 text-sm bg-transparent border-none shadow-none focus:ring-0"><SelectValue placeholder="Type" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Types</SelectItem>
+                        <SelectItem value="income">Income</SelectItem>
+                        <SelectItem value="expense">Expense</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <div className="w-px h-6 bg-border" />
+                    <Select value={filterStatus} onValueChange={setFilterStatus}>
+                      <SelectTrigger className="w-[130px] h-9 text-sm bg-transparent border-none shadow-none focus:ring-0"><SelectValue placeholder="Status" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="unposted">Unposted</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                 </div>
 
-                  <Select value={filterStatus} onValueChange={setFilterStatus}>
-                    <SelectTrigger className="w-[110px] h-9 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="unposted">Unposted</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="approved">Approved</SelectItem>
-                      <SelectItem value="rejected">Rejected</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  <div className="flex items-center gap-2 bg-muted/30 p-1 rounded-md border h-9">
-                     <Calendar className="h-3.5 w-3.5 text-muted-foreground ml-2" />
+                  <div className="flex items-center gap-2 bg-background/50 p-1 rounded-lg border border-muted-foreground/20 h-11 shadow-sm hover:shadow-md transition-shadow">
+                     <div className="h-8 w-8 rounded-md bg-primary/10 flex items-center justify-center text-primary ml-1">
+                       <Calendar className="h-4 w-4" />
+                     </div>
                      <Input 
                        type="date" 
                        value={dateFrom} 
                        onChange={(e) => setDateFrom(e.target.value)} 
-                       className="w-auto h-7 border-none bg-transparent shadow-none focus-visible:ring-0 px-1 text-xs"
+                       className="w-auto h-8 border-none bg-transparent shadow-none focus-visible:ring-0 px-2 text-sm"
                      />
-                     <span className="text-muted-foreground text-xs">-</span>
+                     <span className="text-muted-foreground text-sm font-medium">to</span>
                      <Input 
                        type="date" 
                        value={dateTo} 
                        onChange={(e) => setDateTo(e.target.value)} 
-                       className="w-auto h-7 border-none bg-transparent shadow-none focus-visible:ring-0 px-1 text-xs"
+                       className="w-auto h-8 border-none bg-transparent shadow-none focus-visible:ring-0 px-2 text-sm"
                      />
                      {(dateFrom || dateTo) && (
-                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0 rounded-full hover:bg-muted" onClick={() => { setDateFrom(''); setDateTo(''); }}>
-                           <XCircle className="h-3 w-3" />
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0 rounded-full hover:bg-destructive/10 hover:text-destructive mr-1" onClick={() => { setDateFrom(''); setDateTo(''); }}>
+                           <XCircle className="h-4 w-4" />
                         </Button>
                      )}
                   </div>
               </div>
               
-              <div className="flex items-center gap-2 ml-auto lg:ml-0">
-                 <Button variant="outline" className="gap-2 h-9" onClick={handleExport}>
-                   <Download className="h-3.5 w-3.5" />
+              <div className="flex items-center gap-3 ml-auto xl:ml-0 w-full xl:w-auto justify-end">
+                 <Button variant="outline" className="gap-2 h-10 shadow-sm hover:border-primary/50 hover:bg-primary/5 hover:text-primary transition-all" onClick={handleExport}>
+                   <Download className="h-4 w-4" />
                    Export
                  </Button>
-                 <Button className="bg-gradient-primary hover:opacity-90 gap-2 h-9" onClick={() => { setEditData(null); setNewFlowOpen(true); }}>
+                 <Button className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary hover:shadow-lg hover:shadow-primary/20 gap-2 h-10 transition-all hover:scale-[1.02]" onClick={() => { setEditData(null); setNewFlowOpen(true); }}>
                    <Plus className="h-4 w-4" />
                    New Transaction
                  </Button>
                </div>
           </div>
-        </div>
+          </CardContent>
+        </Card>
       </div>
 
-      <Card className="border-none shadow-md">
-        <CardHeader className="px-6 py-4 border-b bg-muted/10">
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <CardTitle>Recent Transactions</CardTitle>
-              <CardDescription>
-                Manage and review your financial records. You have {totalCount} total transactions.
-              </CardDescription>
-            </div>
-            <Badge variant="secondary" className="text-xs font-normal">
-              Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))}
-            </Badge>
+      <Card className="border-none shadow-xl overflow-hidden ring-1 ring-black/5 bg-card/50 backdrop-blur-sm">
+        <CardHeader className="px-6 py-5 border-b bg-muted/5 flex flex-row items-center justify-between">
+          <div className="space-y-1">
+            <CardTitle className="text-xl font-bold tracking-tight flex items-center gap-2">
+              <div className="h-8 w-1 bg-primary rounded-full" />
+              Recent Transactions
+            </CardTitle>
+            <CardDescription>
+              Manage and review your financial records. You have <span className="font-medium text-foreground">{totalCount}</span> total transactions.
+            </CardDescription>
           </div>
+          <Badge variant="secondary" className="px-3 py-1 text-xs font-medium bg-primary/10 text-primary border-primary/20 shadow-sm">
+            Page {page + 1} of {Math.max(1, Math.ceil(totalCount / pageSize))}
+          </Badge>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
-              <TableHeader className="bg-muted/5">
-                <TableRow className="divide-x divide-muted/20">
-                  <TableHead className="w-32 pl-6"><Button variant="ghost" className="gap-1 p-0 h-auto font-medium hover:bg-transparent hover:text-primary">Date <ArrowUpDown className="h-3 w-3" /></Button></TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="w-32">Bank</TableHead>
-                  <TableHead className="w-24">Type</TableHead>
-                  <TableHead className="w-32">Category</TableHead>
-                  <TableHead className="text-right w-32">Amount</TableHead>
-                  <TableHead className="text-right w-24">VAT</TableHead>
-                  <TableHead className="w-24">Status</TableHead>
-                  <TableHead className="w-20 text-right pr-6">Actions</TableHead>
+              <TableHeader className="bg-muted/10">
+                <TableRow className="hover:bg-transparent border-b border-border/60">
+                  <TableHead className="w-40 pl-6 h-12 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">
+                    <Button variant="ghost" className="gap-1 p-0 h-auto font-semibold uppercase text-xs hover:bg-transparent hover:text-primary transition-colors">
+                      Date <ArrowUpDown className="h-3 w-3 opacity-50" />
+                    </Button>
+                  </TableHead>
+                  <TableHead className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">Description</TableHead>
+                  <TableHead className="w-40 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">Bank</TableHead>
+                  <TableHead className="w-28 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">Type</TableHead>
+                  <TableHead className="w-36 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">Category</TableHead>
+                  <TableHead className="text-right w-36 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">Amount</TableHead>
+                  <TableHead className="text-right w-28 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">VAT</TableHead>
+                  <TableHead className="w-32 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">Status</TableHead>
+                  <TableHead className="w-20 text-right pr-6 text-xs font-semibold uppercase tracking-wider text-muted-foreground/80">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {derived.filtered.length === 0 ? (
                    <TableRow>
-                     <TableCell colSpan={9} className="h-24 text-center text-muted-foreground">
-                       No transactions found.
+                     <TableCell colSpan={9} className="h-64 text-center text-muted-foreground">
+                       <div className="flex flex-col items-center justify-center gap-3 animate-in zoom-in-95 duration-500">
+                         <div className="h-16 w-16 rounded-full bg-muted/30 flex items-center justify-center">
+                           <FileText className="h-8 w-8 text-muted-foreground/50" />
+                         </div>
+                         <div className="space-y-1">
+                           <p className="font-medium text-lg text-foreground">No transactions found</p>
+                           <p className="text-sm">Try adjusting your search or filters to find what you're looking for.</p>
+                         </div>
+                         <Button variant="outline" className="mt-2" onClick={() => { setSearchTerm(''); setFilterType('all'); setFilterStatus('all'); setSourceTab('all'); setDateFrom(''); setDateTo(''); }}>
+                           Clear Filters
+                         </Button>
+                       </div>
                      </TableCell>
                    </TableRow>
-                ) : derived.filtered.map((transaction) => (
-                  <TableRow key={transaction.id} className="hover:bg-muted/40 transition-colors divide-x divide-muted/20">
-                    <TableCell className="font-medium pl-6"><div className="flex items-center gap-2"><Calendar className="h-3.5 w-3.5 text-muted-foreground" />{transaction.date}</div></TableCell>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <span className="font-medium text-sm text-foreground/90">{transaction.description}</span>
-                        <span className="text-xs text-muted-foreground">{transaction.reference}</span>
+                ) : derived.filtered.map((transaction, index) => (
+                 <React.Fragment key={transaction.id}>
+                {posting[transaction.id] && (
+                  <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10">
+                     <div className="flex items-center gap-2 bg-background/95 backdrop-blur-sm px-3 py-1.5 rounded-full shadow-lg border border-border/50">
+                       <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                       <span className="text-xs font-medium text-primary">Posting...</span>
+                     </div>
+                  </div>
+                )}
+                  <TableRow 
+                    className={cn("group hover:bg-muted/40 transition-all border-b border-border/40 animate-in fade-in slide-in-from-bottom-2 duration-500 fill-mode-backwards", posting[transaction.id] ? "opacity-70 pointer-events-none" : "")}
+                    style={{ animationDelay: `${index * 50}ms` }}
+                  >
+                    <TableCell className="font-medium pl-6 py-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="h-9 w-9 rounded-md bg-muted/50 flex items-center justify-center text-muted-foreground group-hover:text-primary group-hover:bg-primary/10 transition-colors shadow-sm">
+                          <Calendar className="h-4 w-4" />
+                        </div>
+                        <span className="text-sm tabular-nums">{transaction.date}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{transaction.bank}</TableCell>
-                    <TableCell>
+                    <TableCell className="py-4">
+                      <div className="flex flex-col gap-0.5 max-w-[300px]">
+                        <span className="font-semibold text-sm text-foreground/90 truncate" title={transaction.description}>{transaction.description}</span>
+                        <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
+                          {transaction.reference}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-4">
+                      {transaction.bank !== "—" ? (
+                        <div className="flex flex-col">
+                           <span className="text-sm font-medium">{transaction.bank.split('(')[0]}</span>
+                           <span className="text-xs text-muted-foreground truncate max-w-[120px]" title={transaction.bank}>
+                             {transaction.bank.includes('(') ? transaction.bank.split('(')[1].replace(')', '') : ''}
+                           </span>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground text-sm opacity-50">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="py-4">
                        <Badge variant="outline" className={cn(
-                          "font-normal",
-                          transaction.type === "Income" ? "border-emerald-200 text-emerald-700 bg-emerald-50" : "border-rose-200 text-rose-700 bg-rose-50"
+                          "font-medium px-2.5 py-1 rounded-md border shadow-sm transition-all hover:shadow-md",
+                          transaction.type === "Income" 
+                            ? "border-emerald-200 text-emerald-700 bg-emerald-50/50 hover:bg-emerald-100" 
+                            : "border-rose-200 text-rose-700 bg-rose-50/50 hover:bg-rose-100"
                        )}>
+                          {transaction.type === "Income" ? <ArrowDownLeft className="h-3 w-3 mr-1.5" /> : <ArrowUpRight className="h-3 w-3 mr-1.5" />}
                           {transaction.type}
                        </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{transaction.category}</TableCell>
-                    <TableCell className="text-right font-mono font-medium">
-                      <span className={transaction.type === "Income" ? "text-emerald-600" : "text-rose-600"}>
+                    <TableCell className="py-4">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary" className="font-normal text-xs bg-muted/50 hover:bg-muted text-muted-foreground border-transparent hover:border-border transition-all">
+                          {transaction.category}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right py-4">
+                      <div className={cn(
+                        "font-mono font-bold text-sm tabular-nums",
+                        transaction.type === "Income" ? "text-emerald-600" : "text-rose-600"
+                      )}>
                         {transaction.type === "Income" ? "+" : "-"} R {transaction.amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
-                      </span>
+                      </div>
                     </TableCell>
-                    <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                      {transaction.vatAmount > 0 ? `R ${transaction.vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` : "-"}
+                    <TableCell className="text-right font-mono text-xs text-muted-foreground py-4">
+                      {transaction.vatAmount > 0 ? (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-muted/30 text-xs font-medium tabular-nums">
+                          R {transaction.vatAmount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                        </span>
+                      ) : <span className="opacity-30">-</span>}
                     </TableCell>
-                    <TableCell>
-                       <div className="flex items-center gap-2">
-                          <div className={cn("h-2 w-2 rounded-full", 
+                    <TableCell className="py-4">
+                       <div className={cn(
+                         "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors shadow-sm",
+                         (transaction as any).statusKey === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : 
+                         (transaction as any).statusKey === "pending" ? "bg-amber-50 text-amber-700 border-amber-200" : 
+                         (transaction as any).statusKey === "rejected" ? "bg-rose-50 text-rose-700 border-rose-200" : 
+                         "bg-slate-50 text-slate-700 border-slate-200"
+                       )}>
+                          <div className={cn("h-1.5 w-1.5 rounded-full animate-pulse", 
                              (transaction as any).statusKey === "approved" ? "bg-emerald-500" : 
                              (transaction as any).statusKey === "pending" ? "bg-amber-500" : 
-                             (transaction as any).statusKey === "rejected" ? "bg-rose-500" : "bg-slate-300"
+                             (transaction as any).statusKey === "rejected" ? "bg-rose-500" : "bg-slate-400"
                           )} />
-                          <span className="text-sm capitalize">{(transaction as any).statusLabel}</span>
+                          {(transaction as any).statusLabel}
                        </div>
                     </TableCell>
-                    <TableCell className="text-right pr-6">
+                    <TableCell className="text-right pr-6 py-4">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-8 w-8 p-0 opacity-70 hover:opacity-100">
+                            <Button variant="ghost" className="h-8 w-8 p-0 hover:bg-muted data-[state=open]:bg-muted transition-colors rounded-full">
                               <span className="sr-only">Open menu</span>
-                              <SlidersHorizontal className="h-4 w-4" />
+                              <MoreHorizontal className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-[160px]">
+                          <DropdownMenuContent align="end" className="w-[180px] p-1 shadow-lg border-border/60 backdrop-blur-sm bg-popover/95">
                             {(transaction.statusKey === "pending" || transaction.statusKey === "unposted") && (
                               <>
                                 <DropdownMenuItem onClick={() => {
@@ -1727,8 +2189,8 @@ export const TransactionManagement = () => {
                                   setAllocAccountId('');
                                   setAllocDesc(String(full?.description || ''));
                                   setAllocationOpen(true);
-                                }} disabled={posting}>
-                                  {posting ? (
+                                }} disabled={posting[transaction.id]} className="cursor-pointer focus:bg-emerald-50 focus:text-emerald-700 transition-colors">
+                                  {posting[transaction.id] ? (
                                     <>
                                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                       <span>Posting…</span>
@@ -1740,14 +2202,14 @@ export const TransactionManagement = () => {
                                     </>
                                   )}
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => setTransactionStatus(transaction.id, 'rejected')}>
+                                <DropdownMenuItem onClick={() => setTransactionStatus(transaction.id, 'rejected')} className="cursor-pointer focus:bg-rose-50 focus:text-rose-700 transition-colors">
                                   <XCircle className="mr-2 h-4 w-4 text-rose-500" />
                                   <span>Reject</span>
                                 </DropdownMenuItem>
                               </>
                             )}
                             {transaction.statusKey === "approved" && (
-                              <DropdownMenuItem onClick={() => setTransactionStatus(transaction.id, 'pending')}>
+                              <DropdownMenuItem onClick={() => setTransactionStatus(transaction.id, 'pending')} className="cursor-pointer focus:bg-amber-50 focus:text-amber-700 transition-colors">
                                 <XCircle className="mr-2 h-4 w-4 text-amber-500" />
                                 <span>Unapprove</span>
                               </DropdownMenuItem>
@@ -1756,13 +2218,13 @@ export const TransactionManagement = () => {
                               const full = items.find(i => i.id === transaction.id);
                               setPendingEditData(full || transaction);
                               setEditWarningOpen(true);
-                            }}>
+                            }} className="cursor-pointer focus:bg-primary/5 focus:text-primary transition-colors">
                               <Edit className="mr-2 h-4 w-4" />
                               <span>Edit</span>
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => {
-                               toast({ title: "Not implemented", description: "Duplicate feature coming soon" });
-                            }}>
+                                toast({ title: "Not implemented", description: "Duplicate feature coming soon" });
+                            }} className="cursor-pointer transition-colors">
                               <Copy className="mr-2 h-4 w-4" />
                               <span>Duplicate</span>
                             </DropdownMenuItem>
@@ -1770,7 +2232,7 @@ export const TransactionManagement = () => {
                                const full = items.find(i => i.id === transaction.id);
                                setViewDetailsData(full || transaction);
                                setViewDetailsOpen(true);
-                            }}>
+                            }} className="cursor-pointer transition-colors">
                               <FileText className="mr-2 h-4 w-4" />
                               <span>View Details</span>
                             </DropdownMenuItem>
@@ -1778,29 +2240,33 @@ export const TransactionManagement = () => {
                                const full = items.find(i => i.id === transaction.id);
                                setAttachmentsData(full || transaction);
                                setAttachmentsOpen(true);
-                            }}>
+                            }} className="cursor-pointer transition-colors">
                               <Paperclip className="mr-2 h-4 w-4" />
                               <span>Attachments</span>
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => initiateDelete(transaction.id)} className="text-rose-500 focus:text-rose-500">
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              <span>Delete</span>
+                            <DropdownMenuItem onClick={() => {
+                               const full = items.find(i => i.id === transaction.id);
+                               initiateAdjustment(full || transaction);
+                            }} className="cursor-pointer text-amber-600 focus:bg-amber-50 focus:text-amber-700 transition-colors">
+                              <RefreshCw className="mr-2 h-4 w-4" />
+                              <span>Adjust / Reverse</span>
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
                   </TableRow>
+                  </React.Fragment>
                 ))}
               </TableBody>
           </Table>
         </CardContent>
-        <div className="flex items-center justify-between p-4 border-t">
+        <div className="flex items-center justify-between p-4 border-t bg-muted/5">
           <div className="text-sm text-muted-foreground">
              Showing {items.length} of {totalCount} entries
           </div>
           <div className="flex items-center gap-2">
             <Select value={String(pageSize)} onValueChange={(v) => { setPage(0); setPageSize(parseInt(v)); }}>
-              <SelectTrigger className="w-[70px] h-8"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-[70px] h-8 bg-background"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="10">10</SelectItem>
                 <SelectItem value="25">25</SelectItem>
@@ -1808,8 +2274,8 @@ export const TransactionManagement = () => {
               </SelectContent>
             </Select>
             <div className="flex items-center gap-1">
-               <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}>Previous</Button>
-               <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)}>Next</Button>
+               <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))} className="h-8">Previous</Button>
+               <Button variant="outline" size="sm" disabled={(page + 1) >= Math.ceil(totalCount / pageSize)} onClick={() => setPage(p => p + 1)} className="h-8">Next</Button>
             </div>
           </div>
         </div>
@@ -1817,23 +2283,25 @@ export const TransactionManagement = () => {
 
       {/* Edit Warning Dialog */}
       <Dialog open={editWarningOpen} onOpenChange={setEditWarningOpen}>
-        <DialogContent className="sm:max-w-[425px] text-center">
+        <DialogContent className="sm:max-w-[425px] text-center p-6">
            <DialogHeader className="flex flex-col items-center gap-4">
-             <img src="/logo.png" alt="Rigel Logo" className="h-16 w-auto object-contain" />
-             <DialogTitle className="text-xl">Expert Mode Warning</DialogTitle>
+             <div className="h-16 w-16 rounded-full bg-amber-100 flex items-center justify-center mb-2">
+                <img src="/logo.png" alt="Rigel Logo" className="h-10 w-auto object-contain opacity-50" />
+             </div>
+             <DialogTitle className="text-xl text-amber-700">Expert Mode Warning</DialogTitle>
              <DialogDescription className="text-base pt-2">
                Editing a transaction requires accounting knowledge. You will need to manually adjust debit and credit entries.
                <br/><br/>
-               Incorrect changes may affect your trial balance. Proceed with caution.
+               <span className="font-medium text-amber-600 bg-amber-50 px-2 py-1 rounded">Incorrect changes may affect your trial balance.</span>
              </DialogDescription>
            </DialogHeader>
-           <DialogFooter className="flex sm:justify-center gap-2 mt-4 w-full">
-             <Button variant="outline" onClick={() => setEditWarningOpen(false)} className="w-full sm:w-auto">Cancel</Button>
+           <DialogFooter className="flex sm:justify-center gap-3 mt-6 w-full">
+             <Button variant="outline" onClick={() => setEditWarningOpen(false)} className="w-full sm:w-auto border-amber-200 hover:bg-amber-50 hover:text-amber-700">Cancel</Button>
              <Button onClick={() => {
                setEditData(pendingEditData);
                setEditWarningOpen(false);
                setOpen(true);
-             }} className="w-full sm:w-auto bg-primary">
+             }} className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white border-none">
                Continue to Edit
              </Button>
            </DialogFooter>
@@ -1842,63 +2310,84 @@ export const TransactionManagement = () => {
 
       {/* View Details Dialog */}
       <Dialog open={viewDetailsOpen} onOpenChange={setViewDetailsOpen}>
-        <DialogContent className="sm:max-w-[600px]">
-          <DialogHeader>
-            <DialogTitle>Transaction Details</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="sm:max-w-[650px] overflow-hidden p-0 gap-0">
+          <div className="bg-muted/30 p-6 border-b">
+             <DialogHeader>
+               <DialogTitle className="flex items-center gap-2 text-xl">
+                  <div className="p-2 bg-primary/10 rounded-lg text-primary">
+                    <FileText className="h-5 w-5" />
+                  </div>
+                  Transaction Details
+               </DialogTitle>
+               <DialogDescription>
+                  Reference: <span className="font-mono text-foreground font-medium">{viewDetailsData?.reference_number || viewDetailsData?.reference || '—'}</span>
+               </DialogDescription>
+             </DialogHeader>
+          </div>
           {viewDetailsData && (
-            <div className="grid gap-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground">Date</Label>
-                  <div className="font-medium">{viewDetailsData.transaction_date || viewDetailsData.date}</div>
+            <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-1">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Date</Label>
+                  <div className="font-medium text-sm flex items-center gap-2">
+                     <Calendar className="h-4 w-4 text-muted-foreground" />
+                     {viewDetailsData.transaction_date || viewDetailsData.date}
+                  </div>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground">Reference</Label>
-                  <div className="font-medium">{viewDetailsData.reference_number || viewDetailsData.reference || '—'}</div>
+                <div className="space-y-1">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Amount</Label>
+                  <div className="font-bold text-lg tabular-nums text-primary">
+                     R {Number(viewDetailsData.total_amount || viewDetailsData.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}
+                  </div>
                 </div>
-                <div className="col-span-2">
-                  <Label className="text-muted-foreground">Description</Label>
-                  <div className="font-medium">{viewDetailsData.description}</div>
+                <div className="col-span-2 space-y-1">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Description</Label>
+                  <div className="font-medium text-sm p-3 bg-muted/20 rounded-md border">{viewDetailsData.description}</div>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground">Amount</Label>
-                  <div className="font-medium">R {Number(viewDetailsData.total_amount || viewDetailsData.amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</div>
+                <div className="space-y-1">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Type</Label>
+                  <div><Badge variant="outline" className="font-normal">{viewDetailsData.transaction_type || viewDetailsData.type || 'Transaction'}</Badge></div>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground">Type</Label>
-                  <Badge variant="outline">{viewDetailsData.transaction_type || viewDetailsData.type || 'Transaction'}</Badge>
+                <div className="space-y-1">
+                  <Label className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Status</Label>
+                  <div>
+                    <Badge variant={viewDetailsData.status === 'approved' ? 'default' : 'secondary'} className={cn(
+                       viewDetailsData.status === 'approved' ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-100 border-emerald-200" : ""
+                    )}>
+                      {viewDetailsData.status || 'Pending'}
+                    </Badge>
+                  </div>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground">Status</Label>
-                  <Badge variant={viewDetailsData.status === 'approved' ? 'default' : 'secondary'}>
-                    {viewDetailsData.status || 'Pending'}
-                  </Badge>
-                </div>
-                <div>
-                   <Label className="text-muted-foreground">Bank Account</Label>
-                   <div className="font-medium">{(viewDetailsData.bank_account?.bank_name || viewDetailsData.bank || '—')}</div>
+                <div className="col-span-2 space-y-1">
+                   <Label className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Bank Account</Label>
+                   <div className="font-medium text-sm flex items-center gap-2">
+                      <Wallet className="h-4 w-4 text-muted-foreground" />
+                      {(viewDetailsData.bank_account?.bank_name || viewDetailsData.bank || '—')}
+                   </div>
                 </div>
               </div>
 
               {viewDetailsData.entries && viewDetailsData.entries.length > 0 && (
-                <div className="mt-4">
-                  <Label className="mb-2 block text-muted-foreground">Journal Entries</Label>
-                  <div className="border rounded-md overflow-hidden">
+                <div className="mt-6 pt-6 border-t">
+                  <Label className="mb-3 block text-sm font-semibold flex items-center gap-2">
+                     <SlidersHorizontal className="h-4 w-4" />
+                     Journal Entries (Double Entry)
+                  </Label>
+                  <div className="border rounded-lg overflow-hidden shadow-sm">
                     <Table>
                       <TableHeader>
-                        <TableRow className="bg-muted/50 divide-x divide-muted/20">
-                          <TableHead>Account</TableHead>
-                          <TableHead className="text-right">Debit</TableHead>
-                          <TableHead className="text-right">Credit</TableHead>
+                        <TableRow className="bg-muted/50 divide-x divide-border/50">
+                          <TableHead className="text-xs uppercase font-semibold">Account</TableHead>
+                          <TableHead className="text-right text-xs uppercase font-semibold w-32">Debit</TableHead>
+                          <TableHead className="text-right text-xs uppercase font-semibold w-32">Credit</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {viewDetailsData.entries.map((e: any, i: number) => (
-                          <TableRow key={i} className="divide-x divide-muted/20">
-                            <TableCell>{e.chart_of_accounts?.account_name || 'Unknown Account'}</TableCell>
-                            <TableCell className="text-right">{Number(e.debit) > 0 ? `R ${Number(e.debit).toFixed(2)}` : '-'}</TableCell>
-                            <TableCell className="text-right">{Number(e.credit) > 0 ? `R ${Number(e.credit).toFixed(2)}` : '-'}</TableCell>
+                          <TableRow key={i} className="divide-x divide-border/50 hover:bg-muted/20">
+                            <TableCell className="font-medium text-sm">{e.chart_of_accounts?.account_name || 'Unknown Account'}</TableCell>
+                            <TableCell className="text-right tabular-nums text-sm">{Number(e.debit) > 0 ? `R ${Number(e.debit).toFixed(2)}` : '-'}</TableCell>
+                            <TableCell className="text-right tabular-nums text-sm">{Number(e.credit) > 0 ? `R ${Number(e.credit).toFixed(2)}` : '-'}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1908,8 +2397,8 @@ export const TransactionManagement = () => {
               )}
             </div>
           )}
-          <DialogFooter>
-            <Button onClick={() => setViewDetailsOpen(false)}>Close</Button>
+          <DialogFooter className="p-4 bg-muted/10 border-t">
+            <Button onClick={() => setViewDetailsOpen(false)} className="w-full sm:w-auto">Close Details</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1918,59 +2407,232 @@ export const TransactionManagement = () => {
       <Dialog open={attachmentsOpen} onOpenChange={setAttachmentsOpen}>
         <DialogContent className="sm:max-w-[500px]">
           <DialogHeader>
-            <DialogTitle>Attachments</DialogTitle>
-            <DialogDescription>Manage files associated with this transaction</DialogDescription>
+            <DialogTitle className="flex items-center gap-2">
+               <Paperclip className="h-5 w-5 text-primary" />
+               Attachments
+            </DialogTitle>
+            <DialogDescription>
+              Manage files for transaction <span className="font-mono text-foreground">{attachmentsData?.reference_number}</span>
+            </DialogDescription>
           </DialogHeader>
-          <div className="py-8 text-center border-2 border-dashed rounded-lg bg-muted/10">
-             <Paperclip className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-             <p className="text-sm text-muted-foreground mb-2">No attachments found for this transaction.</p>
-             <Button variant="outline" onClick={() => toast({ title: "Upload", description: "File upload not yet connected to storage." })}>
-               <Plus className="h-4 w-4 mr-2" />
-               Add Attachment
-             </Button>
+          
+          <div className="space-y-4">
+            <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors relative">
+               {uploading ? (
+                   <div className="flex flex-col items-center gap-2">
+                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                       <p className="text-sm text-muted-foreground">Uploading...</p>
+                   </div>
+               ) : (
+                   <>
+                       <input 
+                          type="file" 
+                          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                          onChange={handleFileUpload}
+                          disabled={uploading}
+                       />
+                       <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                          <Upload className="h-8 w-8 opacity-50" />
+                          <span className="text-sm font-medium">Click to upload or drag and drop</span>
+                          <span className="text-xs">Supports PDF, Images, Excel (Max 5MB)</span>
+                       </div>
+                   </>
+               )}
+            </div>
+
+            <div className="space-y-2">
+               <h4 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">Attached Files ({fileList.length})</h4>
+               {fileList.length === 0 ? (
+                   <p className="text-sm text-muted-foreground italic py-2">No files attached yet.</p>
+               ) : (
+                   <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
+                       {fileList.map((file) => (
+                           <div key={file.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border group hover:bg-muted/50 transition-colors">
+                               <div className="flex items-center gap-3 overflow-hidden">
+                                   <div className="p-2 bg-background rounded-md border">
+                                       <FileText className="h-4 w-4 text-primary" />
+                                   </div>
+                                   <div className="flex flex-col overflow-hidden">
+                                       <span className="text-sm font-medium truncate w-[200px]">{file.file_name}</span>
+                                       <span className="text-xs text-muted-foreground">
+                                           {(file.file_size / 1024).toFixed(1)} KB • {new Date(file.created_at).toLocaleDateString()}
+                                       </span>
+                                   </div>
+                               </div>
+                               <div className="flex items-center gap-1">
+                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => {
+                                       const { data } = supabase.storage.from('transactions').getPublicUrl(file.file_path);
+                                       window.open(data.publicUrl, '_blank');
+                                   }}>
+                                       <Eye className="h-4 w-4" />
+                                   </Button>
+                                   <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteAttachment(file.id, file.file_path)}>
+                                       <Trash2 className="h-4 w-4" />
+                                   </Button>
+                               </div>
+                           </div>
+                       ))}
+                   </div>
+               )}
+            </div>
           </div>
+
           <DialogFooter>
-            <Button onClick={() => setAttachmentsOpen(false)}>Close</Button>
+            <Button onClick={() => setAttachmentsOpen(false)} className="w-full sm:w-auto">Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <DialogContent className="sm:max-w-[450px]">
+      {/* Adjustment Dialog */}
+      <Dialog open={adjustmentOpen} onOpenChange={setAdjustmentOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-rose-600 flex items-center gap-2">
-              <XCircle className="h-5 w-5" />
-              Delete Transaction
+            <DialogTitle className="text-amber-600 flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Adjust Transaction
             </DialogTitle>
             <DialogDescription className="pt-2">
-              This action cannot be undone. Deleting a transaction will remove all associated ledger entries and may affect your financial reports.
+              Create an adjustment or reversal for this transaction. This will create a new transaction entry to correct the ledger.
             </DialogDescription>
           </DialogHeader>
           
           <div className="space-y-4 py-4">
-             <div className="p-3 bg-rose-50 border border-rose-100 rounded-md text-rose-800 text-sm font-medium">
-               Warning: This will cause unreliable reports if the transaction has already been reconciled or reported.
+             <div className="grid grid-cols-2 gap-4">
+               <div className="space-y-2">
+                  <Label>Adjustment Date</Label>
+                  <Input 
+                     type="date" 
+                     value={adjustmentDate} 
+                     onChange={(e) => setAdjustmentDate(e.target.value)}
+                  />
+               </div>
+               <div className="space-y-2">
+                  <Label>Adjustment Amount</Label>
+                  <Input 
+                     type="number" 
+                     value={adjustmentAmount} 
+                     onChange={(e) => setAdjustmentAmount(e.target.value)}
+                     placeholder="0.00" 
+                  />
+               </div>
              </div>
+             <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                   <Label>Account to Debit</Label>
+                   <Select value={debitAccount} onValueChange={setDebitAccount}>
+                      <SelectTrigger>
+                         <SelectValue placeholder="Select Debit Account" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[200px]">
+                         {coaExpense.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name} (Expense)</SelectItem>
+                         ))}
+                         {coaIncome.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name} (Income)</SelectItem>
+                         ))}
+                         {coaReceivable.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name} (Asset)</SelectItem>
+                         ))}
+                         {coaPayable.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name} (Liability)</SelectItem>
+                         ))}
+                         {coaOther.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
+                         ))}
+                         {banks.map((b: any) => (
+                             <SelectItem key={b.id} value={b.id}>{b.bank_name}</SelectItem>
+                         ))}
+                      </SelectContent>
+                   </Select>
+                </div>
+                <div className="space-y-2">
+                   <Label>Account to Credit</Label>
+                   <Select value={creditAccount} onValueChange={setCreditAccount}>
+                      <SelectTrigger>
+                         <SelectValue placeholder="Select Credit Account" />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-[200px]">
+                         {coaExpense.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name} (Expense)</SelectItem>
+                         ))}
+                         {coaIncome.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name} (Income)</SelectItem>
+                         ))}
+                         {coaReceivable.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name} (Asset)</SelectItem>
+                         ))}
+                         {coaPayable.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name} (Liability)</SelectItem>
+                         ))}
+                         {coaOther.map((a: any) => (
+                            <SelectItem key={a.id} value={a.id}>{a.account_name}</SelectItem>
+                         ))}
+                         {banks.map((b: any) => (
+                             <SelectItem key={b.id} value={b.id}>{b.bank_name}</SelectItem>
+                         ))}
+                      </SelectContent>
+                   </Select>
+                </div>
+             </div>
+
              <div className="space-y-2">
-               <Label>To confirm, type: <span className="font-mono font-bold select-all">Are you sure that this will cause unreliable report?</span></Label>
-               <Input 
-                 value={deleteConfirmText} 
-                 onChange={(e) => setDeleteConfirmText(e.target.value)} 
-                 placeholder="Type the confirmation phrase"
-                 className="border-rose-200 focus-visible:ring-rose-500"
+               <Label>Reason for Adjustment</Label>
+               <Textarea 
+                 value={adjustmentReason} 
+                 onChange={(e) => setAdjustmentReason(e.target.value)} 
+                 placeholder="Explain why this adjustment is being made..."
+                 className="min-h-[80px]"
                />
+             </div>
+
+             <div className="space-y-2">
+               <Label>Supporting Document (Optional)</Label>
+               <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors relative">
+                 <input 
+                    type="file" 
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    onChange={(e) => {
+                        if (e.target.files && e.target.files[0]) {
+                            setAdjustmentFile(e.target.files[0]);
+                        }
+                    }}
+                 />
+                 <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                   {adjustmentFile ? (
+                       <>
+                        <FileText className="h-8 w-8 text-primary" />
+                        <span className="text-sm font-medium text-foreground">{adjustmentFile.name}</span>
+                        <span className="text-xs">Click to replace</span>
+                       </>
+                   ) : (
+                       <>
+                        <Upload className="h-8 w-8 opacity-50" />
+                        <span className="text-sm">Click or drag to upload document</span>
+                       </>
+                   )}
+                 </div>
+               </div>
              </div>
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteConfirmOpen(false)}>Cancel</Button>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setAdjustmentOpen(false)} className="w-full sm:w-auto">Cancel</Button>
             <Button 
-              variant="destructive" 
-              onClick={confirmDelete}
-              disabled={deleteConfirmText !== "Are you sure that this will cause unreliable report?"}
+              onClick={handleAdjustment}
+              disabled={isAdjusting || !adjustmentReason.trim()}
+              className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white"
             >
-              Delete Permanently
+              {isAdjusting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <History className="mr-2 h-4 w-4" />
+                  Post Adjustment
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

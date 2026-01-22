@@ -196,10 +196,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initializeAuth();
 
     // Listen for auth changes with error handling
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (mounted) {
+        // If we are just refreshing the token, do not set loading to true
+        if (event === 'TOKEN_REFRESHED') {
+           setUser(session?.user ?? null);
+           setLoading(false);
+           return;
+        }
+
         setUser(session?.user ?? null);
-        setLoading(false); // Unblock immediately
+        
+        // Only set loading false if we have a definitive result
+        // Use a small buffer to prevent flicker
+        if (session?.user) {
+            setLoading(false);
+        } else if (event === 'SIGNED_OUT') {
+            setLoading(false);
+        }
         
         if (session?.user) {
           // Fetch additional data in background

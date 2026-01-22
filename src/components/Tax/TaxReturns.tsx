@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { FileCheck } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { emitDashboardCacheInvalidation } from "@/stores/dashboardCache";
 import { useToast } from "@/hooks/use-toast";
 
 interface TaxPeriod {
@@ -265,6 +266,8 @@ export const TaxReturns = () => {
       if (entErr) throw entErr;
       const { error: updErr } = await supabase.from("transactions").update({ status: "approved" }).eq("id", tx.id);
       if (updErr) throw updErr;
+
+      emitDashboardCacheInvalidation(companyId);
 
       toast({ title: "Settlement recorded", description: `${settlementLabel}: R ${total.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}` });
       setBankDialogOpen(false);

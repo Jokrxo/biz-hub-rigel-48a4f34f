@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { cn } from "@/lib/utils";
 import { DashboardLayout } from "@/components/Layout/DashboardLayout";
 import SEO from "@/components/SEO";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Download, Trash2, Package, Search, Info, Menu, Loader2, Building2, TrendingUp, Calculator, CheckCircle2, AlertTriangle, Check, XCircle } from "lucide-react";
+import { Plus, Download, Package, Search, Info, Menu, Loader2, Building2, TrendingUp, TrendingDown, Calculator, CheckCircle2, CheckCircle, AlertTriangle, Check, XCircle, History, Trash2, Calendar } from "lucide-react";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import * as XLSX from "xlsx";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -32,6 +34,30 @@ interface FixedAsset {
   status: string;
   disposal_date?: string;
 }
+
+const calculateNetBookValue = (asset: FixedAsset | null) => {
+  if (!asset) return 0;
+  return (asset.cost || 0) - (asset.accumulated_depreciation || 0);
+};
+
+const monthStartsBetween = (d1: string, d2: string) => {
+  const start = new Date(d1);
+  const end = new Date(d2);
+  const result: string[] = [];
+  // Start from the first day of the month of the start date
+  const current = new Date(start.getFullYear(), start.getMonth(), 1);
+  // Ensure we don't go past the end date
+  while (current <= end) {
+    // Only include if the date is actually >= start date (or just include all months touched?)
+    // Usually depreciation starts the month of purchase or next month. 
+    // Let's include all month starts that fall within the range [start, end]
+    // But the loop is on month starts. 
+    // If purchase is Jan 15, current is Jan 1.
+    result.push(current.toISOString().split('T')[0]);
+    current.setMonth(current.getMonth() + 1);
+  }
+  return result;
+};
 
 export default function FixedAssetsPage() {
   const navigate = useNavigate();
@@ -82,6 +108,8 @@ export default function FixedAssetsPage() {
     disposal_amount: "",
     asset_account_id: "",
     bank_account_id: "",
+    reason: "",
+    file: null as File | null,
   });
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [page, setPage] = useState(0);
@@ -247,7 +275,7 @@ export default function FixedAssetsPage() {
       return;
     }
 
-    setDialogOpen(false);
+    // setDialogOpen(false); // Keep open for feedback
     try {
       setIsSubmitting(true);
       setProgress(10);
@@ -331,16 +359,13 @@ export default function FixedAssetsPage() {
         setIsSubmitting(false);
         setFormData({ description: "", cost: "", purchase_date: "", useful_life_years: "5", depreciation_method: "straight_line", asset_account_id: formData.asset_account_id, funding_source: "bank", bank_account_id: "", loan_account_id: "" });
         loadAssets();
+        setDialogOpen(false); // Close on success
       }, 2000);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
       setIsSubmitting(false);
-      setDialogOpen(true);
+      // setDialogOpen(true); // Already open
     }
-  };
-
-  const calculateNetBookValue = (asset: FixedAsset) => {
-    return (asset.cost || 0) - (asset.accumulated_depreciation || 0);
   };
 
   const isOpeningAsset = (asset: FixedAsset) => {
@@ -507,7 +532,9 @@ export default function FixedAssetsPage() {
           disposal_date: new Date().toISOString().split('T')[0], 
           disposal_amount: '', 
           asset_account_id: disposalData.asset_account_id || '', 
-          bank_account_id: disposalData.bank_account_id || '' 
+          bank_account_id: disposalData.bank_account_id || '',
+          reason: '',
+          file: null as any
         });
         loadAssets();
       }, 2000);
@@ -569,138 +596,194 @@ export default function FixedAssetsPage() {
               </Button>
               {canEdit && (
                 <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-                  <DialogContent className="sm:max-w-[560px] p-4">
+                  <DialogContent className="sm:max-w-[850px] max-h-[90vh] overflow-y-auto">
                     <DialogHeader>
-                      <DialogTitle>Add Opening Fixed Asset</DialogTitle>
+                      <DialogTitle className="text-xl flex items-center gap-2">
+                        <Package className="h-5 w-5 text-primary" />
+                        Add Opening Fixed Asset
+                      </DialogTitle>
+                      <DialogDescription>
+                        Record an existing asset's opening balance from previous periods.
+                      </DialogDescription>
                     </DialogHeader>
-                    <form onSubmit={handleSubmit} className="space-y-3">
-                      <div>
-                        <Label>Description</Label>
-                        <div className="grid grid-cols-2 gap-2 items-start">
-                          <Input className="h-9"
-                            value={formData.description}
-                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                            placeholder="e.g., Office Equipment"
-                            required
-                          />
-                          <div className="space-y-2">
-                            <Label className="text-xs">Select Fixed Asset (Chart of Accounts)</Label>
-                            <div className="flex items-center gap-2">
-                              <div className="flex-1">
-                                <Select value={formData.asset_account_id} onValueChange={(val) => {
-                                  setFormData(prev => ({ ...prev, asset_account_id: val }));
-                                  const acc = assetAccounts.find(a => a.id === val);
-                                  if (acc?.account_name) setFormData(prev => ({ ...prev, description: acc.account_name }));
-                                }}>
-                                  <SelectTrigger className="h-9">
-                                    <SelectValue placeholder="Choose fixed asset account" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {assetAccounts.map(acc => (
-                                      <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+
+                    <form onSubmit={handleSubmit} className="space-y-6 mt-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Left Column: Asset Details */}
+                        <div className="space-y-6">
+                          <div className="space-y-4">
+                            <h3 className="font-semibold text-sm flex items-center gap-2 text-primary border-b pb-2">
+                              <Info className="h-4 w-4" /> Asset Details
+                            </h3>
+                            <div className="space-y-3">
+                              <div className="space-y-1">
+                                <Label>Description <span className="text-destructive">*</span></Label>
+                                <Input className="h-9"
+                                  value={formData.description}
+                                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                  placeholder="e.g., Office Equipment"
+                                  required
+                                />
                               </div>
-                              <Popover open={assetSearchOpen} onOpenChange={setAssetSearchOpen}>
-                                <PopoverTrigger asChild>
-                                  <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search fixed asset accounts">
-                                    <Search className="h-4 w-4" />
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent side="bottom" align="start" className="w-80 p-0 z-50 shadow-lg border bg-popover">
-                                  <Command>
-                                    <CommandInput placeholder="Search fixed asset accounts" />
-                                    <CommandEmpty>No asset accounts found</CommandEmpty>
-                                    <CommandList>
-                                      <CommandGroup>
+                              <div className="space-y-1">
+                                <Label>Asset Account (CoA) <span className="text-destructive">*</span></Label>
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1">
+                                    <Select value={formData.asset_account_id} onValueChange={(val) => {
+                                      setFormData(prev => ({ ...prev, asset_account_id: val }));
+                                      const acc = assetAccounts.find(a => a.id === val);
+                                      if (acc?.account_name) setFormData(prev => ({ ...prev, description: acc.account_name }));
+                                    }}>
+                                      <SelectTrigger className="h-9">
+                                        <SelectValue placeholder="Choose account" />
+                                      </SelectTrigger>
+                                      <SelectContent>
                                         {assetAccounts.map(acc => (
-                                          <CommandItem
-                                            key={acc.id}
-                                            value={`${acc.account_code} ${acc.account_name}`}
-                                            onSelect={() => {
-                                              setFormData(prev => ({ ...prev, asset_account_id: acc.id, description: acc.account_name }));
-                                              setAssetSearchOpen(false);
-                                            }}
-                                          >
-                                            {acc.account_code} - {acc.account_name}
-                                          </CommandItem>
+                                          <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
                                         ))}
-                                      </CommandGroup>
-                                    </CommandList>
-                                  </Command>
-                                </PopoverContent>
-                              </Popover>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <Popover open={assetSearchOpen} onOpenChange={setAssetSearchOpen}>
+                                    <PopoverTrigger asChild>
+                                      <Button type="button" variant="outline" className="h-9 w-9 p-0" aria-label="Search">
+                                        <Search className="h-4 w-4" />
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent side="bottom" align="start" className="w-80 p-0 z-50 shadow-lg border bg-popover">
+                                      <Command>
+                                        <CommandInput placeholder="Search accounts..." />
+                                        <CommandEmpty>No accounts found</CommandEmpty>
+                                        <CommandList>
+                                          <CommandGroup>
+                                            {assetAccounts.map(acc => (
+                                              <CommandItem
+                                                key={acc.id}
+                                                value={`${acc.account_code} ${acc.account_name}`}
+                                                onSelect={() => {
+                                                  setFormData(prev => ({ ...prev, asset_account_id: acc.id, description: acc.account_name }));
+                                                  setAssetSearchOpen(false);
+                                                }}
+                                              >
+                                                {acc.account_code} - {acc.account_name}
+                                              </CommandItem>
+                                            ))}
+                                          </CommandGroup>
+                                        </CommandList>
+                                      </Command>
+                                    </PopoverContent>
+                                  </Popover>
+                                </div>
+                              </div>
+                              <div className="space-y-1">
+                                <Label>Cost (R) <span className="text-destructive">*</span></Label>
+                                <Input className="h-9"
+                                  type="number"
+                                  step="0.01"
+                                  value={formData.cost}
+                                  onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
+                                  required
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label>Purchase Date <span className="text-destructive">*</span></Label>
+                                <div className="relative">
+                                  <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                  <Input className="pl-9 h-9"
+                                    type="date"
+                                    value={formData.purchase_date}
+                                    onChange={(e) => setFormData({ ...formData, purchase_date: e.target.value })}
+                                    required
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Right Column: Depreciation Settings */}
+                        <div className="space-y-6">
+                          <div className="space-y-4">
+                            <h3 className="font-semibold text-sm flex items-center gap-2 text-primary border-b pb-2">
+                              <Calculator className="h-4 w-4" /> Depreciation Settings
+                            </h3>
+                            <div className="space-y-3">
+                              <div className="grid grid-cols-2 gap-3">
+                                <div className="space-y-1">
+                                  <Label>Method</Label>
+                                  <Select value={formData.depreciation_method} onValueChange={(val) => setFormData({ ...formData, depreciation_method: val })}>
+                                    <SelectTrigger className="h-9">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="straight_line">Straight Line</SelectItem>
+                                      <SelectItem value="diminishing">Diminishing Balance</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label>Useful Life</Label>
+                                  <Select value={formData.useful_life_years} onValueChange={(val) => setFormData({ ...formData, useful_life_years: val })}>
+                                    <SelectTrigger className="h-9">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {[3, 5, 7, 10, 15, 20].map((years) => (
+                                        <SelectItem key={years} value={years.toString()}>{years} years</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+
+                              {/* Depreciation Preview Card */}
+                              <div className="bg-muted/30 border rounded-lg p-3 text-sm space-y-2 mt-2">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted-foreground">Accum. Depr:</span>
+                                  <span className="font-mono font-medium">
+                                    {(() => {
+                                      const res = calculateDepreciation(parseFloat(formData.cost || '0'), formData.purchase_date || new Date().toISOString().split('T')[0], parseInt(formData.useful_life_years || '5'));
+                                      return `R ${Number(res.accumulatedDepreciation || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
+                                    })()}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted-foreground">Net Book Value:</span>
+                                  <span className="font-mono font-medium">
+                                    {(() => {
+                                      const res = calculateDepreciation(parseFloat(formData.cost || '0'), formData.purchase_date || new Date().toISOString().split('T')[0], parseInt(formData.useful_life_years || '5'));
+                                      return `R ${Number(res.netBookValue || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
+                                    })()}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between items-center border-t pt-2 mt-1">
+                                  <span className="font-semibold text-primary">Annual Depr:</span>
+                                  <span className="font-mono font-bold text-primary">
+                                    {(() => {
+                                      const res = calculateDepreciation(parseFloat(formData.cost || '0'), formData.purchase_date || new Date().toISOString().split('T')[0], parseInt(formData.useful_life_years || '5'));
+                                      return `R ${Number(res.annualDepreciation || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
+                                    })()}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
-                      
-                      <div>
-                        <Label>Cost (R)</Label>
-                        <Input className="h-9"
-                          type="number"
-                          step="0.01"
-                          value={formData.cost}
-                          onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Purchase Date</Label>
-                        <Input className="h-9"
-                          type="date"
-                          value={formData.purchase_date}
-                          onChange={(e) => setFormData({ ...formData, purchase_date: e.target.value })}
-                          required
-                        />
-                      </div>
-                      <div>
-                        <Label>Depreciation Method</Label>
-                        <Select value={formData.depreciation_method} onValueChange={(val) => setFormData({ ...formData, depreciation_method: val })}>
-                          <SelectTrigger className="h-9">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="straight_line">Straight Line</SelectItem>
-                            <SelectItem value="diminishing">Diminishing Balance</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label>Useful Life (Years)</Label>
-                        <Select value={formData.useful_life_years} onValueChange={(val) => setFormData({ ...formData, useful_life_years: val })}>
-                          <SelectTrigger className="h-9">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {[3, 5, 7, 10, 15, 20].map((years) => (
-                              <SelectItem key={years} value={years.toString()}>{years} years</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="rounded-md border p-3 text-sm space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">Accumulated Depreciation</span>
-                          <span>
-                            {(() => {
-                              const res = calculateDepreciation(parseFloat(formData.cost || '0'), formData.purchase_date || new Date().toISOString().split('T')[0], parseInt(formData.useful_life_years || '5'));
-                              return `R ${Number(res.accumulatedDepreciation || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
-                            })()}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">Net Book Value</span>
-                          <span>
-                            {(() => {
-                              const res = calculateDepreciation(parseFloat(formData.cost || '0'), formData.purchase_date || new Date().toISOString().split('T')[0], parseInt(formData.useful_life_years || '5'));
-                              return `R ${Number(res.netBookValue || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
-                            })()}
-                          </span>
-                        </div>
-                      </div>
-                      <Button type="submit" className="w-full bg-gradient-primary">Add Opening Asset</Button>
+
+                      <DialogFooter className="gap-2 sm:gap-0">
+                        <Button type="button" variant="outline" onClick={() => setDialogOpen(false)} disabled={isSubmitting}>
+                          Cancel
+                        </Button>
+                        <Button type="submit" className="bg-gradient-primary min-w-[150px]" disabled={isSubmitting}>
+                          {isSubmitting ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              {progressText || "Processing..."}
+                            </>
+                          ) : "Add Opening Asset"}
+                        </Button>
+                      </DialogFooter>
                     </form>
                   </DialogContent>
                 </Dialog>
@@ -725,7 +808,7 @@ export default function FixedAssetsPage() {
                     Add Opening Asset
                   </Button>
                   <Button className="w-full" variant="secondary" onClick={() => { setActionsOpen(false); setDeprDialogOpen(true); }}>
-                    <Trash2 className="h-4 w-4 mr-2 rotate-180" />
+                    <Calculator className="h-4 w-4 mr-2" />
                     Depreciation
                   </Button>
                   <Button className="w-full" variant="outline" disabled={assets.length===0} onClick={() => { exportAssets(); setActionsOpen(false); }}>
@@ -954,22 +1037,21 @@ export default function FixedAssetsPage() {
           </Dialog>
 
           <Dialog open={purchaseDialogOpen} onOpenChange={setPurchaseDialogOpen}>
-            <DialogContent className="w-screen sm:max-w-[100vw] h-[92vh] p-4 flex flex-col">
-              <div className="sticky top-0 z-40 bg-background border-b">
-                <DialogHeader>
-                  <DialogTitle>Purchase Fixed Asset</DialogTitle>
-                </DialogHeader>
-                <div className="px-0 pb-3 flex gap-2 text-sm overflow-x-auto">
-                  <Button variant="ghost" size="sm" type="button" onClick={() => document.getElementById('section-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Details</Button>
-                  <Button variant="ghost" size="sm" type="button" onClick={() => document.getElementById('section-funding')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Funding</Button>
-                  <Button variant="ghost" size="sm" type="button" onClick={() => document.getElementById('section-amount-vat')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Amount & VAT</Button>
-                  <Button variant="default" size="sm" type="submit" form="purchase-form">Submit</Button>
-                </div>
-              </div>
+            <DialogContent className="sm:max-w-[850px] max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle className="text-xl flex items-center gap-2">
+                  <Package className="h-5 w-5 text-primary" />
+                  Purchase Fixed Asset
+                </DialogTitle>
+                <DialogDescription>
+                  Record a new asset purchase. This will create the asset record and post the necessary financial transactions.
+                </DialogDescription>
+              </DialogHeader>
+
               <form id="purchase-form"
                 onSubmit={async (e) => {
                   e.preventDefault();
-                  setPurchaseDialogOpen(false);
+                  // setPurchaseDialogOpen(false); // Don't close immediately to show progress/errors
                   try {
                     setIsSubmitting(true);
                     setProgress(10);
@@ -1120,6 +1202,7 @@ export default function FixedAssetsPage() {
                     setTimeout(() => {
                       setIsSuccess(false);
                       setIsSubmitting(false);
+                      setPurchaseDialogOpen(false); // Close here on success
                       setPurchaseForm({
                         purchase_date: new Date().toISOString().split("T")[0],
                         amount: "",
@@ -1140,24 +1223,32 @@ export default function FixedAssetsPage() {
                   } catch (err: any) {
                     toast({ title: 'Error', description: err.message, variant: 'destructive' });
                     setIsSubmitting(false);
-                    setPurchaseDialogOpen(true);
+                    // setPurchaseDialogOpen(true); // Already open
                   }
                 }}
-                className="space-y-4"
+                className="space-y-6 mt-4"
               >
-                <div className="flex-1 overflow-y-auto space-y-4">
-                  <div id="section-details" className="space-y-6">
-                    <div>
-                      <Label>Description</Label>
-                      <div className="grid grid-cols-3 gap-2 items-start">
-                        <Input className="h-9"
-                          value={purchaseForm.description}
-                          onChange={(e) => setPurchaseForm({ ...purchaseForm, description: e.target.value })}
-                          placeholder="e.g., Office Equipment"
-                          required
-                        />
-                        <div className="space-y-2">
-                          <Label className="text-xs">Select Fixed Asset (Chart of Accounts)</Label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Left Column: Asset Details & Depreciation */}
+                  <div className="space-y-6">
+                    {/* Asset Details Section */}
+                    <div className="space-y-4">
+                      <h3 className="font-semibold text-sm flex items-center gap-2 text-primary border-b pb-2">
+                        <Info className="h-4 w-4" /> Asset Details
+                      </h3>
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <Label>Description <span className="text-destructive">*</span></Label>
+                          <Input 
+                            className="h-9"
+                            value={purchaseForm.description}
+                            onChange={(e) => setPurchaseForm({ ...purchaseForm, description: e.target.value })}
+                            placeholder="e.g., Office Equipment"
+                            required
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Asset Account (CoA) <span className="text-destructive">*</span></Label>
                           <div className="flex items-center gap-2">
                             <div className="flex-1">
                               <Select
@@ -1172,7 +1263,7 @@ export default function FixedAssetsPage() {
                                 }}
                               >
                                 <SelectTrigger className="h-9">
-                                  <SelectValue placeholder="Choose fixed asset account" />
+                                  <SelectValue placeholder="Choose account" />
                                 </SelectTrigger>
                                 <SelectContent>
                                   {assetAccounts.map(acc => (
@@ -1183,14 +1274,14 @@ export default function FixedAssetsPage() {
                             </div>
                             <Popover open={assetSearchOpen} onOpenChange={setAssetSearchOpen}>
                               <PopoverTrigger asChild>
-                                <Button type="button" variant="outline" className="h-10 w-10 p-0" aria-label="Search fixed asset accounts">
+                                <Button type="button" variant="outline" className="h-9 w-9 p-0" aria-label="Search">
                                   <Search className="h-4 w-4" />
                                 </Button>
                               </PopoverTrigger>
                               <PopoverContent side="bottom" align="start" className="w-80 p-0 z-50 shadow-lg border bg-popover">
                                 <Command>
-                                  <CommandInput placeholder="Search fixed asset accounts" />
-                                  <CommandEmpty>No asset accounts found</CommandEmpty>
+                                  <CommandInput placeholder="Search accounts..." />
+                                  <CommandEmpty>No accounts found</CommandEmpty>
                                   <CommandList>
                                     <CommandGroup>
                                       {assetAccounts.map(acc => (
@@ -1212,277 +1303,405 @@ export default function FixedAssetsPage() {
                             </Popover>
                           </div>
                         </div>
-                        <div>
-                          <Label>Purchase Date</Label>
-                          <Input className="h-9"
-                            type="date"
-                            value={purchaseForm.purchase_date}
-                            onChange={(e) => setPurchaseForm({ ...purchaseForm, purchase_date: e.target.value })}
-                            required
-                          />
+                        <div className="space-y-1">
+                          <Label>Purchase Date <span className="text-destructive">*</span></Label>
+                          <div className="relative">
+                            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input 
+                              className="pl-9 h-9"
+                              type="date"
+                              value={purchaseForm.purchase_date}
+                              onChange={(e) => setPurchaseForm({ ...purchaseForm, purchase_date: e.target.value })}
+                              required
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label>Useful Life (Years)</Label>
-                        <Select
-                          value={purchaseForm.useful_life_years}
-                          onValueChange={(val) => setPurchaseForm({ ...purchaseForm, useful_life_years: val })}
-                        >
-                          <SelectTrigger className="h-9">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {[3, 5, 7, 10, 15, 20].map((y) => (
-                              <SelectItem key={y} value={String(y)}>
-                                {y} years
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label>Depreciation Method</Label>
-                        <Select
-                          value={purchaseForm.depreciation_method}
-                          onValueChange={(val) => setPurchaseForm({ ...purchaseForm, depreciation_method: val })}
-                        >
-                          <SelectTrigger className="h-9">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="straight_line">Straight Line</SelectItem>
-                            <SelectItem value="diminishing">Diminishing Balance</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div id="section-funding" className="grid grid-cols-3 gap-3 items-start">
-                    <div>
-                      <Label>Funding Source</Label>
-                      <Select
-                        value={purchaseForm.funding_source}
-                        onValueChange={(val) => setPurchaseForm({ ...purchaseForm, funding_source: val })}
-                      >
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="bank">Bank</SelectItem>
-                          <SelectItem value="loan">Loan</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {purchaseForm.funding_source === "bank" && (
-                      <div className="col-span-2">
-                        <Label>Bank Account</Label>
-                        <Select
-                          value={purchaseForm.bank_account_id}
-                          onValueChange={(val) => setPurchaseForm({ ...purchaseForm, bank_account_id: val })}
-                        >
-                          <SelectTrigger className="h-9">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {bankAccounts.map((b) => (
-                              <SelectItem key={b.id} value={b.id}>
-                                {b.bank_name ? `${b.bank_name} - ${b.account_name}` : b.account_name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-                    {purchaseForm.funding_source === "loan" && (
-                      <>
-                        <div>
-                          <Label>Loan Account</Label>
+
+                    {/* Depreciation Section */}
+                    <div className="space-y-4">
+                      <h3 className="font-semibold text-sm flex items-center gap-2 text-primary border-b pb-2">
+                        <Calculator className="h-4 w-4" /> Depreciation Settings
+                      </h3>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label>Useful Life</Label>
                           <Select
-                            value={purchaseForm.loan_account_id}
-                            onValueChange={(val) => setPurchaseForm({ ...purchaseForm, loan_account_id: val })}
+                            value={purchaseForm.useful_life_years}
+                            onValueChange={(val) => setPurchaseForm({ ...purchaseForm, useful_life_years: val })}
                           >
                             <SelectTrigger className="h-9">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {loanAccounts.map((acc) => (
-                                <SelectItem key={acc.id} value={acc.id}>
-                                  {acc.account_code} - {acc.account_name}
-                                </SelectItem>
+                              {[3, 5, 7, 10, 15, 20].map((y) => (
+                                <SelectItem key={y} value={String(y)}>{y} years</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </div>
-                        <div>
-                          <Label>Interest & Term</Label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input className="h-9" type="number" step="0.01" placeholder="Interest %" value={purchaseForm.interest_rate} onChange={(e) => setPurchaseForm({ ...purchaseForm, interest_rate: e.target.value })} />
-                            <Input className="h-9" type="number" step="1" placeholder="Term months" value={purchaseForm.loan_term} onChange={(e) => setPurchaseForm({ ...purchaseForm, loan_term: e.target.value })} />
-                          </div>
-                        </div>
-                        <div>
-                          <Label>Loan Term Type</Label>
-                          <Select value={purchaseForm.loan_term_type} onValueChange={(val) => setPurchaseForm({ ...purchaseForm, loan_term_type: val })}>
+                        <div className="space-y-1">
+                          <Label>Method</Label>
+                          <Select
+                            value={purchaseForm.depreciation_method}
+                            onValueChange={(val) => setPurchaseForm({ ...purchaseForm, depreciation_method: val })}
+                          >
                             <SelectTrigger className="h-9">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="short">Short-term</SelectItem>
-                              <SelectItem value="long">Long-term</SelectItem>
+                              <SelectItem value="straight_line">Straight Line</SelectItem>
+                              <SelectItem value="diminishing">Diminishing Balance</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
+                      </div>
+
+                      {/* Depreciation Preview Card */}
+                      <div className="bg-muted/30 border rounded-lg p-3 text-sm space-y-2">
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Annual Depr:</span>
+                          <span className="font-mono font-medium">
+                            {(() => {
+                              const res = calculateDepreciation(parseFloat(purchaseForm.amount || '0') / (purchaseForm.vat_applicable === 'yes' ? 1.15 : 1), purchaseForm.purchase_date || new Date().toISOString().split('T')[0], parseInt(purchaseForm.useful_life_years || '5'));
+                              return `R ${Number(res.annualDepreciation || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
+                            })()}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center border-t pt-2 mt-1">
+                          <span className="font-semibold text-primary">Monthly Depr:</span>
+                          <span className="font-mono font-bold text-primary">
+                            {(() => {
+                              const res = calculateDepreciation(parseFloat(purchaseForm.amount || '0') / (purchaseForm.vat_applicable === 'yes' ? 1.15 : 1), purchaseForm.purchase_date || new Date().toISOString().split('T')[0], parseInt(purchaseForm.useful_life_years || '5'));
+                              return `R ${Number((res.annualDepreciation || 0) / 12).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
+                            })()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Funding & Cost */}
+                  <div className="space-y-6">
+                    <div className="space-y-4">
+                      <h3 className="font-semibold text-sm flex items-center gap-2 text-primary border-b pb-2">
+                        <Building2 className="h-4 w-4" /> Funding & Cost
+                      </h3>
+                      
+                      <div className="space-y-3">
+                         <div className="space-y-1">
+                          <Label>Funding Source</Label>
+                          <Select
+                            value={purchaseForm.funding_source}
+                            onValueChange={(val) => setPurchaseForm({ ...purchaseForm, funding_source: val })}
+                          >
+                            <SelectTrigger className="h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="bank">Bank</SelectItem>
+                              <SelectItem value="loan">Loan</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {purchaseForm.funding_source === "bank" && (
+                          <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-200">
+                            <Label>Bank Account</Label>
+                            <Select
+                              value={purchaseForm.bank_account_id}
+                              onValueChange={(val) => setPurchaseForm({ ...purchaseForm, bank_account_id: val })}
+                            >
+                              <SelectTrigger className="h-9">
+                                <SelectValue placeholder="Select bank account" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {bankAccounts.map((b) => (
+                                  <SelectItem key={b.id} value={b.id}>
+                                    {b.bank_name ? `${b.bank_name} - ${b.account_name}` : b.account_name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+
+                        {purchaseForm.funding_source === "loan" && (
+                          <div className="space-y-3 animate-in fade-in slide-in-from-top-1 duration-200 bg-muted/20 p-3 rounded-lg border">
+                            <div className="space-y-1">
+                              <Label>Loan Account</Label>
+                              <Select
+                                value={purchaseForm.loan_account_id}
+                                onValueChange={(val) => setPurchaseForm({ ...purchaseForm, loan_account_id: val })}
+                              >
+                                <SelectTrigger className="h-9">
+                                  <SelectValue placeholder="Select loan account" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {loanAccounts.map((acc) => (
+                                    <SelectItem key={acc.id} value={acc.id}>
+                                      {acc.account_code} - {acc.account_name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <Label>Interest %</Label>
+                                <Input className="h-9" type="number" step="0.01" placeholder="0.00" value={purchaseForm.interest_rate} onChange={(e) => setPurchaseForm({ ...purchaseForm, interest_rate: e.target.value })} />
+                              </div>
+                              <div className="space-y-1">
+                                <Label>Term (Months)</Label>
+                                <Input className="h-9" type="number" step="1" placeholder="12" value={purchaseForm.loan_term} onChange={(e) => setPurchaseForm({ ...purchaseForm, loan_term: e.target.value })} />
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <Label>Term Type</Label>
+                              <Select value={purchaseForm.loan_term_type} onValueChange={(val) => setPurchaseForm({ ...purchaseForm, loan_term_type: val })}>
+                                <SelectTrigger className="h-9">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="short">Short-term</SelectItem>
+                                  <SelectItem value="long">Long-term</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="bg-primary/5 p-4 rounded-lg border border-primary/10 space-y-4 mt-4">
+                         <div className="space-y-1">
+                           <Label>VAT Applicable?</Label>
+                           <Select
+                             value={purchaseForm.vat_applicable}
+                             onValueChange={(val) => setPurchaseForm({ ...purchaseForm, vat_applicable: val })}
+                           >
+                             <SelectTrigger className="h-9 bg-background">
+                               <SelectValue />
+                             </SelectTrigger>
+                             <SelectContent>
+                               <SelectItem value="yes">Yes (15%)</SelectItem>
+                               <SelectItem value="no">No</SelectItem>
+                             </SelectContent>
+                           </Select>
+                         </div>
+                         <div className="space-y-1">
+                           <Label>Total Amount (R) <span className="text-destructive">*</span></Label>
+                           <Input
+                             className="h-11 font-mono text-lg bg-background"
+                             type="number"
+                             step="0.01"
+                             value={purchaseForm.amount}
+                             onChange={(e) => setPurchaseForm({ ...purchaseForm, amount: e.target.value })}
+                             placeholder="0.00"
+                             required
+                           />
+                           <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                             {purchaseForm.vat_applicable === 'yes' ? (
+                               <>
+                                 <CheckCircle2 className="h-3 w-3 text-emerald-600" /> Includes VAT (R {(Number(purchaseForm.amount || 0) * 15 / 115).toLocaleString(undefined, {maximumFractionDigits: 2})})
+                               </>
+                             ) : (
+                               <>
+                                 <Info className="h-3 w-3" /> Amount excludes VAT
+                               </>
+                             )}
+                           </p>
+                         </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <DialogFooter className="pt-4 border-t gap-2">
+                  <Button type="button" variant="outline" onClick={() => setPurchaseDialogOpen(false)}>Cancel</Button>
+                  <Button type="submit" className="bg-gradient-primary min-w-[150px]" disabled={isSubmitting}>
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        {progressText || "Processing..."}
                       </>
-                    )}
-                  </div>
-                  <div id="section-amount-vat" className="space-y-3">
-                    <div>
-                      <Label>VAT Applicable?</Label>
-                      <Select
-                        value={purchaseForm.vat_applicable}
-                        onValueChange={(val) => setPurchaseForm({ ...purchaseForm, vat_applicable: val })}
-                      >
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="yes">Yes (15%)</SelectItem>
-                          <SelectItem value="no">No</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Amount (R)</Label>
-                      <Input
-                        className="h-9"
-                        type="number"
-                        step="0.01"
-                        value={purchaseForm.amount}
-                        onChange={(e) => setPurchaseForm({ ...purchaseForm, amount: e.target.value })}
-                        required
-                      />
-                      <div className="text-xs text-muted-foreground mt-1">
-                        {purchaseForm.vat_applicable === 'yes' ? 'Amount includes VAT (15%)' : 'Amount excludes VAT'}
-                      </div>
-                    </div>
-                  </div>
-                  <div id="section-preview" className="space-y-3">
-                    <div className="rounded-md border p-3 text-sm space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">Accumulated Depreciation</span>
-                        <span>
-                          {(() => {
-                            const res = calculateDepreciation(parseFloat(purchaseForm.amount || '0'), purchaseForm.purchase_date || new Date().toISOString().split('T')[0], parseInt(purchaseForm.useful_life_years || '5'));
-                            return `R ${Number(res.accumulatedDepreciation || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
-                          })()}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">Net Book Value</span>
-                        <span>
-                          {(() => {
-                            const res = calculateDepreciation(parseFloat(purchaseForm.amount || '0'), purchaseForm.purchase_date || new Date().toISOString().split('T')[0], parseInt(purchaseForm.useful_life_years || '5'));
-                            return `R ${Number(res.netBookValue || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
-                          })()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div id="section-submit" className="bg-background border-t px-4 py-3">
-                  <Button type="submit" className="w-full bg-gradient-primary">Submit</Button>
-                </div>
+                    ) : "Purchase Asset"}
+                  </Button>
+                </DialogFooter>
               </form>
             </DialogContent>
           </Dialog>
           
           {/* Disposal Dialog */}
           <Dialog open={disposalDialogOpen} onOpenChange={setDisposalDialogOpen}>
-            <DialogContent>
+            <DialogContent className="sm:max-w-[600px] max-h-[85vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>Dispose Fixed Asset</DialogTitle>
+                <DialogTitle className="text-xl flex items-center gap-2">
+                  <Trash2 className="h-5 w-5 text-destructive" />
+                  Dispose Fixed Asset
+                </DialogTitle>
+                <DialogDescription>
+                  Record the disposal or sale of an asset. This will remove it from the register and post the necessary journal entries.
+                </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleDispose} className="space-y-4">
+              <form onSubmit={handleDispose} className="space-y-6 mt-2">
                 {selectedAsset && (
                   <>
-                    <div className="p-4 bg-muted rounded-lg space-y-2">
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium">Asset:</span>
-                        <span className="text-sm">{selectedAsset.description}</span>
+                    {/* Asset Snapshot Card */}
+                    <div className="bg-muted/30 border rounded-lg overflow-hidden">
+                      <div className="bg-muted/50 px-4 py-2 border-b">
+                        <h4 className="font-semibold text-sm flex items-center gap-2">
+                          <Package className="h-4 w-4 text-primary" />
+                          {selectedAsset.description}
+                        </h4>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium">Original Cost:</span>
-                        <span className="text-sm">R {selectedAsset.cost.toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm font-medium">Accumulated Depreciation:</span>
-                        <span className="text-sm">R {selectedAsset.accumulated_depreciation.toLocaleString()}</span>
-                      </div>
-                      <div className="flex justify-between border-t pt-2">
-                        <span className="font-bold">Net Book Value:</span>
-                        <span className="font-bold text-primary">R {calculateNetBookValue(selectedAsset).toLocaleString()}</span>
+                      <div className="p-4 grid grid-cols-2 gap-4 text-sm">
+                        <div className="space-y-1">
+                          <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Original Cost</span>
+                          <div className="font-mono font-medium">R {selectedAsset.cost.toLocaleString()}</div>
+                        </div>
+                        <div className="space-y-1">
+                          <span className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Accumulated Depr.</span>
+                          <div className="font-mono font-medium">R {selectedAsset.accumulated_depreciation.toLocaleString()}</div>
+                        </div>
+                        <div className="col-span-2 pt-2 mt-2 border-t flex justify-between items-center bg-primary/5 -mx-4 -mb-4 px-4 py-3">
+                          <span className="font-bold text-primary">Net Book Value</span>
+                          <span className="font-mono font-bold text-lg text-primary">R {calculateNetBookValue(selectedAsset).toLocaleString()}</span>
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <Label>Disposal Date</Label>
-                      <Input
-                        type="date"
-                        value={disposalData.disposal_date}
-                        onChange={(e) => setDisposalData({ ...disposalData, disposal_date: e.target.value })}
-                        required
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Disposal Date <span className="text-destructive">*</span></Label>
+                        <div className="relative">
+                           <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                           <Input
+                             type="date"
+                             value={disposalData.disposal_date}
+                             onChange={(e) => setDisposalData({ ...disposalData, disposal_date: e.target.value })}
+                             required
+                             className="pl-9"
+                           />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Disposal Amount (R) <span className="text-destructive">*</span></Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={disposalData.disposal_amount}
+                          onChange={(e) => setDisposalData({ ...disposalData, disposal_amount: e.target.value })}
+                          placeholder="0.00"
+                          required
+                          className="font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Asset Account (Credit) <span className="text-destructive">*</span></Label>
+                        <Select value={disposalData.asset_account_id} onValueChange={(val) => setDisposalData({ ...disposalData, asset_account_id: val })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select asset account" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {assetAccounts.map(acc => (
+                              <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground">Account to derecognize asset cost</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Bank/Receivable (Debit) <span className="text-destructive">*</span></Label>
+                        <Select value={disposalData.bank_account_id} onValueChange={(val) => setDisposalData({ ...disposalData, bank_account_id: val })}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select receiving account" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {bankAccounts.map(b => (
+                              <SelectItem key={b.id} value={b.id}>{b.bank_name ? `${b.bank_name} - ${b.account_name}` : b.account_name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground">Account receiving proceeds</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Reason for Disposal</Label>
+                      <Textarea 
+                        value={disposalData.reason} 
+                        onChange={(e) => setDisposalData({ ...disposalData, reason: e.target.value })} 
+                        placeholder="Why is this asset being disposed? (e.g., Sold, Scrapped, Damaged)" 
+                        className="resize-none h-20"
                       />
                     </div>
-                    <div>
-                      <Label>Disposal Amount (R)</Label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        value={disposalData.disposal_amount}
-                        onChange={(e) => setDisposalData({ ...disposalData, disposal_amount: e.target.value })}
-                        placeholder="Amount received from sale"
-                        required
-                      />
+
+                    <div className="space-y-2">
+                      <Label>Supporting Document</Label>
+                      <div className="flex items-center gap-2">
+                        <Input 
+                          type="file" 
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              setDisposalData({ ...disposalData, file: e.target.files[0] });
+                            }
+                          }} 
+                          className="cursor-pointer file:mr-4 file:py-1 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <Label>Asset Account (to derecognize)</Label>
-                      <Select value={disposalData.asset_account_id} onValueChange={(val) => setDisposalData({ ...disposalData, asset_account_id: val })}>
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {assetAccounts.map(acc => (
-                            <SelectItem key={acc.id} value={acc.id}>{acc.account_code} - {acc.account_name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Bank Account (proceeds)</Label>
-                      <Select value={disposalData.bank_account_id} onValueChange={(val) => setDisposalData({ ...disposalData, bank_account_id: val })}>
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {bankAccounts.map(b => (
-                            <SelectItem key={b.id} value={b.id}>{b.bank_name ? `${b.bank_name} - ${b.account_name}` : b.account_name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {disposalData.disposal_amount && (
-                        <p>
-                          {parseFloat(disposalData.disposal_amount) > calculateNetBookValue(selectedAsset)
-                            ? `Gain on disposal: R ${(parseFloat(disposalData.disposal_amount) - calculateNetBookValue(selectedAsset)).toLocaleString()}`
-                            : `Loss on disposal: R ${(calculateNetBookValue(selectedAsset) - parseFloat(disposalData.disposal_amount)).toLocaleString()}`
-                          }
-                        </p>
-                      )}
-                    </div>
-                    <Button type="submit" className="w-full bg-gradient-primary">Confirm Disposal</Button>
+
+                    {/* Gain/Loss Calculation Banner */}
+                    {disposalData.disposal_amount && (
+                      <div className={cn(
+                        "rounded-lg p-4 flex items-center justify-between border",
+                        parseFloat(disposalData.disposal_amount) >= calculateNetBookValue(selectedAsset)
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                          : "bg-rose-50 border-rose-200 text-rose-900"
+                      )}>
+                        <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "p-2 rounded-full",
+                            parseFloat(disposalData.disposal_amount) >= calculateNetBookValue(selectedAsset)
+                              ? "bg-emerald-100 text-emerald-600"
+                              : "bg-rose-100 text-rose-600"
+                          )}>
+                             {parseFloat(disposalData.disposal_amount) >= calculateNetBookValue(selectedAsset) 
+                               ? <TrendingUp className="h-5 w-5" /> 
+                               : <TrendingDown className="h-5 w-5" />
+                             }
+                          </div>
+                          <div>
+                            <p className="font-semibold text-sm">
+                              {parseFloat(disposalData.disposal_amount) >= calculateNetBookValue(selectedAsset)
+                                ? "Profit on Disposal"
+                                : "Loss on Disposal"
+                              }
+                            </p>
+                            <p className="text-xs opacity-90">
+                              Calculated from Net Book Value
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="block text-lg font-bold font-mono">
+                            R {Math.abs(parseFloat(disposalData.disposal_amount) - calculateNetBookValue(selectedAsset)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <DialogFooter className="gap-2 sm:gap-0">
+                      <Button type="button" variant="outline" onClick={() => setDisposalDialogOpen(false)}>Cancel</Button>
+                      <Button type="submit" className="bg-primary hover:bg-primary/90">
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        Confirm Disposal
+                      </Button>
+                    </DialogFooter>
                   </>
                 )}
               </form>

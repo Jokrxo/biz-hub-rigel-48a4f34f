@@ -25,15 +25,36 @@ export function useRoles() {
         .select('role')
         .eq('user_id', user.id)
         .eq('company_id', profile.company_id);
-        
-      return (data || []).map(r => r.role as Role);
+      
+      const fetchedRoles = (data || []).map(r => r.role as Role);
+      
+      // Cache the fetched roles to localStorage for instant access next time
+      try {
+        localStorage.setItem(`rigel_roles_${user.id}`, JSON.stringify(fetchedRoles));
+      } catch (e) {
+        console.warn('Failed to cache roles', e);
+      }
+      
+      return fetchedRoles;
     },
     enabled: !!user && !authLoading,
     staleTime: 1000 * 60 * 5, // 5 minutes cache
     refetchOnWindowFocus: false,
+    placeholderData: () => {
+       // Try to load from local storage to prevent flickering
+       if (!user) return [];
+       try {
+         const cached = localStorage.getItem(`rigel_roles_${user.id}`);
+         if (cached) return JSON.parse(cached);
+       } catch {}
+       return [];
+    }
   });
 
-  const loading = authLoading || (!!user && queryLoading);
+  // Use roles from data (which might be placeholder) to determine loading state effectively
+  // If we have placeholder data (cached roles), we are effectively NOT loading from the user's perspective
+  const hasCachedData = roles.length > 0;
+  const loading = (authLoading || (!!user && queryLoading)) && !hasCachedData;
   const isAdmin = roles.includes('administrator');
 
   return {

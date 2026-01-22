@@ -15,7 +15,7 @@ import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFo
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
-import { Download, Mail, Plus, Trash2, FileText, MoreHorizontal, CheckCircle2, Clock, AlertTriangle, DollarSign, FilePlus, ArrowRight, Check } from "lucide-react";
+import { Download, Mail, Plus, Trash2, FileText, MoreHorizontal, CheckCircle2, Clock, AlertTriangle, DollarSign, FilePlus, ArrowRight, Check, History, Upload, Loader2 } from "lucide-react";
 import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
 import { exportInvoicesToExcel } from '@/lib/export-utils';
 import { MetricCard } from "@/components/ui/MetricCard";
@@ -96,6 +96,12 @@ export const SalesInvoices = () => {
   const [sentIncludeVAT, setSentIncludeVAT] = useState<boolean>(true);
   const [journalOpen, setJournalOpen] = useState(false);
   const [journalEditData, setJournalEditData] = useState<any>(null);
+
+  // Credit Note / Adjustment State
+  const [creditNoteOpen, setCreditNoteOpen] = useState(false);
+  const [invoiceToCredit, setInvoiceToCredit] = useState<any>(null);
+  const [creditReason, setCreditReason] = useState("");
+  const [isCrediting, setIsCrediting] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -331,7 +337,8 @@ export const SalesInvoices = () => {
           tax_amount: totals.taxAmount,
           total_amount: totals.total,
           notes: formData.notes || null,
-          status: "draft"
+          status: "draft",
+          user_id: user?.id
         })
         .select()
         .single();
@@ -791,15 +798,80 @@ export const SalesInvoices = () => {
     }
   };
 
-  const deleteInvoice = async (id: string) => {
-    if (!confirm("Delete this invoice?")) return;
+  const handleCreditNote = async () => {
+    if (!invoiceToCredit) return;
+    if (!creditReason.trim()) {
+      toast({ title: "Reason required", description: "Please provide a reason for the credit note.", variant: "destructive" });
+      return;
+    }
+
+    setIsCrediting(true);
     try {
-      const { error } = await supabase.from("invoices").delete().eq("id", id);
-      if (error) throw error;
-      toast({ title: "Success", description: "Invoice deleted" });
+      // 1. Find original transaction
+      const { data: originalTx } = await supabase
+        .from('transactions')
+        .select('*, transaction_entries(*)')
+        .eq('reference_number', invoiceToCredit.invoice_number)
+        .eq('company_id', invoiceToCredit.company_id)
+        .maybeSingle();
+
+      // 2. Create Reversal Entries if transaction exists
+      if (originalTx) {
+        const originalEntries = originalTx.transaction_entries || [];
+        const reversalEntries = originalEntries.map((entry: any) => ({
+          account_id: entry.account_id,
+          debit: entry.credit,
+          credit: entry.debit,
+          description: `Credit Note/Reversal: ${entry.description || ''}`,
+          status: 'approved'
+        }));
+
+        const { data: newTx, error: txError } = await supabase
+          .from('transactions')
+          .insert({
+            company_id: invoiceToCredit.company_id,
+            transaction_date: new Date().toISOString().split('T')[0],
+            description: `Credit Note for ${invoiceToCredit.invoice_number}: ${creditReason}`,
+            reference_number: `CN-${invoiceToCredit.invoice_number}-${Date.now().toString().slice(-4)}`,
+            transaction_type: 'Credit Note',
+            status: 'approved',
+            total_amount: invoiceToCredit.total_amount,
+            user_id: user?.id,
+          })
+          .select()
+          .single();
+
+        if (txError) throw txError;
+
+        if (newTx && reversalEntries.length > 0) {
+            const entriesWithTxId = reversalEntries.map((e: any) => ({
+                ...e,
+                transaction_id: newTx.id
+            }));
+            const { error: entriesError } = await supabase.from('transaction_entries').insert(entriesWithTxId);
+            if (entriesError) throw entriesError;
+        }
+      }
+
+      // 3. Update Invoice Status
+      const { error: invError } = await supabase
+        .from('invoices')
+        .update({ 
+            status: 'cancelled', 
+            notes: `${invoiceToCredit.notes || ''}\n[Credit Note Issued: ${creditReason}]`
+        })
+        .eq('id', invoiceToCredit.id);
+
+      if (invError) throw invError;
+
+      toast({ title: "Success", description: "Credit Note issued and invoice cancelled." });
+      setCreditNoteOpen(false);
       loadData();
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      console.error("Credit Note error:", error);
+      toast({ title: "Error", description: error.message || "Failed to process credit note.", variant: "destructive" });
+    } finally {
+      setIsCrediting(false);
     }
   };
 
@@ -1101,8 +1173,8 @@ export const SalesInvoices = () => {
                                 Cancel Invoice
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={() => deleteInvoice(invoice.id)} className="text-destructive">
-                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              <DropdownMenuItem onClick={() => { setInvoiceToCredit(invoice); setCreditReason(""); setCreditNoteOpen(true); }} className="text-amber-600">
+                                <History className="mr-2 h-4 w-4" /> Credit Note
                               </DropdownMenuItem>
                             </>
                           )}
@@ -1445,6 +1517,71 @@ export const SalesInvoices = () => {
             </div>
           </div>
         )}
+
+        {/* Credit Note Dialog */}
+        <Dialog open={creditNoteOpen} onOpenChange={setCreditNoteOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle className="text-amber-600 flex items-center gap-2">
+                <History className="h-5 w-5" />
+                Issue Credit Note
+              </DialogTitle>
+              <DialogDescription className="pt-2">
+                This will cancel the invoice and create a credit note transaction in the ledger.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-4">
+              <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg text-amber-800 text-sm font-medium flex gap-3 items-start">
+                <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+                <div>
+                  For audit compliance, invoices cannot be deleted. Use this form to issue a credit note.
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Reason for Credit Note</Label>
+                <Textarea 
+                  value={creditReason} 
+                  onChange={(e) => setCreditReason(e.target.value)} 
+                  placeholder="Reason for return or cancellation..."
+                  className="min-h-[80px]"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Supporting Document (Optional)</Label>
+                <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => toast({ title: "Upload", description: "File upload will be available in the next update." })}>
+                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                    <Upload className="h-8 w-8 opacity-50" />
+                    <span className="text-sm">Click to upload document</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setCreditNoteOpen(false)} className="w-full sm:w-auto">Cancel</Button>
+              <Button 
+                onClick={handleCreditNote}
+                disabled={isCrediting || !creditReason.trim()}
+                className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                {isCrediting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <History className="mr-2 h-4 w-4" />
+                    Issue Credit Note
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </Card>
     </div>
   );

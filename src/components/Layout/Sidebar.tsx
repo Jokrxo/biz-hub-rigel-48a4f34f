@@ -1,101 +1,24 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Link, useLocation, useNavigate } from "react-router-dom";
-import stellaLogo from "@/assets/stella-sign-up.jpg"; // Import the logo
-import { 
-  LayoutDashboard,  
-  Receipt, 
-  FileText, 
-  TrendingUp, 
-  DollarSign, 
-  Calculator,
-  Users,
-  Settings,
-  PieChart,
-  CreditCard,
-  Building2,
-  Building,
-  Wallet,
-  Crown,
-  Info,
-  Zap,
-  HelpCircle,
-  BookOpen,
-  Video,
-  MessageSquare,
-  Calendar,
-  StickyNote,
-  CheckSquare,
-  Keyboard,
-  MessageCircle,
-  Bug,
-  Grip
-} from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { Calculator } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { QuickSetupSheet } from "./QuickSetupSheet";
-import { HelpDialog } from "./HelpDialog";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-
-import { StellaBotModal } from "@/components/Stella/StellaBotModal";
-import { FloatingCalculator } from "@/components/Tools/FloatingCalculator";
-import { StickyNoteBoard } from "@/components/Tools/StickyNoteBoard";
-import { AdvancedCalendar } from "@/components/Tools/AdvancedCalendar";
-import { CurrencyConverter } from "@/components/Tools/CurrencyConverter";
-import { TaskManager } from "@/components/Tools/TaskManager";
-import { KeyboardShortcuts } from "@/components/Support/KeyboardShortcuts";
-import { FeedbackModal } from "@/components/Support/FeedbackModal";
-import { SupportAppModal } from "@/components/Support/SupportAppModal";
-import { DocumentationModal } from "@/components/Help/DocumentationModal"; // Import the new component
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface SidebarProps {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
 }
 
 import { navGroups } from "@/config/navigation";
 
-export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
+export const Sidebar = ({ open }: SidebarProps) => {
   const location = useLocation();
-  const navigate = useNavigate();
   const { user } = useAuth();
   const [userProfile, setUserProfile] = useState<{ name: string; role: string } | null>(null);
   const [logoError, setLogoError] = useState(false);
   const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null);
-  
-  // Utilities state
-  const [quickSetupOpen, setQuickSetupOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [documentationOpen, setDocumentationOpen] = useState(false);
-  
-  // Tools state
-  const [calculatorOpen, setCalculatorOpen] = useState(false);
-  const [calendarOpen, setCalendarOpen] = useState(false);
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [currencyOpen, setCurrencyOpen] = useState(false);
-  const [tasksOpen, setTasksOpen] = useState(false);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [supportAppOpen, setSupportAppOpen] = useState(false);
 
   useEffect(() => {
     const loadUserProfile = async () => {
@@ -155,7 +78,7 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
   return (
     <aside
       className={cn(
-        "fixed left-0 top-0 z-40 h-screen transition-all duration-300 ease-in-out bg-sidebar border-r border-sidebar-border shadow-elegant",
+        "fixed left-0 top-0 z-40 h-screen transition-[width] duration-300 ease-in-out will-change-[width] bg-sidebar border-r border-sidebar-border shadow-elegant",
         open ? "w-64" : "w-16"
       )}
     >
@@ -185,117 +108,61 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-6 p-4 overflow-y-auto custom-scrollbar">
-          {navGroups.map((group) => (
-            <div key={group.title} className="space-y-2">
-              {open && (
-                <h3 className="px-2 text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider">
-                  {group.title}
-                </h3>
-              )}
-              <div className="space-y-1">
-                {group.items.map((item) => {
-                  const isActive = location.pathname === item.href;
-                  return (
-                    <Link key={item.href} to={item.href}>
+        <TooltipProvider>
+          <nav className="flex-1 space-y-6 p-4 overflow-y-auto custom-scrollbar">
+            {navGroups.map((group) => (
+              <div key={group.title} className="space-y-2">
+                {open && (
+                  <h3 className="px-2 text-xs font-semibold text-muted-foreground/70 uppercase tracking-wider">
+                    {group.title}
+                  </h3>
+                )}
+                <div className="space-y-1">
+                  {group.items.map((item) => {
+                    const isActive = location.pathname === item.href;
+
+                    const button = (
                       <Button
                         variant="ghost"
                         className={cn(
-                          "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
+                          "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1 relative",
                           !open && "justify-center px-2 h-10 w-10 mx-auto rounded-xl",
-                          isActive 
-                            ? "bg-sidebar-accent text-sidebar-primary shadow-sm font-medium" 
+                          isActive
+                            ? "bg-sidebar-accent text-sidebar-primary shadow-sm font-medium"
                             : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-primary"
                         )}
-                        title={!open ? item.label : undefined}
                       >
-                        <item.icon className={cn(
-                          "h-5 w-5 shrink-0 transition-transform duration-200", 
-                          isActive ? "text-primary" : "text-muted-foreground"
-                        )} />
-                        {open && (
-                          <span className="truncate">
-                            {item.label}
-                          </span>
+                        {isActive && open && (
+                          <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r bg-primary" />
                         )}
+                        <item.icon
+                          className={cn(
+                            "h-5 w-5 shrink-0 transition-transform duration-200",
+                            isActive ? "text-primary" : "text-muted-foreground"
+                          )}
+                        />
+                        {open && <span className="truncate">{item.label}</span>}
                       </Button>
-                    </Link>
-                  );
-                })}
+                    );
+
+                    return (
+                      <Link key={item.href} to={item.href} className="block">
+                        {open ? (
+                          button
+                        ) : (
+                          <Tooltip>
+                            <TooltipTrigger asChild>{button}</TooltipTrigger>
+                            <TooltipContent side="right">{item.label}</TooltipContent>
+                          </Tooltip>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
-
-          {/* Utilities Section */}
-          <div className="pt-4 mt-4 border-t border-sidebar-border">
-            {open && <h3 className="px-4 text-xs font-semibold text-sidebar-foreground/50 uppercase tracking-wider mb-2">Tools & Support</h3>}
-            
-            <Button
-              variant="ghost"
-              onClick={() => setCalculatorOpen(true)}
-              className={cn(
-                "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
-                !open && "justify-center px-2"
-              )}
-              title="Calculator"
-            >
-              <Calculator className="h-5 w-5 text-emerald-500" />
-              {open && <span className="font-medium text-sidebar-foreground">Calculator</span>}
-            </Button>
-
-            <Button
-              variant="ghost"
-              onClick={() => setCalendarOpen(true)}
-              className={cn(
-                "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
-                !open && "justify-center px-2"
-              )}
-              title="Tax Calendar"
-            >
-              <Calendar className="h-5 w-5 text-indigo-500" />
-              {open && <span className="font-medium text-sidebar-foreground">Tax Calendar</span>}
-            </Button>
-
-            <Button
-              variant="ghost"
-              onClick={() => setSupportAppOpen(true)}
-              className={cn(
-                "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
-                !open && "justify-center px-2"
-              )}
-              title="Support App"
-            >
-              <Grip className="h-5 w-5 text-muted-foreground" />
-              {open && <span className="font-medium text-sidebar-foreground">Support App</span>}
-            </Button>
-
-            <Button
-              variant="ghost"
-              onClick={() => setQuickSetupOpen(true)}
-              className={cn(
-                "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
-                !open && "justify-center px-2"
-              )}
-              title="Quick Setup"
-            >
-              <Zap className="h-5 w-5 text-amber-500" />
-              {open && <span className="font-medium text-sidebar-foreground">Quick Setup</span>}
-            </Button>
-
-            <Button
-              variant="ghost"
-              onClick={() => setHelpOpen(true)}
-              className={cn(
-                "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1",
-                !open && "justify-center px-2"
-              )}
-              title="Help & Support"
-            >
-              <HelpCircle className="h-5 w-5 text-blue-500" />
-              {open && <span className="font-medium text-sidebar-foreground">Help & Support</span>}
-            </Button>
-          </div>
-        </nav>
+            ))}
+          </nav>
+        </TooltipProvider>
 
         {/* Footer */}
         <div className="border-t border-sidebar-border p-4">
@@ -325,49 +192,6 @@ export const Sidebar = ({ open, onOpenChange }: SidebarProps) => {
           </div>
         </div>
       </div>
-
-      {/* Quick Setup Sheet */}
-      <QuickSetupSheet open={quickSetupOpen} onOpenChange={setQuickSetupOpen} />
-
-      {/* Help Dialog */}
-      <HelpDialog 
-        open={helpOpen} 
-        onOpenChange={setHelpOpen} 
-        onOpenDocs={() => setDocumentationOpen(true)} 
-      />
-
-      <DocumentationModal open={documentationOpen} onOpenChange={setDocumentationOpen} />
-
-      {/* Floating Calculator */}
-      <FloatingCalculator isOpen={calculatorOpen} onClose={() => setCalculatorOpen(false)} />
-
-      {/* Advanced Tax Calendar */}
-      <AdvancedCalendar isOpen={calendarOpen} onClose={() => setCalendarOpen(false)} />
-
-      {/* Sticky Note Board */}
-      <StickyNoteBoard isOpen={notesOpen} onClose={() => setNotesOpen(false)} />
-
-      {/* Currency Converter */}
-      <CurrencyConverter isOpen={currencyOpen} onClose={() => setCurrencyOpen(false)} />
-
-      {/* Task Manager */}
-      <TaskManager isOpen={tasksOpen} onClose={() => setTasksOpen(false)} />
-
-      {/* Keyboard Shortcuts */}
-      <KeyboardShortcuts isOpen={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-
-      {/* Feedback Modal */}
-      <FeedbackModal isOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
-      {/* Support App Modal */}
-      <SupportAppModal 
-        isOpen={supportAppOpen} 
-        onClose={() => setSupportAppOpen(false)} 
-        onOpenNotes={() => setNotesOpen(true)}
-        onOpenCurrency={() => setCurrencyOpen(true)}
-        onOpenTasks={() => setTasksOpen(true)}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
-        onOpenFeedback={() => setFeedbackOpen(true)}
-      />
     </aside>
   );
 };

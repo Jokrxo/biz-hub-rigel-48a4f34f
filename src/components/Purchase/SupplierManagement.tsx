@@ -4,8 +4,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Building2, Plus, Mail, Phone, FileText, Search, MoreHorizontal, Edit, Trash2, Check } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Building2, Plus, Mail, Phone, FileText, Search, MoreHorizontal, Edit, Check, History, Upload, Loader2, AlertTriangle } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +50,19 @@ export const SupplierManagement = () => {
     opening_balance: "",
     opening_balance_date: new Date().toISOString().slice(0, 10),
   });
+
+  // Deactivate State
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [supplierToDeactivate, setSupplierToDeactivate] = useState<Supplier | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState("");
+  const [isDeactivating, setIsDeactivating] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+    }
+  };
 
   const loadSuppliers = useCallback(async () => {
     try {
@@ -180,15 +194,34 @@ export const SupplierManagement = () => {
     }
   };
 
-  const deleteSupplier = async (id: string) => {
-    if (!confirm("Are you sure? This will fail if the supplier has linked transactions.")) return;
+  const handleDeactivate = async () => {
+    if (!supplierToDeactivate) return;
+    if (!deactivateReason.trim()) {
+      toast({ title: "Reason required", description: "Please provide a reason.", variant: "destructive" });
+      return;
+    }
+    
+    setIsDeactivating(true);
     try {
-      const { error } = await supabase.from('suppliers').delete().eq('id', id);
+      const newName = `[INACTIVE] ${supplierToDeactivate.name}`;
+      
+      const { error } = await supabase
+        .from('suppliers')
+        .update({ 
+            name: newName
+        })
+        .eq('id', supplierToDeactivate.id);
+        
       if (error) throw error;
-      toast({ title: "Success", description: "Supplier deleted" });
+      toast({ title: "Success", description: "Supplier deactivated" });
+      setDeactivateOpen(false);
+      setSupplierToDeactivate(null);
+      setDeactivateReason("");
       loadSuppliers();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setIsDeactivating(false);
     }
   };
 
@@ -357,8 +390,11 @@ export const SupplierManagement = () => {
                           {canEdit && (
                             <>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem onClick={() => deleteSupplier(supplier.id)} className="text-destructive">
-                                <Trash2 className="mr-2 h-4 w-4" /> Delete
+                              <DropdownMenuItem onClick={() => {
+                                setSupplierToDeactivate(supplier);
+                                setDeactivateOpen(true);
+                              }} className="text-amber-600">
+                                <History className="mr-2 h-4 w-4" /> Deactivate / Archive
                               </DropdownMenuItem>
                             </>
                           )}
@@ -391,6 +427,72 @@ export const SupplierManagement = () => {
               <p className="text-xl font-semibold text-gray-900">{successMessage}</p>
               <p className="text-muted-foreground">The operation has been completed successfully.</p>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={deactivateOpen} onOpenChange={setDeactivateOpen}>
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle className="text-amber-600 flex items-center gap-2">
+                <History className="h-5 w-5" />
+                Deactivate Supplier
+              </DialogTitle>
+              <DialogDescription className="pt-2">
+                This will mark the supplier as inactive. They cannot be deleted for audit purposes.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 py-4">
+              <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg text-amber-800 text-sm font-medium flex gap-3 items-start">
+                <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+                <div>
+                  For audit compliance, suppliers cannot be deleted. Use this form to deactivate them.
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Reason for Deactivation</Label>
+                <Textarea 
+                  value={deactivateReason} 
+                  onChange={(e) => setDeactivateReason(e.target.value)} 
+                  placeholder="Reason for deactivation..."
+                  className="min-h-[80px]"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Supporting Document (Optional)</Label>
+                <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => document.getElementById('supplier-file-upload')?.click()}>
+                  <input type="file" id="supplier-file-upload" className="hidden" onChange={handleFileChange} />
+                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                    <Upload className="h-8 w-8 opacity-50" />
+                    <span className="text-sm">Click to upload document</span>
+                    {file && <span className="text-xs text-primary font-medium">{file.name}</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setDeactivateOpen(false)} className="w-full sm:w-auto">Dismiss</Button>
+              <Button 
+                onClick={handleDeactivate}
+                disabled={isDeactivating || !deactivateReason.trim()}
+                className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                {isDeactivating ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <History className="mr-2 h-4 w-4" />
+                    Confirm Deactivation
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </CardContent>

@@ -30,6 +30,7 @@ import { FinancialHealthInsight } from "./FinancialHealthInsight";
 import { useFiscalYear } from "@/hooks/use-fiscal-year";
 import { Skeleton } from "@/components/ui/skeleton";
 import { isDemoMode, getDemoCompany, getDemoTransactions, getDemoTrialBalanceForPeriod } from "@/lib/demo-data";
+import { dashboardCache } from "@/stores/dashboardCache";
 
 export const DashboardOverview = () => {
   const { toast } = useToast();
@@ -51,6 +52,7 @@ export const DashboardOverview = () => {
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
   const [expenseBreakdown, setExpenseBreakdown] = useState<any[]>([]);
+  const [purchaseTrend, setPurchaseTrend] = useState<any[]>([]);
   const [assetTrend, setAssetTrend] = useState<any[]>([]);
   const [arInvoices, setArInvoices] = useState<Array<{ id: string; customer_name: string; total_amount: number; status: string; invoice_date: string; due_date: string | null }>>([]);
   const [arTop10, setArTop10] = useState<any[]>([]);
@@ -82,6 +84,7 @@ export const DashboardOverview = () => {
   const [sbLatency, setSbLatency] = useState<number | null>(null);
   const [sbStrength, setSbStrength] = useState<number>(0);
   const loadingRef = useRef(false);
+  const reloadErrorCountRef = useRef<number>(0);
   const { fiscalStartMonth, selectedFiscalYear, setSelectedFiscalYear, getCalendarYearForFiscalPeriod, loading: fiscalLoading } = useFiscalYear();
   
   // Date filter state
@@ -108,8 +111,9 @@ export const DashboardOverview = () => {
       recentTransactions: true,
       trialBalance: true,
       arOverview: true,
-      apOverview: false,
-      budgetGauge: true,
+      apOverview: true,
+      purchaseTrend: true,
+      budgetGauge: false,
       inventoryStock: true,
       bsComposition: true,
       cashGauge: true,
@@ -262,7 +266,24 @@ export const DashboardOverview = () => {
     }
   };
 
-  const loadDashboardData = useCallback(async () => {
+  const DASHBOARD_TTL_MS = 10 * 60 * 1000;
+
+  const applyCachedDashboard = (cached: any) => {
+    if (!cached) return;
+    if (cached.metrics) setMetrics(cached.metrics);
+    if (cached.recentTransactions) setRecentTransactions(cached.recentTransactions);
+    if (cached.chartData) setChartData(cached.chartData);
+    if (cached.netProfitTrend) setNetProfitTrend(cached.netProfitTrend);
+    if (cached.plTrend) setPlTrend(cached.plTrend);
+    if (cached.incomeBreakdown) setIncomeBreakdown(cached.incomeBreakdown);
+    if (cached.expenseBreakdown) setExpenseBreakdown(cached.expenseBreakdown);
+    if (cached.arTop10) setArTop10(cached.arTop10);
+    if (cached.apTop10) setApTop10(cached.apTop10);
+    if (cached.arDonut) setArDonut(cached.arDonut);
+    if (cached.apDonut) setApDonut(cached.apDonut);
+  };
+
+  const loadDashboardData = useCallback(async (opts?: { force?: boolean }) => {
     try {
       if (loadingRef.current) return;
       loadingRef.current = true;
@@ -319,45 +340,50 @@ export const DashboardOverview = () => {
       rangeStart.setMonth(rangeStart.getMonth() - chartMonths);
       
       const cacheKey = `db-cache-${String(cid)}-${selectedYear}-${selectedMonth}-${chartMonths}m-fy${fiscalStartMonth}`;
-      try {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-          const c = JSON.parse(cached);
-          if (c?.metrics) setMetrics(c.metrics);
-          if (c?.recentTransactions) setRecentTransactions(c.recentTransactions);
-          if (c?.chartData) setChartData(c.chartData);
-          if (c?.netProfitTrend) setNetProfitTrend(c.netProfitTrend);
-          if (c?.plTrend) setPlTrend(c.plTrend);
-        }
-      } catch {}
-      const hadCache = !!localStorage.getItem(cacheKey);
-      if (!hadCache) setLoading(true);
+      const cachedEntry = dashboardCache.get(cacheKey);
+      if (cachedEntry?.payload) {
+        applyCachedDashboard(cachedEntry.payload);
+      }
+      const hasCache = !!cachedEntry?.payload;
+      const stale = opts?.force ? true : dashboardCache.isStale(cacheKey, String(cid), DASHBOARD_TTL_MS);
+      if (hasCache && !stale) {
+        setLoading(false);
+        loadingRef.current = false;
+        reloadErrorCountRef.current = 0;
+        return;
+      }
+      setLoading(!hasCache);
       let transactions: any[] = [];
       let trialBalance: any[] = [];
       if (isDemo) {
         transactions = await getDemoTransactions();
         trialBalance = await getDemoTrialBalanceForPeriod(startDate.toISOString(), endDate.toISOString());
       } else {
-        const txPromise = supabase
-          .from("transactions")
-          .select(`
-            id,
-            reference_number,
-            description,
-            total_amount,
-            transaction_date,
-            transaction_type,
-            status
-          `)
+        const tbPromise = fetchTrialBalanceForPeriod(String(cid), startDate.toISOString(), endDate.toISOString());
+
+        const txRes = await supabase
+          .from("dashboard_recent_transactions" as any)
+          .select("id, reference_number, description, total_amount, transaction_date, transaction_type, status")
           .eq("company_id", cid)
           .gte("transaction_date", rangeStart.toISOString())
           .lte("transaction_date", endDate.toISOString())
           .order("transaction_date", { ascending: false });
-        const tbPromise = fetchTrialBalanceForPeriod(String(cid), startDate.toISOString(), endDate.toISOString());
-        const [txRes, tbRes] = await Promise.all([txPromise, tbPromise]);
-        if ((txRes as any)?.error) throw (txRes as any).error;
-        transactions = (txRes as any)?.data || [];
-        trialBalance = tbRes;
+
+        if ((txRes as any)?.error) {
+          const fallbackTxRes = await supabase
+            .from("transactions")
+            .select("id, reference_number, description, total_amount, transaction_date, transaction_type, status")
+            .eq("company_id", cid)
+            .gte("transaction_date", rangeStart.toISOString())
+            .lte("transaction_date", endDate.toISOString())
+            .order("transaction_date", { ascending: false });
+          if ((fallbackTxRes as any)?.error) throw (fallbackTxRes as any).error;
+          transactions = (fallbackTxRes as any)?.data || [];
+        } else {
+          transactions = (txRes as any)?.data || [];
+        }
+
+        trialBalance = await tbPromise;
       }
       const recent = (transactions || []).slice(0, 10).map((t: any) => ({
         id: String(t.id || t.reference_number || ''),
@@ -906,6 +932,17 @@ export const DashboardOverview = () => {
         .eq('company_id', cid)
         .gte('bill_date', rangeStart.toISOString())
         .lte('bill_date', endDate.toISOString());
+
+      const purchaseMonthly: any[] = [];
+      months.forEach(m => {
+        let sum = 0;
+        (bills || []).forEach((b: any) => {
+          const d = new Date(String(b.bill_date || new Date()));
+          if (d >= m.start && d <= m.end) sum += Number(b.total_amount || 0);
+        });
+        purchaseMonthly.push({ month: m.label, amount: Number(sum.toFixed(2)) });
+      });
+      setPurchaseTrend(purchaseMonthly);
       const supplierIds = Array.from(new Set([
         ...(purchases || []).map((p: any) => p.supplier_id).filter(Boolean),
       ]));
@@ -988,6 +1025,22 @@ export const DashboardOverview = () => {
         overdue30Total: Number(overdue30.reduce((s, r) => s + (r.outstanding || 0), 0).toFixed(2)),
         overdue90Total: Number(overdue90.reduce((s, r) => s + (r.outstanding || 0), 0).toFixed(2))
       });
+
+      // Calculate Purchase Trend
+      const pBuckets: Record<string, number> = {};
+      months.forEach(m => { pBuckets[m.label] = 0; });
+      (purchases || []).forEach((po: any) => {
+        const dt = new Date(String(po.po_date || endDate));
+        const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+        if (pBuckets[label] !== undefined) pBuckets[label] += Number(po.total_amount || 0);
+      });
+      (bills || []).forEach((b: any) => {
+        const dt = new Date(String(b.bill_date || endDate));
+        const label = dt.toLocaleDateString('en-ZA', { month: 'short' });
+        if (pBuckets[label] !== undefined) pBuckets[label] += Number(b.total_amount || 0);
+      });
+      const pTrendData = months.map(m => ({ month: m.label, amount: Number(pBuckets[m.label].toFixed(2)) }));
+      setPurchaseTrend(pTrendData);
 
       if (monthlyData.every(d => Number(d.income) === 0 && Number(d.expenses) === 0)) {
         const invBuckets: Record<string, number> = {};
@@ -1074,155 +1127,43 @@ export const DashboardOverview = () => {
       setLoading(false);
       loadingRef.current = false;
       reloadErrorCountRef.current = 0;
-      try { localStorage.setItem(cacheKey, JSON.stringify({ metrics: newMetrics, recentTransactions: recent, chartData: monthlyData, netProfitTrend: netTrend, incomeBreakdown, expenseBreakdown, arTop10: arTop, apTop10: apTop, arDonut: arTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })), apDonut: apTop.map(r => ({ name: r.name, value: Number(r.amount.toFixed(2)) })) })); } catch {}
+      dashboardCache.set(cacheKey, String(cid), {
+        metrics: newMetrics,
+        recentTransactions: recent,
+        chartData: monthlyData,
+        netProfitTrend: netTrend,
+        incomeBreakdown,
+        expenseBreakdown,
+        arTop10: arTop,
+        apTop10: apTop,
+        arDonut: arTop.map((r: any) => ({ name: r.name, value: Number(r.amount.toFixed(2)) })),
+        apDonut: apTop.map((r: any) => ({ name: r.name, value: Number(r.amount.toFixed(2)) })),
+      });
     } catch (error) {
       setLoading(false);
       loadingRef.current = false;
       reloadErrorCountRef.current += 1;
+      const msg = (error as any)?.message ? String((error as any).message) : "Failed to load dashboard";
+      toast({ title: "Dashboard load failed", description: msg, variant: "destructive" });
     }
   }, [selectedMonth, selectedYear, chartMonths, fetchTrialBalanceForPeriod, getCalendarYearForFiscalPeriod]);
 
-  useEffect(() => {
-    const h = () => { loadDashboardData(); };
-    window.addEventListener('payroll-data-changed', h);
-    return () => window.removeEventListener('payroll-data-changed', h);
-  }, [loadDashboardData]);
   useEffect(() => {
     if (fiscalLoading) return;
     loadDashboardData();
   }, [selectedMonth, selectedYear, fiscalLoading, loadDashboardData]);
 
   useEffect(() => {
-    const channel = supabase
-      .channel('dashboard-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => { loadDashboardData(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transaction_entries' }, () => { loadDashboardData(); })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ledger_entries' }, () => { loadDashboardData(); })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [loadDashboardData]);
-
-  const reloadTimerRef = useRef<number | null>(null);
-  const lastReloadAtRef = useRef<number>(0);
-  const reloadErrorCountRef = useRef<number>(0);
-  const scheduleReload = useCallback(() => {
-    const now = Date.now();
-    if (now - lastReloadAtRef.current < 10000) return;
-    if (reloadErrorCountRef.current >= 3) return;
-    lastReloadAtRef.current = now;
-    if (reloadTimerRef.current) {
-      clearTimeout(reloadTimerRef.current);
-    }
-    reloadTimerRef.current = window.setTimeout(() => {
+    const onInvalidated = (e: any) => {
+      const cid = e?.detail?.companyId ? String(e.detail.companyId) : "";
+      if (cid && companyId && cid !== companyId) return;
       if (!loadingRef.current) {
-        loadDashboardData();
-      }
-    }, 500);
-  }, [loadDashboardData]);
-
-  useEffect(() => {
-    const setupRealtime = async () => {
-      try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError || !user) {
-          console.warn('Dashboard realtime: User not authenticated:', authError);
-          return;
-        }
-
-        const { data: profile, error: profileError } = await supabase
-          .from("profiles")
-          .select("company_id")
-          .eq("user_id", user.id)
-          .single();
-
-        if (profileError || !profile) {
-          console.warn('Dashboard realtime: Profile not found:', profileError);
-          return;
-        }
-
-        const companyId = profile.company_id;
-
-        // Set up real-time subscription for auto-updates on ALL financial data
-        const channel = supabase
-          .channel('dashboard-realtime-updates')
-          .on('postgres_changes' as any, { 
-            event: 'insert', 
-            schema: 'public', 
-            table: 'transactions',
-            filter: `company_id=eq.${companyId}` 
-          }, () => {
-            console.log('Transaction changed - updating dashboard...');
-            scheduleReload();
-          })
-          // Avoid listening to transaction_entries directly to reduce reload noise
-          .on('postgres_changes' as any, { 
-            event: 'insert', 
-            schema: 'public', 
-            table: 'bank_accounts',
-            filter: `company_id=eq.${companyId}`
-          }, () => {
-            console.log('Bank account changed - updating dashboard...');
-            scheduleReload();
-          })
-          .on('postgres_changes' as any, { 
-            event: 'insert', 
-            schema: 'public', 
-            table: 'invoices',
-            filter: `company_id=eq.${companyId}`
-          }, () => {
-            console.log('Invoice changed - updating dashboard...');
-            scheduleReload();
-          })
-          .on('postgres_changes' as any, { 
-            event: 'insert', 
-            schema: 'public', 
-            table: 'fixed_assets',
-            filter: `company_id=eq.${companyId}`
-          }, () => {
-            console.log('Fixed asset changed - updating dashboard...');
-            scheduleReload();
-          })
-          .on('postgres_changes' as any, { 
-            event: 'insert', 
-            schema: 'public', 
-            table: 'purchase_orders',
-            filter: `company_id=eq.${companyId}`
-          }, () => {
-            console.log('Purchase order changed - updating dashboard...');
-            scheduleReload();
-          })
-          .on('postgres_changes' as any, { 
-            event: 'insert', 
-            schema: 'public', 
-            table: 'quotes',
-            filter: `company_id=eq.${companyId}`
-          }, () => {
-            console.log('Quote changed - updating dashboard...');
-            scheduleReload();
-          })
-          .on('postgres_changes' as any, { 
-            event: 'insert', 
-            schema: 'public', 
-            table: 'sales',
-            filter: `company_id=eq.${companyId}`
-          }, () => {
-            console.log('Sale changed - updating dashboard...');
-            scheduleReload();
-          })
-          .subscribe((status) => {
-            console.log('Dashboard real-time subscription status:', status);
-          });
-
-        return () => {
-          supabase.removeChannel(channel);
-        };
-      } catch (error) {
-        console.error('Dashboard realtime setup error:', error);
+        loadDashboardData({ force: true });
       }
     };
-
-    setupRealtime();
-  }, [scheduleReload]);
+    window.addEventListener("rigel-dashboard-cache-invalidated", onInvalidated as any);
+    return () => window.removeEventListener("rigel-dashboard-cache-invalidated", onInvalidated as any);
+  }, [companyId, loadDashboardData]);
 
   useEffect(() => {
     localStorage.setItem('dashboardWidgets', JSON.stringify(widgets));
@@ -1465,23 +1406,108 @@ export const DashboardOverview = () => {
 
       {/* Charts Section */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {widgets.budgetGauge && (
-          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
-            <CardHeader className="border-b bg-muted/20 pb-4">
-              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
-                <div className="p-2 bg-primary/10 rounded-lg">
-                  <TrendingUp className="h-5 w-5 text-primary" />
-                </div>
-                Budget Gauge
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-center py-6">
-                <DashboardBudgetGauge percentage={budgetUtilization} onTrack={budgetOnTrack} />
+        {/* Purchase Trend (Last 6 Months) */}
+        <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <TrendingUp className="h-5 w-5 text-primary" />
               </div>
-            </CardContent>
-          </Card>
-        )}
+              Purchase Trend (Last 6 Months)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={purchaseTrend}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
+                <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} />
+                <Tooltip 
+                  formatter={(value: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, 'Purchases']}
+                  contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} 
+                />
+                <Legend />
+                <Bar dataKey="amount" name="Purchases" fill="#3B82F6" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+            {purchaseTrend.length === 0 && (
+              <div className="text-sm text-muted-foreground mt-2">No purchase data found</div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Unpaid Purchases % by Supplier */}
+        <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <FileText className="h-5 w-5 text-primary" />
+              </div>
+              Unpaid Purchases % by Supplier
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie 
+                  data={apDonut} 
+                  dataKey="value" 
+                  nameKey="name" 
+                  innerRadius={60} 
+                  outerRadius={100} 
+                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                >
+                  {apDonut.map((entry, index) => (
+                    <Cell key={`cell-ap-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  formatter={(value: any, name: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, name]}
+                  contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} 
+                />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+            {apDonut.length === 0 && (
+               <div className="text-sm text-muted-foreground mt-2">No unpaid purchases found</div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Unpaid Purchases Amount (Top 10 Suppliers) */}
+        <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+              <div className="p-2 bg-primary/10 rounded-lg">
+                <Receipt className="h-5 w-5 text-primary" />
+              </div>
+              Unpaid Purchases Amount (Top 10)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={apTop10} layout="vertical">
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis type="number" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} stroke="hsl(var(--muted-foreground))" />
+                <YAxis type="category" dataKey="name" width={150} stroke="hsl(var(--muted-foreground))" />
+                <Tooltip 
+                  formatter={(value: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, 'Unpaid Amount']}
+                  contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} 
+                />
+                <Legend />
+                <Bar dataKey="amount" name="Unpaid Amount" radius={[0, 4, 4, 0]}>
+                  {apTop10.map((entry, index) => (
+                    <Cell key={`ap-bar-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            {apTop10.length === 0 && (
+               <div className="text-sm text-muted-foreground mt-2">No unpaid purchases found</div>
+            )}
+          </CardContent>
+        </Card>
+
         {widgets.incomeVsExpense && (
           <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
               <CardHeader className="flex items-center justify-between border-b bg-muted/20 pb-4">
@@ -1836,6 +1862,89 @@ export const DashboardOverview = () => {
               </ResponsiveContainer>
             </CardContent>
           </Card>
+        )}
+
+        {widgets.purchaseTrend && (
+          <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+            <CardHeader className="border-b bg-muted/20 pb-4">
+              <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                <div className="p-2 bg-primary/10 rounded-lg">
+                  <TrendingUp className="h-5 w-5 text-primary" />
+                </div>
+                Purchase Trend
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6">
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={purchaseTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" />
+                  <YAxis stroke="hsl(var(--muted-foreground))" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} />
+                  <Tooltip
+                    formatter={(value: any) => [`R ${Number(value).toLocaleString('en-ZA')}`, 'Purchases']}
+                    contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }}
+                  />
+                  <Legend />
+                  <Line type="monotone" dataKey="amount" name="Purchases" stroke="#EF4444" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {widgets.apOverview && (
+          <>
+            <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+              <CardHeader className="border-b bg-muted/20 pb-4">
+                <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <CreditCard className="h-5 w-5 text-primary" />
+                  </div>
+                  Unpaid Purchases % by Supplier
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <ResponsiveContainer width="100%" height={260}>
+                  <PieChart>
+                    <Pie data={apDonut} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}>
+                      {apDonut.map((entry, index) => (
+                        <Cell key={`ap-cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any, _n, p: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, p?.payload?.name]} />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+
+            <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">
+              <CardHeader className="border-b bg-muted/20 pb-4">
+                <CardTitle className="flex items-center gap-2 text-lg font-semibold">
+                  <div className="p-2 bg-primary/10 rounded-lg">
+                    <CreditCard className="h-5 w-5 text-primary" />
+                  </div>
+                  Unpaid Purchases Amount (Top 10)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-6">
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={apTop10} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis type="number" tickFormatter={(v) => `R ${Number(v).toLocaleString('en-ZA')}`} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis type="category" dataKey="name" width={150} stroke="hsl(var(--muted-foreground))" />
+                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px' }} formatter={(v: any) => [`R ${Number(v).toLocaleString('en-ZA')}`, 'Unpaid']} />
+                    <Legend />
+                    <Bar dataKey="amount" name="Unpaid" radius={[4, 4, 0, 0]}>
+                      {apTop10.map((entry, index) => (
+                        <Cell key={`ap-top-cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          </>
         )}
 
         <Card className="card-professional shadow-md hover:shadow-lg transition-all duration-300">

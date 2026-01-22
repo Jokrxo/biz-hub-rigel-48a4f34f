@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Plus, Building2, Globe, Phone, Mail, FileText, Check, Eye, Users, Trash2, UserPlus, Settings, Lock, AlertTriangle, Activity } from "lucide-react";
+import { Plus, Building2, Globe, Phone, Mail, FileText, Check, Eye, Users, UserPlus, Lock, AlertTriangle, Activity, History as HistoryIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -76,13 +76,22 @@ export const CompanyList = () => {
   const [assignLoading, setAssignLoading] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
 
-  // Delete Confirmation State
+  // Deactivate State
+  // const [deactivateOpen, setDeactivateOpen] = useState(false);
+  // const [companyToDeactivate, setCompanyToDeactivate] = useState<Company | null>(null);
+  // const [deactivateReason, setDeactivateReason] = useState("");
+  // const [isDeactivating, setIsDeactivating] = useState(false);
+  // const [attachedFile, setAttachedFile] = useState<File | null>(null);
+
+  // Success/Error Message State
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
+
+  // Delete State (Legacy/Admin only)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [companyToDelete, setCompanyToDelete] = useState<Company | null>(null);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const [isSuccess, setIsSuccess] = useState(false);
-  const [successMessage, setSuccessMessage] = useState("");
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -292,18 +301,22 @@ export const CompanyList = () => {
         .eq('email', assignEmail)
         .maybeSingle();
 
+      if (profileError) throw profileError;
+
       if (!profileData) {
         setAssignError("User not found in the system. Please ensure the email is correct and the user has registered.");
         return;
       }
 
       // 2. Check if already assigned
-      const { data: existingRole } = await supabase
+      const { data: existingRole, error: roleError } = await supabase
         .from('user_roles')
         .select('id')
         .eq('user_id', profileData.user_id)
         .eq('company_id', selectedCompany.id)
         .maybeSingle();
+
+      if (roleError) throw roleError;
 
       if (existingRole) {
         setAssignError(`User is already a member of this company.`);
@@ -311,7 +324,7 @@ export const CompanyList = () => {
       }
 
       // 3. Assign Role
-      const { error: assignError } = await supabase
+      const { error: insertError } = await supabase
         .from('user_roles')
         .insert({
           user_id: profileData.user_id,
@@ -319,7 +332,7 @@ export const CompanyList = () => {
           role: assignRole
         });
 
-      if (assignError) throw assignError;
+      if (insertError) throw insertError;
 
       toast({
         title: "Success",
@@ -337,6 +350,10 @@ export const CompanyList = () => {
     } finally {
       setAssignLoading(false);
     }
+  };
+
+  const handleDeactivateClick = (company: Company) => {
+    handleDeleteClick(company);
   };
 
   const handleDeleteClick = (company: Company) => {
@@ -492,9 +509,9 @@ export const CompanyList = () => {
             }`}
           >
             <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={(e) => { e.stopPropagation(); handleDeleteClick(company); }}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-orange-600" onClick={(e) => { e.stopPropagation(); handleDeactivateClick(company); }} title="Deactivate Company">
+                  <HistoryIcon className="h-5 w-5" />
+                </Button>
             </div>
             <CardHeader className="flex flex-row items-start space-y-0 pb-2 gap-4">
               <div className="h-10 w-10 rounded bg-muted flex items-center justify-center flex-shrink-0">
@@ -741,7 +758,7 @@ export const CompanyList = () => {
             </div>
             <div className="space-y-2">
               <Label htmlFor="role">Role</Label>
-              <Select value={assignRole} onValueChange={setAssignRole}>
+              <Select value={assignRole} onValueChange={(val) => setAssignRole(val as Role)}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>

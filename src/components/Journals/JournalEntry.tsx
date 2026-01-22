@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Trash2, Save, FileText, ArrowLeft, Loader2, AlertTriangle, CheckCircle2, Check, ChevronsUpDown, History } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronsUpDown, FileText, History, Loader2, Plus, Save, X, Wallet, CreditCard, Scale, Calendar, Hash, Info } from "lucide-react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
@@ -49,9 +49,9 @@ const AccountCombobox = ({ accounts, value, onChange }: AccountComboboxProps) =>
           className="w-full justify-between hover:bg-muted/50 font-normal pl-2 h-9 text-left"
         >
           {selectedAccount ? (
-             <span className="truncate flex items-center">
-                <span className="font-mono text-muted-foreground mr-2">{selectedAccount.account_code}</span>
-                {selectedAccount.account_name}
+             <span className="truncate flex items-center gap-2">
+                <span className="font-mono font-medium text-primary bg-primary/10 px-1.5 py-0.5 rounded text-xs">{selectedAccount.account_code}</span>
+                <span className="truncate">{selectedAccount.account_name}</span>
              </span>
           ) : (
             <span className="text-muted-foreground">Select Account...</span>
@@ -73,6 +73,7 @@ const AccountCombobox = ({ accounts, value, onChange }: AccountComboboxProps) =>
                     onChange(account.id);
                     setOpen(false);
                   }}
+                  className="cursor-pointer"
                 >
                   <Check
                     className={cn(
@@ -81,7 +82,8 @@ const AccountCombobox = ({ accounts, value, onChange }: AccountComboboxProps) =>
                     )}
                   />
                   <span className="font-mono text-muted-foreground mr-2 w-16">{account.account_code}</span>
-                  <span>{account.account_name}</span>
+                  <span className="flex-1 truncate">{account.account_name}</span>
+                  <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded ml-2 capitalize">{account.account_type}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -219,10 +221,20 @@ export const JournalEntry = () => {
       toast.error("Please select a date");
       return;
     }
-    if (!description) {
-      toast.error("Please enter a description");
-      return;
+
+    // Auto-fill description from first line if main description is empty
+    let submitDescription = description;
+    if (!submitDescription) {
+      const firstLineDesc = lines.find(l => l.description?.trim())?.description;
+      if (firstLineDesc) {
+        submitDescription = firstLineDesc;
+        setDescription(firstLineDesc); // Update UI
+      } else {
+        toast.error("Please enter a description for the journal document");
+        return;
+      }
     }
+
     if (lines.some(l => !l.accountId)) {
       toast.error("All lines must have an account selected");
       return;
@@ -241,17 +253,17 @@ export const JournalEntry = () => {
       const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user!.id).single();
       if (!profile?.company_id) throw new Error("Company not found");
 
-      // Create Transaction Header
+      // Create Transaction Header as DRAFT first to avoid "no entries" trigger error
       const { data: transaction, error: transError } = await supabase
         .from('transactions')
         .insert({
           company_id: profile.company_id,
           transaction_date: date,
-          description,
+          description: submitDescription,
           reference_number: reference || `JNL-${format(new Date(), 'yyyyMMddHHmmss')}`,
           total_amount: totalDebits,
           transaction_type: "journal",
-          status: "posted",
+          status: "draft", // Start as draft
           user_id: user!.id
         })
         .select()
@@ -263,7 +275,7 @@ export const JournalEntry = () => {
       const entries = lines.map(line => ({
         transaction_id: transaction.id,
         account_id: line.accountId,
-        description: line.description || description,
+        description: line.description || submitDescription,
         debit: Number(line.debit) || 0,
         credit: Number(line.credit) || 0,
         status: "approved"
@@ -274,6 +286,14 @@ export const JournalEntry = () => {
         .insert(entries);
 
       if (entriesError) throw entriesError;
+
+      // Update status to POSTED to trigger the ledger posting
+      const { error: updateError } = await supabase
+        .from('transactions')
+        .update({ status: 'posted' })
+        .eq('id', transaction.id);
+
+      if (updateError) throw updateError;
 
       toast.success("Journal posted successfully");
       
@@ -357,7 +377,7 @@ export const JournalEntry = () => {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in max-w-[1600px] mx-auto">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
@@ -375,156 +395,220 @@ export const JournalEntry = () => {
         </div>
       </div>
 
-      <Card className="border shadow-sm">
-        <CardHeader className="bg-muted/10 pb-6 border-b">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="space-y-2">
-              <Label>Date <span className="text-red-500">*</span></Label>
-              <Input 
-                type="date" 
-                value={date} 
-                onChange={(e) => setDate(e.target.value)} 
-                className="bg-background"
-              />
+      {/* Metrics Grid */}
+      <div className="grid gap-4 md:grid-cols-3">
+         <Card className="border-none shadow-md bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-background">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total Debits</CardTitle>
+              <Wallet className="h-5 w-5 text-blue-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-blue-700">{totalDebits.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR' })}</div>
+              <p className="text-xs text-muted-foreground mt-1">Sum of all debit lines</p>
+            </CardContent>
+         </Card>
+
+         <Card className="border-none shadow-md bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-background">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total Credits</CardTitle>
+              <CreditCard className="h-5 w-5 text-emerald-600" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-emerald-700">{totalCredits.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR' })}</div>
+              <p className="text-xs text-muted-foreground mt-1">Sum of all credit lines</p>
+            </CardContent>
+         </Card>
+
+         <Card className={cn("border-none shadow-md bg-gradient-to-br to-background transition-colors", 
+            isBalanced ? "from-emerald-500/10 via-emerald-500/5" : "from-red-500/10 via-red-500/5"
+         )}>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Status</CardTitle>
+              <Scale className={cn("h-5 w-5", isBalanced ? "text-emerald-600" : "text-red-600")} />
+            </CardHeader>
+            <CardContent>
+              <div className={cn("text-2xl font-bold", isBalanced ? "text-emerald-700" : "text-red-700")}>
+                {isBalanced ? "Balanced" : "Unbalanced"}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">
+                {isBalanced ? "Ready to post" : `Difference: ${Math.abs(difference).toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR' })}`}
+              </p>
+            </CardContent>
+         </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Document Header Panel */}
+        <Card className="lg:col-span-3 h-fit border shadow-sm">
+           <CardHeader className="bg-muted/10 border-b pb-4">
+              <CardTitle className="text-base flex items-center gap-2">
+                 <FileText className="h-4 w-4 text-primary" />
+                 Document Details
+              </CardTitle>
+           </CardHeader>
+           <CardContent className="space-y-4 pt-6">
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase">Date <span className="text-red-500">*</span></Label>
+                <div className="relative">
+                   <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                   <Input 
+                     type="date" 
+                     value={date} 
+                     onChange={(e) => setDate(e.target.value)} 
+                     className="pl-9 bg-background"
+                   />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase">Reference</Label>
+                <div className="relative">
+                   <Hash className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                   <Input 
+                     placeholder="Auto-generated if empty" 
+                     value={reference} 
+                     onChange={(e) => setReference(e.target.value)}
+                     className="pl-9 bg-background" 
+                   />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase">Document Description <span className="text-red-500">*</span></Label>
+                <div className="relative">
+                   <Info className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                   <textarea 
+                     className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 pl-9 resize-none"
+                     placeholder="Overall journal description (e.g. Monthly Salaries)" 
+                     value={description} 
+                     onChange={(e) => setDescription(e.target.value)}
+                   />
+                </div>
+                <p className="text-[10px] text-muted-foreground">This description will be used for the main transaction record.</p>
+              </div>
+              
+              <div className="pt-4 border-t">
+                <Button 
+                  size="lg" 
+                  className="w-full gap-2 shadow-lg shadow-primary/20 bg-gradient-primary" 
+                  onClick={handlePost} 
+                  disabled={loading || !isBalanced || totalDebits === 0}
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Post Journal
+                </Button>
+                {!isBalanced && (
+                   <p className="text-xs text-center text-red-500 mt-2 font-medium">Journal must be balanced to post</p>
+                )}
+              </div>
+           </CardContent>
+        </Card>
+
+        {/* Entries Table Panel */}
+        <Card className="lg:col-span-9 border shadow-sm">
+          <CardHeader className="bg-muted/10 border-b pb-4 flex flex-row items-center justify-between">
+            <div>
+               <CardTitle className="text-base flex items-center gap-2">
+                  <Scale className="h-4 w-4 text-primary" />
+                  Journal Entries
+               </CardTitle>
+               <CardDescription>Add at least 2 lines (debit and credit)</CardDescription>
             </div>
-            <div className="space-y-2">
-              <Label>Reference</Label>
-              <Input 
-                placeholder="e.g. JNL-001" 
-                value={reference} 
-                onChange={(e) => setReference(e.target.value)}
-                className="bg-background" 
-              />
+            <div className="text-xs text-muted-foreground bg-background px-3 py-1 rounded-full border">
+               {lines.length} lines
             </div>
-            <div className="space-y-2">
-              <Label>Description <span className="text-red-500">*</span></Label>
-              <Input 
-                placeholder="e.g. Monthly Depreciation" 
-                value={description} 
-                onChange={(e) => setDescription(e.target.value)}
-                className="bg-background" 
-              />
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader className="bg-muted/50">
-                <TableRow>
-                  <TableHead className="w-[30%]">Account <span className="text-red-500">*</span></TableHead>
-                  <TableHead className="w-[30%]">Description</TableHead>
-                  <TableHead className="w-[15%] text-right">Debit</TableHead>
-                  <TableHead className="w-[15%] text-right">Credit</TableHead>
-                  <TableHead className="w-[10%] text-center">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {lines.map((line) => (
-                  <TableRow key={line.id} className="group hover:bg-muted/5">
-                    <TableCell>
-                      <AccountCombobox 
-                        accounts={accounts}
-                        value={line.accountId}
-                        onChange={(val) => updateLine(line.id, 'accountId', val)}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Input 
-                        value={line.description} 
-                        onChange={(e) => updateLine(line.id, 'description', e.target.value)}
-                        placeholder={description}
-                        className="border-transparent focus:border-primary hover:bg-muted/50 bg-transparent"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Input 
-                        type="number" 
-                        min="0"
-                        step="0.01"
-                        value={line.debit || ''} 
-                        onChange={(e) => updateLine(line.id, 'debit', e.target.value)}
-                        className="text-right border-transparent focus:border-primary hover:bg-muted/50 bg-transparent font-mono"
-                        placeholder="0.00"
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Input 
-                        type="number" 
-                        min="0"
-                        step="0.01"
-                        value={line.credit || ''} 
-                        onChange={(e) => updateLine(line.id, 'credit', e.target.value)}
-                        className="text-right border-transparent focus:border-primary hover:bg-muted/50 bg-transparent font-mono"
-                        placeholder="0.00"
-                      />
-                    </TableCell>
-                    <TableCell className="text-center">
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow>
+                    <TableHead className="w-[35%] pl-4">Account <span className="text-red-500">*</span></TableHead>
+                    <TableHead className="w-[25%]">Description</TableHead>
+                    <TableHead className="w-[15%] text-right">Debit</TableHead>
+                    <TableHead className="w-[15%] text-right">Credit</TableHead>
+                    <TableHead className="w-[10%] text-center">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lines.map((line) => (
+                    <TableRow key={line.id} className="group hover:bg-muted/5 transition-colors">
+                      <TableCell className="pl-4">
+                        <AccountCombobox 
+                          accounts={accounts}
+                          value={line.accountId}
+                          onChange={(val) => updateLine(line.id, 'accountId', val)}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input 
+                          value={line.description} 
+                          onChange={(e) => updateLine(line.id, 'description', e.target.value)}
+                          placeholder={description || "Line description"}
+                          className="border-transparent focus:border-primary hover:bg-muted/50 bg-transparent h-9"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input 
+                          type="number" 
+                          min="0"
+                          step="0.01"
+                          value={line.debit || ''} 
+                          onChange={(e) => updateLine(line.id, 'debit', e.target.value)}
+                          className="text-right border-transparent focus:border-primary hover:bg-muted/50 bg-transparent font-mono h-9"
+                          placeholder="0.00"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Input 
+                          type="number" 
+                          min="0"
+                          step="0.01"
+                          value={line.credit || ''} 
+                          onChange={(e) => updateLine(line.id, 'credit', e.target.value)}
+                          className="text-right border-transparent focus:border-primary hover:bg-muted/50 bg-transparent font-mono h-9"
+                          placeholder="0.00"
+                        />
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => removeLine(line.id)}
+                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          title="Remove line"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow className="hover:bg-transparent border-t-0">
+                    <TableCell colSpan={5} className="p-2">
                       <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        onClick={() => removeLine(line.id)}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                        variant="outline" 
+                        size="sm"
+                        onClick={addLine} 
+                        className="w-full border-dashed border-2 text-muted-foreground hover:text-primary hover:border-primary/50 hover:bg-primary/5 gap-2"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Plus className="h-4 w-4" /> Add New Line
                       </Button>
                     </TableCell>
                   </TableRow>
-                ))}
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={5}>
-                    <Button variant="ghost" onClick={addLine} className="text-primary hover:text-primary/80 gap-2 pl-0 hover:bg-transparent">
-                      <Plus className="h-4 w-4" /> Add Line
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-        
-        {/* Footer Totals */}
-        <div className="border-t bg-muted/10 p-4 sm:px-6">
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-6">
-            <div className="flex items-center gap-2">
-              {!isBalanced ? (
-                <div className="flex items-center gap-2 text-red-500 bg-red-50 px-3 py-1.5 rounded-full border border-red-100">
-                  <AlertTriangle className="h-4 w-4" />
-                  <span className="font-medium text-sm">Out of Balance: {Math.abs(difference).toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR' })}</span>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-100">
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span className="font-medium text-sm">Balanced</span>
-                </div>
-              )}
+                </TableBody>
+              </Table>
             </div>
-
-            <div className="flex gap-8 text-sm">
-              <div className="flex flex-col items-end">
-                <span className="text-muted-foreground text-xs uppercase font-semibold">Total Debits</span>
-                <span className="font-mono text-lg font-medium">{totalDebits.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR' })}</span>
-              </div>
-              <div className="flex flex-col items-end">
-                <span className="text-muted-foreground text-xs uppercase font-semibold">Total Credits</span>
-                <span className="font-mono text-lg font-medium">{totalCredits.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR' })}</span>
-              </div>
-            </div>
+          </CardContent>
+          <div className="bg-muted/10 p-4 border-t flex justify-end gap-6 text-sm">
+             <div className="flex items-center gap-2">
+                <span className="text-muted-foreground font-medium">Total Debits:</span>
+                <span className="font-mono font-bold">{totalDebits.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR' })}</span>
+             </div>
+             <div className="flex items-center gap-2">
+                <span className="text-muted-foreground font-medium">Total Credits:</span>
+                <span className="font-mono font-bold">{totalCredits.toLocaleString('en-ZA', { style: 'currency', currency: 'ZAR' })}</span>
+             </div>
           </div>
-          
-          <div className="flex justify-end mt-6 pt-6 border-t">
-            <Button 
-              size="lg" 
-              className="gap-2 min-w-[150px] shadow-lg shadow-primary/20" 
-              onClick={handlePost} 
-              disabled={loading || !isBalanced || totalDebits === 0}
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Post Journal
-            </Button>
-          </div>
-        </div>
-      </Card>
+        </Card>
+      </div>
     </div>
   );
 };

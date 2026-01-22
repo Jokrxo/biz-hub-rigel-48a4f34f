@@ -12,13 +12,15 @@ import { Badge } from "@/components/ui/badge";
 import { 
   Plus, 
   Package, 
-  Trash2, 
   Edit, 
   Search, 
   MoreHorizontal, 
-  FileText,
   Briefcase,
-  Box
+  Box,
+  History,
+  Upload,
+  Loader2,
+  AlertTriangle
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -76,6 +78,19 @@ export const SalesProducts = () => {
     cost_price: "",
     quantity_on_hand: "",
   });
+
+  // Deactivate Dialog states
+  const [deactivateOpen, setDeactivateOpen] = useState(false);
+  const [productToDeactivate, setProductToDeactivate] = useState<Product | null>(null);
+  const [deactivateReason, setDeactivateReason] = useState("");
+  const [isDeactivating, setIsDeactivating] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+    }
+  };
 
   const [serviceForm, setServiceForm] = useState({ name: "", description: "", unit_price: "" });
   const [openingForm, setOpeningForm] = useState({ productId: "", quantity: "", costPrice: "", date: new Date().toISOString().slice(0,10) });
@@ -185,15 +200,36 @@ export const SalesProducts = () => {
     }
   };
 
-  const deleteProduct = async (id: string) => {
-    if (!confirm("Delete this item?")) return;
+  const handleDeactivate = async () => {
+    if (!productToDeactivate) return;
+    if (!deactivateReason.trim()) {
+      toast({ title: "Reason required", description: "Please provide a reason for deactivation.", variant: "destructive" });
+      return;
+    }
+
+    setIsDeactivating(true);
     try {
-      const { error } = await supabase.from("items").delete().eq("id", id);
+      const newName = `[INACTIVE] ${productToDeactivate.name}`;
+      const newDesc = `${productToDeactivate.description || ''}\n[Deactivated: ${deactivateReason}]`;
+
+      const { error } = await supabase
+        .from("items")
+        .update({ 
+            name: newName,
+            description: newDesc
+        })
+        .eq("id", productToDeactivate.id);
+
       if (error) throw error;
-      toast({ title: "Success", description: "Item deleted" });
+      toast({ title: "Success", description: "Item deactivated successfully." });
+      setDeactivateOpen(false);
+      setProductToDeactivate(null);
+      setDeactivateReason("");
       loadProducts();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setIsDeactivating(false);
     }
   };
 
@@ -363,8 +399,11 @@ export const SalesProducts = () => {
                             <Edit className="mr-2 h-4 w-4" /> Edit Price
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => deleteProduct(item.id)} className="text-destructive">
-                            <Trash2 className="mr-2 h-4 w-4" /> Delete
+                          <DropdownMenuItem onClick={() => {
+                            setProductToDeactivate(item);
+                            setDeactivateOpen(true);
+                          }} className="text-amber-600">
+                            <History className="mr-2 h-4 w-4" /> Deactivate / Adjust
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -536,6 +575,69 @@ export const SalesProducts = () => {
               <Button type="submit" className="bg-gradient-primary">Create</Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deactivateOpen} onOpenChange={setDeactivateOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="text-amber-600 flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Deactivate Item
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg text-amber-800 text-sm font-medium flex gap-3 items-start">
+              <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+              <div>
+                For audit compliance, items cannot be deleted. Use this form to deactivate them.
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Reason for Deactivation</Label>
+              <Textarea 
+                value={deactivateReason} 
+                onChange={(e) => setDeactivateReason(e.target.value)} 
+                placeholder="Reason for deactivation..."
+                className="min-h-[80px]"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Supporting Document (Optional)</Label>
+              <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => document.getElementById('product-file-upload')?.click()}>
+                <input type="file" id="product-file-upload" className="hidden" onChange={handleFileChange} />
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <Upload className="h-8 w-8 opacity-50" />
+                  <span className="text-sm">Click to upload document</span>
+                  {file && <span className="text-xs text-primary font-medium">{file.name}</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setDeactivateOpen(false)} className="w-full sm:w-auto">Dismiss</Button>
+            <Button 
+              onClick={handleDeactivate}
+              disabled={isDeactivating || !deactivateReason.trim()}
+              className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {isDeactivating ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <History className="mr-2 h-4 w-4" />
+                  Confirm Deactivation
+                </>
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -6,13 +6,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
-import { ArrowRight, Plus, Trash2, FileText, Download, Mail } from "lucide-react";
+import { ArrowRight, Plus, FileText, Download, Mail, History, Upload, Loader2, AlertTriangle, X } from "lucide-react";
 import { buildQuotePDF, type QuoteForPDF, type QuoteItemForPDF, type CompanyForPDF } from '@/lib/quote-export';
 import { addLogoToPDF, fetchLogoDataUrl } from '@/lib/invoice-export';
 import { formatDate } from '@/lib/utils';
@@ -66,6 +66,18 @@ export const SalesQuotes = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState("");
+
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [quoteToCancel, setQuoteToCancel] = useState<Quote | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [file, setFile] = useState<File | null>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
+    }
+  };
 
   const loadData = useCallback(async () => {
     try {
@@ -506,15 +518,35 @@ export const SalesQuotes = () => {
     }
   };
 
-  const deleteQuote = async (id: string) => {
-    if (!confirm("Delete this quote?")) return;
+  const handleCancelQuote = async () => {
+    if (!quoteToCancel) return;
+    if (!cancelReason.trim()) {
+      toast({ title: "Reason required", description: "Please provide a reason for cancelling the quote.", variant: "destructive" });
+      return;
+    }
+
+    setIsCancelling(true);
     try {
-      const { error } = await supabase.from("quotes").delete().eq("id", id);
+      const notes = `${quoteToCancel.notes || ''}\n[Cancelled: ${cancelReason}]${file ? `\n[Document: ${file.name}]` : ''}`;
+
+      const { error } = await supabase
+        .from("quotes")
+        .update({ 
+            status: "cancelled",
+            notes: notes
+        })
+        .eq("id", quoteToCancel.id);
+
       if (error) throw error;
-      toast({ title: "Success", description: "Quote deleted" });
+
+      toast({ title: "Success", description: "Quote cancelled" });
+      setCancelOpen(false);
+      setFile(null);
       loadData();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -623,8 +655,11 @@ export const SalesQuotes = () => {
                             <Mail className="h-3 w-3" />
                           </Button>
                           {canEdit && (
-                            <Button size="sm" variant="ghost" onClick={() => deleteQuote(quote.id)}>
-                              <Trash2 className="h-4 w-4" />
+                            <Button size="sm" variant="ghost" onClick={() => {
+                              setQuoteToCancel(quote);
+                              setCancelOpen(true);
+                            }} className="text-amber-600">
+                              <History className="h-4 w-4" />
                             </Button>
                           )}
                         </div>
@@ -647,6 +682,73 @@ export const SalesQuotes = () => {
           </>
         )}
       </CardContent>
+
+      {/* Cancel Dialog */}
+      <Dialog open={cancelOpen} onOpenChange={setCancelOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="text-amber-600 flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Cancel Quote
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              This will mark the quote as cancelled. It cannot be deleted for audit purposes.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg text-amber-800 text-sm font-medium flex gap-3 items-start">
+              <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+              <div>
+                For audit compliance, quotes cannot be deleted. Use this form to cancel the quote.
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Reason for Cancellation</Label>
+              <Textarea 
+                value={cancelReason} 
+                onChange={(e) => setCancelReason(e.target.value)} 
+                placeholder="Reason for cancellation..."
+                className="min-h-[80px]"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Supporting Document (Optional)</Label>
+              <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => document.getElementById('quote-file-upload')?.click()}>
+                <input type="file" id="quote-file-upload" className="hidden" onChange={handleFileChange} />
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <Upload className="h-8 w-8 opacity-50" />
+                  <span className="text-sm">Click to upload document</span>
+                  {file && <span className="text-xs text-primary font-medium">{file.name}</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setCancelOpen(false)} className="w-full sm:w-auto">Dismiss</Button>
+            <Button 
+              onClick={handleCancelQuote}
+              disabled={isCancelling || !cancelReason.trim()}
+              className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {isCancelling ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <History className="mr-2 h-4 w-4" />
+                  Confirm Cancellation
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
@@ -786,7 +888,7 @@ export const SalesQuotes = () => {
                         onClick={() => removeItem(index)}
                         disabled={formData.items.length === 1}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <X className="h-4 w-4" />
                       </Button>
                     </div>
                   </div>

@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { emitDashboardCacheInvalidation } from '@/stores/dashboardCache';
 
 export interface TransactionRow {
   id: string;
@@ -59,6 +60,7 @@ export const transactionsApi = {
     const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    emitDashboardCacheInvalidation(companyId);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: total, _operation: 'subtract' }); } catch {}
     try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'buy', trade_date: postDate, symbol: opts.symbol, quantity: opts.quantity, price: opts.price, total_amount: total, fees: opts.fees || 0 }); } catch {}
   },
@@ -86,6 +88,7 @@ export const transactionsApi = {
     const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    emitDashboardCacheInvalidation(companyId);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: total, _operation: 'add' }); } catch {}
     try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'sell', trade_date: postDate, symbol: opts.symbol, quantity: opts.quantity, price: opts.price, total_amount: total, fees: opts.fees || 0 }); } catch {}
   },
@@ -110,6 +113,7 @@ export const transactionsApi = {
     const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: postDate, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    emitDashboardCacheInvalidation(companyId);
     try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'add' }); } catch {}
     try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'dividend', trade_date: postDate, symbol: opts.symbol || null, total_amount: amt }); } catch {}
   },
@@ -147,8 +151,9 @@ export const transactionsApi = {
         .limit(1);
       if (Array.isArray(fdPos) && fdPos.length > 0) {
         isFD = true;
-        const principal = Number(fdPos[0].avg_cost || 0);
-        fdSymbol = String(fdPos[0].symbol || '');
+        const pos = (fdPos as any)[0];
+        const principal = Number(pos.avg_cost || 0);
+        fdSymbol = String(pos.symbol || '');
         if (!(amt > 0) && principal > 0) {
           let rateDec = 0;
           const { data: fdBuy } = await supabase
@@ -203,6 +208,7 @@ export const transactionsApi = {
     const ledgerRows = rows.map(r => ({ company_id: companyId, account_id: r.account_id, debit: r.debit, credit: r.credit, entry_date: monthEndStr, is_reversed: false, transaction_id: (tx as any).id, description: r.description }));
     await supabase.from('ledger_entries').insert(ledgerRows as any);
     await supabase.from('transactions').update({ status: 'posted' }).eq('id', (tx as any).id);
+    emitDashboardCacheInvalidation(companyId);
     if (!isFD) { try { await supabase.rpc('update_bank_balance', { _bank_account_id: opts.bankAccountId, _amount: amt, _operation: 'add' }); } catch {} }
     try { await supabase.from('investment_transactions' as any).insert({ account_id: opts.accountId, type: 'interest', trade_date: monthEndStr, symbol: fdSymbol || opts.symbol || null, total_amount: amt }); } catch {}
     if (isFD) {

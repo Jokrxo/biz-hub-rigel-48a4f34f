@@ -11,6 +11,7 @@ import { useAuth } from "@/context/useAuth";
 import { Progress } from "@/components/ui/progress";
 import Papa from "papaparse";
 import * as XLSX from 'xlsx';
+import { emitDashboardCacheInvalidation } from "@/stores/dashboardCache";
 
 export const DataManagement = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -92,7 +93,7 @@ export const DataManagement = () => {
     try {
       const { data: profile } = await supabase.from("profiles").select("company_id").eq("user_id", user?.id).single();
       if (!profile?.company_id) throw new Error("Company not found");
-      const { data, error } = await supabase.rpc('repair_orphan_transactions', { _company_id: profile.company_id });
+      const { data, error } = await (supabase.rpc as any)('repair_orphan_transactions', { _company_id: profile.company_id });
       if (error) throw error;
       const repaired = typeof data === 'number' ? data : 0;
       toast({ title: "Repair Complete", description: `${repaired} transaction(s) fixed` });
@@ -120,6 +121,7 @@ export const DataManagement = () => {
       if (txIds.length) await supabase.from("transaction_entries").delete().in("transaction_id", txIds as any);
       await supabase.from("ledger_entries").delete().eq("company_id", companyId);
       await supabase.from("transactions").delete().eq("company_id", companyId);
+      emitDashboardCacheInvalidation(companyId);
       
       const tables = ["bills", "invoices", "purchase_orders", "quotes", "sales", "expenses", "trial_balances", "financial_reports", "budgets", "bank_accounts", "fixed_assets", "items", "customers", "suppliers", "categories", "chart_of_accounts", "branches"];
       for (const t of tables) {

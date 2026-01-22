@@ -19,7 +19,6 @@ import {
   History, 
   FileText, 
   User, 
-  Trash2, 
   TrendingUp, 
   Wallet, 
   ArrowUpRight, 
@@ -29,8 +28,7 @@ import {
   Percent,
   Search,
   Filter,
-  Check,
-  XCircle
+  Check
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/context/useAuth";
@@ -290,32 +288,6 @@ export default function Loans() {
     setRepaymentQuickOpen(true);
   };
 
-  const handleClearAllLoans = async () => {
-    try {
-      setIsClearingLoans(true);
-      const { data: profile } = await supabase.from("profiles").select("company_id").eq("user_id", user?.id || "").maybeSingle();
-      const cid = profile?.company_id || companyId;
-      if (!cid) throw new Error("Company not found");
-      const { data: loanRows } = await supabase.from("loans" as any).select("id").eq("company_id", cid);
-      const loanIds = (loanRows || []).map((r: any) => r.id);
-      if (loanIds.length) {
-        await supabase.from("loan_payments" as any).delete().in("loan_id", loanIds as any);
-      }
-      await supabase.from("loans" as any).delete().eq("company_id", cid);
-      setSuccessMessage("All company loans deleted");
-      setIsSuccess(true);
-      setTimeout(() => {
-        setIsSuccess(false);
-        setClearLoansOpen(false);
-        setRefreshKey((k) => k + 1);
-      }, 2000);
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message || "Failed to clear loans", variant: "destructive" });
-    } finally {
-      setIsClearingLoans(false);
-    }
-  };
-
   return (
     <>
       <SEO title="Loans | Rigel Business" description="Manage company loans" />
@@ -408,14 +380,6 @@ export default function Loans() {
                   <Button className="w-full justify-start" variant="ghost" onClick={() => { setActionsOpen(false); setTutorialOpen(true); }}>
                     <FileText className="h-4 w-4 mr-2" />
                     Help & Documentation
-                  </Button>
-                </div>
-                <Separator />
-                <div className="space-y-2">
-                  <h4 className="text-sm font-medium text-destructive/80 uppercase tracking-wider">Danger Zone</h4>
-                  <Button className="w-full justify-start hover:bg-destructive/10 hover:text-destructive" variant="ghost" onClick={() => { setActionsOpen(false); setClearLoansOpen(true); }}>
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Clear All Loans Data
                   </Button>
                 </div>
               </div>
@@ -735,22 +699,6 @@ export default function Loans() {
                     toast({ title: 'Error', description: err.message, variant: 'destructive' });
                   }
                 }}>Record Repayment</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          {/* Clear Loans Dialog */}
-          <Dialog open={clearLoansOpen} onOpenChange={setClearLoansOpen}>
-            <DialogContent className="sm:max-w-[425px]">
-              <DialogHeader>
-                <DialogTitle className="text-destructive">Clear All Loans</DialogTitle>
-                <DialogDescription>This action cannot be undone. It will delete all loans and payment history.</DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setClearLoansOpen(false)}>Cancel</Button>
-                <Button variant="destructive" onClick={handleClearAllLoans} disabled={isClearingLoans}>
-                  {isClearingLoans ? "Deleting..." : "Delete All Data"}
-                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -1101,6 +1049,11 @@ function DirectorLoansList({ companyId }: { companyId: string }) {
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0,10));
   const [bankId, setBankId] = useState("");
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("Operation completed successfully");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
 
   useEffect(() => {
     if (companyId) {

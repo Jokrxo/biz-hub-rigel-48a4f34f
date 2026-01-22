@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Download, FileSpreadsheet, FileText, Edit2, Trash2 } from 'lucide-react';
+import { Plus, Download, FileSpreadsheet, FileText, Edit2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -83,25 +83,6 @@ export const TrialBalanceManager: React.FC = () => {
       toast({
         title: 'Error',
         description: 'Failed to update entry',
-        variant: 'destructive',
-      });
-    }
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this entry?')) return;
-    
-    try {
-      await trialBalanceApi.delete(id);
-      await loadData();
-      toast({
-        title: 'Success',
-        description: 'Entry deleted successfully',
-      });
-    } catch (error) {
-      toast({
-        title: 'Error',
-        description: 'Failed to delete entry',
         variant: 'destructive',
       });
     }
@@ -209,13 +190,6 @@ export const TrialBalanceManager: React.FC = () => {
                           onClick={() => setEditingEntry(entry)}
                         >
                           <Edit2 className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => handleDelete(entry.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
                     </TableCell>

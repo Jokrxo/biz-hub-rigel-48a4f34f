@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, Trash2, FileText, Download, Search, MoreHorizontal, Calendar, Filter, Send, CreditCard } from "lucide-react";
+import { Plus, Trash2, FileText, Download, Search, MoreHorizontal, Calendar, Filter, Send, CreditCard, History, Upload, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -21,6 +21,8 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { transactionsApi } from "@/lib/transactions-api";
 import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Progress } from "@/components/ui/progress";
 
 interface Supplier {
   id: string;
@@ -74,6 +76,15 @@ export const PurchaseOrdersManagement = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
+
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
+
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [poToAdjust, setPoToAdjust] = useState<PurchaseOrder | null>(null);
+  const [adjustReason, setAdjustReason] = useState("");
+  const [isAdjusting, setIsAdjusting] = useState(false);
 
   const [form, setForm] = useState({
     po_date: new Date().toISOString().slice(0, 10),
@@ -197,8 +208,13 @@ export const PurchaseOrdersManagement = () => {
         return;
       }
 
+      setIsSubmitting(true);
+      setProgress(10);
+      setProgressText("Validating order details...");
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) throw new Error("No user found");
 
       const { data: profile } = await supabase
         .from("profiles")
@@ -206,12 +222,19 @@ export const PurchaseOrdersManagement = () => {
         .eq("user_id", user.id)
         .single();
 
-      if (!profile) return;
+      if (!profile) throw new Error("No profile found");
+
+      setProgress(30);
+      setProgressText("Calculating totals and taxes...");
+      await new Promise(resolve => setTimeout(resolve, 500));
 
       const totals = calculateTotals();
       
       // Generate PO number
       const poNumber = `PO-${Date.now()}`;
+
+      setProgress(50);
+      setProgressText("Creating purchase order record...");
 
       // Create purchase order
       const { data: po, error: poError } = await supabase
@@ -225,12 +248,16 @@ export const PurchaseOrdersManagement = () => {
           tax_amount: totals.taxAmount,
           total_amount: totals.total,
           notes: form.notes || null,
-          status: "draft"
+          status: "draft",
+          user_id: user.id
         })
         .select()
         .single();
 
       if (poError) throw poError;
+
+      setProgress(70);
+      setProgressText("Adding line items...");
 
       // Create PO items
       const items = form.items.map(item => ({
@@ -248,6 +275,10 @@ export const PurchaseOrdersManagement = () => {
 
       if (itemsError) throw itemsError;
 
+      setProgress(90);
+      setProgressText("Updating product inventory...");
+      await new Promise(resolve => setTimeout(resolve, 300));
+
       try {
         const { data: existingItems } = await supabase
           .from("items")
@@ -260,7 +291,7 @@ export const PurchaseOrdersManagement = () => {
 
         for (const poi of items) {
           const nameKey = String((poi as any).description || '').trim().toLowerCase();
-          if (!nameKey) return;
+          if (!nameKey) continue;
           if (existingSet.has(nameKey)) {
             await supabase
               .from("items")
@@ -291,6 +322,10 @@ export const PurchaseOrdersManagement = () => {
         toast({ title: "Product Sync Failed", description: String(syncErr?.message || syncErr), variant: "destructive" });
       }
 
+      setProgress(100);
+      setProgressText("Finalizing...");
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       toast({ title: "Success", description: "Purchase order created successfully" });
       setShowForm(false);
       const supplierName = suppliers.find(s => s.id === form.supplier_id)?.name || "N/A";
@@ -319,61 +354,114 @@ export const PurchaseOrdersManagement = () => {
       });
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const deletePO = async (id: string) => {
-    if (!confirm("Delete this purchase order?")) return;
+  const handleAdjustment = async () => {
+    if (!poToAdjust) return;
+    if (!adjustReason.trim()) {
+      toast({ title: "Reason required", description: "Please provide a reason for the adjustment.", variant: "destructive" });
+      return;
+    }
 
+    setIsAdjusting(true);
     try {
-      // Load PO to get company and reference
-      const { data: po } = await supabase
-        .from("purchase_orders")
-        .select("po_number, company_id")
-        .eq("id", id)
-        .single();
+      // 1. Find original transactions linked to this PO
+      let reversalEntries: any[] = [];
+      let originalTxIds: string[] = [];
 
-      // Find related transactions by reference number (purchase, payment)
-      if (po?.po_number) {
+      if (poToAdjust.po_number) {
         const { data: txs } = await supabase
           .from("transactions")
-          .select("id")
-          .eq("reference_number", po.po_number);
-        const txIds = (txs || []).map((t: any) => t.id);
-        if (txIds.length > 0) {
-          // Remove transaction entries and ledger entries for these transactions
-          await supabase.from("transaction_entries").delete().in("transaction_id", txIds as any);
-          await supabase.from("ledger_entries").delete().in("transaction_id", txIds as any);
-          await supabase.from("ledger_entries").delete().in("reference_id", txIds as any);
-          // Delete transactions
-          await supabase.from("transactions").delete().in("id", txIds as any);
+          .select("*, transaction_entries(*)")
+          .eq("reference_number", poToAdjust.po_number)
+          .eq("company_id", (poToAdjust as any).company_id); // Assuming company_id is available or we get it from profile
+
+        if (txs && txs.length > 0) {
+          originalTxIds = txs.map(t => t.id);
+          
+          // Prepare reversal entries from all related transactions
+          txs.forEach(tx => {
+            if (tx.transaction_entries) {
+              tx.transaction_entries.forEach((entry: any) => {
+                reversalEntries.push({
+                  account_id: entry.account_id,
+                  debit: entry.credit, // Swap debit/credit
+                  credit: entry.debit,
+                  description: `Adjustment/Reversal: ${entry.description || ''}`,
+                  status: 'approved'
+                });
+              });
+            }
+          });
         }
       }
 
-      // Delete PO items then PO
-      await supabase.from("purchase_order_items").delete().eq("purchase_order_id", id);
-      const { error } = await supabase.from("purchase_orders").delete().eq("id", id);
-      if (error) throw error;
+      // 2. Create Adjustment Transaction
+      const { data: { user } } = await supabase.auth.getUser();
+      let companyId = (poToAdjust as any).company_id;
+      
+      if (!companyId && user) {
+         const { data: profile } = await supabase.from("profiles").select("company_id").eq("user_id", user.id).single();
+         companyId = profile?.company_id;
+      }
 
-      // Refresh AFS cache
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("company_id")
-            .eq("user_id", user.id)
-            .maybeSingle();
-          if (profile?.company_id) {
-            await supabase.rpc('refresh_afs_cache', { _company_id: profile.company_id });
+      if (companyId) {
+          const { data: newTx, error: txError } = await supabase
+            .from('transactions')
+            .insert({
+              company_id: companyId,
+              transaction_date: new Date().toISOString().split('T')[0],
+              description: `Adjustment for PO ${poToAdjust.po_number}: ${adjustReason}`,
+              reference_number: `ADJ-${poToAdjust.po_number}-${Date.now().toString().slice(-4)}`,
+              transaction_type: 'Adjustment',
+              status: 'approved',
+              total_amount: poToAdjust.total_amount,
+              user_id: user?.id
+            })
+            .select()
+            .single();
+
+          if (txError) throw txError;
+
+          if (newTx && reversalEntries.length > 0) {
+              const entriesWithTxId = reversalEntries.map((e: any) => ({
+                  ...e,
+                  transaction_id: newTx.id
+              }));
+              const { error: entriesError } = await supabase.from('transaction_entries').insert(entriesWithTxId);
+              if (entriesError) throw entriesError;
           }
+      }
+
+      // 3. Update PO Status instead of deleting
+      const { error: poError } = await supabase
+        .from("purchase_orders")
+        .update({ 
+            status: "cancelled",
+            notes: `${poToAdjust.notes || ''}\n[Adjustment/Cancelled: ${adjustReason}]`
+        })
+        .eq("id", poToAdjust.id);
+        
+      if (poError) throw poError;
+
+      // 4. Refresh AFS Cache
+      try {
+        if (companyId) {
+          await supabase.rpc('refresh_afs_cache', { _company_id: companyId });
         }
       } catch {}
 
-      toast({ title: "Success", description: "Purchase order and postings deleted" });
+      toast({ title: "Success", description: "Purchase order adjusted and cancelled." });
+      setAdjustmentOpen(false);
       loadData();
     } catch (error: any) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
+      console.error("Adjustment error:", error);
+      toast({ title: "Error", description: error.message || "Failed to process adjustment.", variant: "destructive" });
+    } finally {
+      setIsAdjusting(false);
     }
   };
 
@@ -698,9 +786,12 @@ export const PurchaseOrdersManagement = () => {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                            <DropdownMenuItem onClick={() => deletePO(order.id)} className="text-destructive">
-                              <Trash2 className="mr-2 h-4 w-4" /> Delete
-                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => {
+                            setPoToAdjust(order);
+                            setAdjustmentOpen(true);
+                          }} className="text-amber-600">
+                            <History className="mr-2 h-4 w-4" /> Adjust / Reverse
+                          </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -712,6 +803,71 @@ export const PurchaseOrdersManagement = () => {
           )}
         </div>
       </CardContent>
+
+      {/* Adjustment Dialog */}
+      <Dialog open={adjustmentOpen} onOpenChange={setAdjustmentOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="text-amber-600 flex items-center gap-2">
+              <History className="h-5 w-5" />
+              Adjust / Reverse Purchase Order
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              This will cancel the purchase order and create adjustment entries in the ledger to reverse any financial impact.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="p-4 bg-amber-50 border border-amber-100 rounded-lg text-amber-800 text-sm font-medium flex gap-3 items-start">
+              <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+              <div>
+                For audit compliance, purchase orders cannot be deleted. Use this form to adjust or reverse the transaction.
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Reason for Adjustment</Label>
+              <Textarea 
+                value={adjustReason} 
+                onChange={(e) => setAdjustReason(e.target.value)} 
+                placeholder="Reason for cancellation or adjustment..."
+                className="min-h-[80px]"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Supporting Document (Optional)</Label>
+              <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => toast({ title: "Upload", description: "File upload will be available in the next update." })}>
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <Upload className="h-8 w-8 opacity-50" />
+                  <span className="text-sm">Click to upload document</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setAdjustmentOpen(false)} className="w-full sm:w-auto">Cancel</Button>
+            <Button 
+              onClick={handleAdjustment}
+              disabled={isAdjusting || !adjustReason.trim()}
+              className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {isAdjusting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <History className="mr-2 h-4 w-4" />
+                  Confirm Adjustment
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={poSentDialogOpen} onOpenChange={setPoSentDialogOpen}>
         <DialogContent className="max-w-md">
@@ -912,6 +1068,26 @@ export const PurchaseOrdersManagement = () => {
       </DialogContent>
       </Dialog>
       <TransactionFormEnhanced open={journalOpen} onOpenChange={setJournalOpen} onSuccess={loadData} editData={journalEditData} />
+
+      {isSubmitting && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-background p-8 rounded-xl shadow-2xl max-w-md w-full space-y-6 border border-border animate-in fade-in zoom-in duration-300">
+            <div className="flex flex-col items-center justify-center space-y-4">
+              <div className="relative">
+                <LoadingSpinner className="h-16 w-16 text-primary" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-xs font-bold">{Math.round(progress)}%</span>
+                </div>
+              </div>
+              <div className="text-center space-y-2">
+                <h3 className="text-lg font-semibold tracking-tight">Processing Purchase Order</h3>
+                <p className="text-sm text-muted-foreground">{progressText}</p>
+              </div>
+              <Progress value={progress} className="w-full h-2" />
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 };

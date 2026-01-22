@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Download, FileText, Mail, Trash2, Info, Plus, LayoutDashboard, CheckCircle2, XCircle, AlertCircle, TrendingUp, Filter, Users } from "lucide-react";
+import { Download, FileText, Mail, Trash2, Info, Plus, LayoutDashboard, CheckCircle2, XCircle, AlertCircle, TrendingUp, Filter, Users, History, Upload, Loader2, AlertTriangle } from "lucide-react";
 import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
 import { exportInvoicesToExcel } from '@/lib/export-utils';
 import { supabase } from "@/integrations/supabase/client";
@@ -20,6 +20,7 @@ import { MetricCard } from "@/components/ui/MetricCard";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { useNavigate } from "react-router-dom";
+import { Textarea } from "@/components/ui/textarea";
 
 interface Invoice {
   id: string;
@@ -53,6 +54,13 @@ export default function InvoicesPage() {
   // Pagination
   const [page, setPage] = useState(0);
   const [pageSize] = useState(10);
+
+  // Credit Note State
+  const [creditNoteOpen, setCreditNoteOpen] = useState(false);
+  const [invoiceToCredit, setInvoiceToCredit] = useState<Invoice | null>(null);
+  const [creditReason, setCreditReason] = useState("");
+  const [isCrediting, setIsCrediting] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
 
   const loadInvoices = useCallback(async () => {
     try {
@@ -488,8 +496,8 @@ export default function InvoicesPage() {
                                   <Mail className="h-4 w-4" />
                                 </Button>
                                 {canEdit && (
-                                  <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => handleDelete(invoice.id)}>
-                                    <Trash2 className="h-4 w-4" />
+                                  <Button size="icon" variant="ghost" className="h-8 w-8 text-orange-600 hover:text-orange-700 hover:bg-orange-50" onClick={() => { setInvoiceToCredit(invoice); setCreditNoteOpen(true); }} title="Create Credit Note">
+                                    <History className="h-4 w-4" />
                                   </Button>
                                 )}
                               </div>

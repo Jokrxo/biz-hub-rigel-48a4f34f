@@ -60,7 +60,8 @@ export const EnhancedFinancialReports = () => {
 
   const loadFinancialData = useCallback(async () => {
     try {
-      setLoading(true);
+      // Don't set loading true immediately if we have data (background refresh)
+      // But if we are switching periods and have no data, we might want to show loading or cached data
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
       const { data: profile } = await supabase
@@ -70,6 +71,30 @@ export const EnhancedFinancialReports = () => {
         .maybeSingle();
       if (!profile?.company_id) return;
       setCompanyId(profile.company_id);
+
+      // Try to load from cache first to show immediate results
+      // Cache key includes company and period, but NOT activeReport because we fetch/store all reports at once
+      const cacheKey = `rigel_fin_report_${profile.company_id}_${periodStart}_${periodEnd}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && parsed.data) {
+             // Only use cache if it looks valid
+             setReportData(parsed.data);
+             // If we have cached data, we are not "loading" in the UI sense (blocking)
+             setLoading(false); 
+             // But we still want to indicate a background refresh might be happening?
+             // For now, let's just let it run. The user will see the numbers update if they change.
+          }
+        } catch (e) {
+          console.warn("Failed to parse cached report data", e);
+        }
+      } else {
+        // If no cache, show loading
+        setLoading(true);
+      }
+
       const housekeeping = (async () => {
         try { await (supabase as any).rpc('backfill_invoice_postings', { _company_id: profile.company_id }); } catch {}
         try {
@@ -98,7 +123,8 @@ export const EnhancedFinancialReports = () => {
           .eq('company_id', profile.company_id)
           .then(res => res.data),
         calculateCOGSFromInvoices(profile.company_id, periodStart, periodEnd),
-      ]);
+      ]) as [any[], any[], any[], number];
+
       await housekeeping;
       setFallbackCOGS(cogsFallback || 0);
       let openingPpeNbv = 0;
@@ -108,12 +134,23 @@ export const EnhancedFinancialReports = () => {
           .filter((a: any) => String(a.description || '').toLowerCase().includes('[opening]'))
           .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
       } catch {}
-      const pl = generateProfitLoss(trialBalancePeriod || []);
-      const bs = generateBalanceSheet(cumulativeTB || [], openingPpeNbv);
-      setReportData({ profitLoss: pl, balanceSheet: bs, cashFlow: [], trialBalance: trialBalancePeriod || [] });
+      const pl = generateProfitLoss(trialBalancePeriod as any[] || []);
+      const bs = generateBalanceSheet(cumulativeTB as any[] || [], openingPpeNbv);
+      
+      const newReportData = { profitLoss: pl, balanceSheet: bs, cashFlow: [], trialBalance: trialBalancePeriod as any[] || [] };
+      setReportData(newReportData);
+      
+      // Update cache
+      localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: newReportData }));
+      
       setLoading(false);
       const cf = demo ? [] : await generateCashFlow(profile.company_id);
-      setReportData(prev => ({ ...prev, cashFlow: cf }));
+      
+      setReportData(prev => {
+        const updated = { ...prev, cashFlow: cf };
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: updated }));
+        return updated;
+      });
 
       try {
         const { data: v } = await supabase.rpc('validate_trial_balance' as any, {
@@ -133,20 +170,75 @@ export const EnhancedFinancialReports = () => {
   }, [periodStart, periodEnd, selectedFiscalYear, toast]);
   useEffect(() => { loadFinancialData(); }, [periodStart, periodEnd, loadFinancialData]);
 
-  const refreshCurrentReport = useCallback(async () => {
+  const refreshCurrentReport = useCallback(async (background = false) => {
     try {
       if (!companyId) {
-        await loadFinancialData();
+        if (!background) await loadFinancialData();
         return;
       }
-      setRefreshing(true);
+      if (!background) setRefreshing(true);
+      const cacheKey = `rigel_fin_report_${companyId}_${periodStart}_${periodEnd}`;
+      
+      // If background refresh, we just want to update the data silently
+      // But we should check if we need to fetch EVERYTHING or just the active one
+      // For simplicity, fetch everything in background to keep cache fresh
+      
+      if (background) {
+         // Fetch all critical data in background
+         const [tb, cumulativeTB, openingAssets] = await Promise.all([
+            fetchTrialBalanceForPeriod(companyId, periodStart, periodEnd),
+            fetchTrialBalanceCumulativeToEnd(companyId, periodEnd),
+            supabase
+            .from('fixed_assets')
+            .select('cost, accumulated_depreciation, status, description')
+            .eq('company_id', companyId)
+            .then(res => res.data),
+         ]);
+         
+         let openingPpeNbv = 0;
+         try {
+            openingPpeNbv = (openingAssets || [])
+            .filter((a: any) => String(a.status || 'active').toLowerCase() !== 'disposed')
+            .filter((a: any) => String(a.description || '').toLowerCase().includes('[opening]'))
+            .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
+         } catch {}
+         
+         const pl = generateProfitLoss(tb as any[] || []);
+         const bs = generateBalanceSheet(cumulativeTB as any[] || [], openingPpeNbv);
+         
+         // Update state and cache
+         setReportData(prev => {
+             const next = { ...prev, profitLoss: pl, balanceSheet: bs, trialBalance: tb as any[] || [] };
+             localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: next }));
+             return next;
+         });
+         
+         // Fetch Cashflow separately if needed, or just let it be lazy
+         const cf = await generateCashFlow(companyId);
+         setReportData(prev => {
+             const next = { ...prev, cashFlow: cf };
+             localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: next }));
+             return next;
+         });
+         
+         return;
+      }
+
       if (activeReport === 'tb') {
         const tb = await fetchTrialBalanceForPeriod(companyId, periodStart, periodEnd);
-        setReportData(prev => ({ ...prev, trialBalance: tb || [] }));
+        setReportData(prev => {
+           const next = { ...prev, trialBalance: tb as any[] || [] };
+           localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: next }));
+           return next;
+        });
       } else if (activeReport === 'pl') {
         const tb = await fetchTrialBalanceForPeriod(companyId, periodStart, periodEnd);
-        const pl = generateProfitLoss(tb || []);
-        setReportData(prev => ({ ...prev, profitLoss: pl, trialBalance: tb || [] }));
+        const pl = generateProfitLoss(tb as any[] || []);
+        setReportData(prev => {
+            const next = { ...prev, profitLoss: pl, trialBalance: tb as any[] || [] };
+            localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: next }));
+            return next;
+        });
       } else if (activeReport === 'bs') {
         const [cumulativeTB, openingAssets] = await Promise.all([
           fetchTrialBalanceCumulativeToEnd(companyId, periodEnd),
@@ -164,10 +256,18 @@ export const EnhancedFinancialReports = () => {
             .reduce((sum: number, a: any) => sum + Math.max(0, Number(a.cost || 0) - Number(a.accumulated_depreciation || 0)), 0);
         } catch {}
         const bs = generateBalanceSheet(cumulativeTB || [], openingPpeNbv);
-        setReportData(prev => ({ ...prev, balanceSheet: bs }));
+        setReportData(prev => {
+            const next = { ...prev, balanceSheet: bs };
+            localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: next }));
+            return next;
+        });
       } else if (activeReport === 'cf') {
         const cf = await generateCashFlow(companyId);
-        setReportData(prev => ({ ...prev, cashFlow: cf }));
+        setReportData(prev => {
+            const next = { ...prev, cashFlow: cf };
+            localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: next }));
+            return next;
+        });
       }
     } catch (error: any) {
       console.error('Error refreshing report:', error);
@@ -188,7 +288,7 @@ export const EnhancedFinancialReports = () => {
       }
       toast({ title: 'Data changed', description: 'Refreshing current report' });
       autoRefreshTimer.current = window.setTimeout(() => {
-        refreshCurrentReport();
+        refreshCurrentReport(true);
       }, 1200);
     };
     ch.on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `company_id=eq.${companyId}` }, schedule);
@@ -427,8 +527,9 @@ export const EnhancedFinancialReports = () => {
       const { data: items } = await supabase
         .from('invoice_items')
         .select('invoice_id, description, quantity, unit_price, item_type')
-        .in('invoice_id', ids as any);
-      const onlyProducts = (items || []).filter((it: any) => String(it.item_type || '').toLowerCase() === 'product');
+        .in('invoice_id', ids as any)
+        .eq('item_type', 'product');
+      const onlyProducts = items || [];
       let total = 0;
       const { data: prodByName } = await supabase
         .from('items')
@@ -924,7 +1025,7 @@ export const EnhancedFinancialReports = () => {
             <Label className="text-xs">Auto Refresh</Label>
             <Switch checked={isAutoRefreshEnabled} onCheckedChange={setIsAutoRefreshEnabled} />
           </div>
-          <Button variant="outline" onClick={refreshCurrentReport} disabled={refreshing}>
+          <Button variant="outline" onClick={() => refreshCurrentReport(false)} disabled={refreshing}>
             {refreshing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Activity className="h-4 w-4 mr-2" />}
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </Button>

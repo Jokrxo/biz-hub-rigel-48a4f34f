@@ -8,8 +8,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
-import { AlertTriangle, CheckCircle2, Building2, AlertCircle, Loader2, Check, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Building2, AlertCircle, Loader2, Check, XCircle, Briefcase, Info, History } from "lucide-react";
 
 // Loan calculation function
 const calculateMonthlyRepayment = (principal: number, monthlyRate: number, termMonths: number): number => {
@@ -937,17 +938,17 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
   if (isSuccess) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[300px]">
-          <div className="h-24 w-24 rounded-full bg-green-100 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-300">
-            <Check className="h-12 w-12 text-green-600" />
+        <DialogContent className="sm:max-w-[425px] flex flex-col items-center justify-center min-h-[350px] border-none shadow-2xl bg-gradient-to-b from-background to-muted/20">
+          <div className="h-28 w-28 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-50 flex items-center justify-center mb-6 animate-in zoom-in-50 duration-500 shadow-inner">
+            <Check className="h-14 w-14 text-emerald-600 drop-shadow-sm" />
           </div>
-          <DialogHeader>
-            <DialogTitle className="text-center text-2xl text-green-700">Success!</DialogTitle>
+          <DialogHeader className="space-y-4">
+            <DialogTitle className="text-center text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-600 to-emerald-500">Success!</DialogTitle>
+            <div className="text-center space-y-2">
+              <p className="text-xl font-medium text-foreground">Transaction Posted Successfully</p>
+              <p className="text-muted-foreground max-w-[280px] mx-auto">Your transaction has been securely recorded in the ledger.</p>
+            </div>
           </DialogHeader>
-          <div className="text-center space-y-2">
-            <p className="text-xl font-semibold text-gray-900">Transaction Posted Successfully</p>
-            <p className="text-muted-foreground">Your transaction has been recorded.</p>
-          </div>
         </DialogContent>
       </Dialog>
     );
@@ -955,78 +956,98 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto p-0 gap-0 border-0 shadow-2xl">
+        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-primary/50 via-primary to-primary/50" />
         {loading && (
-          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
-            <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
-            <p className="text-lg font-semibold text-primary">Processing Transaction...</p>
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-md z-50 flex flex-col items-center justify-center animate-in fade-in duration-200">
+            <div className="p-6 rounded-2xl bg-card shadow-xl border border-border/50 flex flex-col items-center">
+              <div className="relative mb-4">
+                <div className="absolute inset-0 bg-primary/20 rounded-full blur-xl animate-pulse" />
+                <Loader2 className="h-12 w-12 animate-spin text-primary relative z-10" />
+              </div>
+              <p className="text-lg font-semibold text-foreground">Processing Transaction</p>
+              <p className="text-sm text-muted-foreground animate-pulse">Updating ledger and balances...</p>
+            </div>
           </div>
         )}
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Building2 className="h-5 w-5" />
-            {editData ? "Edit Transaction" : "New Transaction - Double Entry"}
+        <DialogHeader className="p-6 pb-4 bg-muted/10 border-b">
+          <DialogTitle className="flex items-center gap-3 text-2xl">
+            <div className="p-2.5 bg-primary/10 rounded-xl text-primary shadow-sm">
+              <Building2 className="h-6 w-6" />
+            </div>
+            {editData ? "Edit Transaction" : "New Transaction"}
           </DialogTitle>
+          <p className="text-muted-foreground ml-[3.25rem]">
+            {editData ? "Modify the existing transaction details." : "Record a new double-entry transaction."}
+          </p>
         </DialogHeader>
         
-        <div className="grid gap-4">
+        <div className="grid gap-6 p-6">
           {/* Bank Account Selection */}
-          <div className="p-4 bg-primary/5 rounded-lg border border-primary/20">
-            <Label className="text-sm font-semibold flex items-center gap-2 mb-2">
+          <div className="p-5 bg-gradient-to-br from-primary/5 to-transparent rounded-xl border border-primary/10 shadow-sm">
+            <Label className="text-sm font-semibold flex items-center gap-2 mb-3 text-primary">
               <Building2 className="h-4 w-4" />
-              Bank Account * (Company Isolation)
+              Bank Account <span className="text-xs font-normal text-muted-foreground">(Required for bank transactions)</span>
             </Label>
             <Select value={form.bankAccount || "__none__"} onValueChange={(val) => {
               const bankAccountValue = val === "__none__" ? "" : val;
               setForm({ ...form, bankAccount: bankAccountValue });
             }}>
-              <SelectTrigger>
+              <SelectTrigger className="bg-background border-primary/20 focus:ring-primary/20 h-11 transition-all hover:border-primary/50">
                 <SelectValue placeholder="Select bank account" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">None</SelectItem>
+                <SelectItem value="__none__" className="text-muted-foreground">None</SelectItem>
                 {bankAccounts.map(bank => (
-                  <SelectItem key={bank.id} value={bank.id}>
-                    {bank.bank_name} - {bank.account_name} ({bank.account_number})
+                  <SelectItem key={bank.id} value={bank.id} className="cursor-pointer">
+                    <span className="font-medium">{bank.bank_name}</span> 
+                    <span className="mx-2 text-muted-foreground/50">|</span> 
+                    <span>{bank.account_name}</span> 
+                    <span className="ml-2 text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                      {bank.account_number}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Transaction Date *</Label>
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <Label className="font-semibold text-foreground/80">Transaction Date <span className="text-red-500">*</span></Label>
               <Input
                 type="date"
                 value={form.date}
                 onChange={(e) => setForm({ ...form, date: e.target.value })}
+                className="h-11 transition-all focus:ring-2 focus:ring-primary/20 hover:border-primary/50 bg-background/50 focus:bg-background"
               />
             </div>
-            <div>
-              <Label>Reference Number</Label>
+            <div className="space-y-2">
+              <Label className="font-semibold text-foreground/80">Reference Number</Label>
               <Input
                 value={form.reference}
                 onChange={(e) => setForm({ ...form, reference: e.target.value })}
                 placeholder="e.g. INV-001"
+                className="h-11 transition-all focus:ring-2 focus:ring-primary/20 hover:border-primary/50 bg-background/50 focus:bg-background"
               />
             </div>
           </div>
 
-          <div>
-            <Label>Description * (Auto-Classification)</Label>
+          <div className="space-y-2">
+            <Label className="font-semibold text-foreground/80">Description <span className="text-red-500">*</span> <span className="text-xs font-normal text-muted-foreground">(Auto-Classification enabled)</span></Label>
             <Textarea
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               placeholder="e.g. 'Fuel purchase', 'Equipment', 'Salary payment'"
               rows={2}
+              className="resize-none min-h-[80px] transition-all focus:ring-2 focus:ring-primary/20 hover:border-primary/50 bg-background/50 focus:bg-background"
             />
             {autoClassification && (
-              <div className="mt-2 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4 text-primary" />
+              <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1 duration-300 pt-1">
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                 <span className="text-sm text-muted-foreground">
                   Auto-classified as: 
-                  <Badge className="ml-2" variant="secondary">
+                  <Badge className="ml-2 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 border-emerald-200" variant="secondary">
                     {autoClassification.type} - {autoClassification.category}
                   </Badge>
                 </span>
@@ -1055,67 +1076,83 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           )}
 
           <div>
-            <Label>Transaction Type *</Label>
+            <Label className="font-semibold text-foreground/80 mb-1.5 block">Transaction Type <span className="text-red-500">*</span></Label>
             <Select value={form.transactionType} onValueChange={handleTransactionTypeChange}>
-              <SelectTrigger>
+              <SelectTrigger className="h-11 bg-background border-primary/20 focus:ring-primary/20 transition-all hover:border-primary/50">
                 <SelectValue placeholder="Select transaction type" />
               </SelectTrigger>
               <SelectContent>
                 {TRANSACTION_TYPES.map(tt => (
-                  <SelectItem key={tt.value} value={tt.value}>
-                    {tt.icon} {tt.label}
+                  <SelectItem key={tt.value} value={tt.value} className="py-2.5">
+                    <span className="flex items-center gap-2">
+                      <span className="p-1 rounded-md bg-primary/10 text-primary">{tt.icon}</span>
+                      <span className="font-medium">{tt.label}</span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             {form.transactionType && (
-              <p className="text-xs text-muted-foreground mt-1">
+              <div className="mt-2 p-2 bg-muted/50 rounded text-xs text-muted-foreground flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+                <Info className="h-3.5 w-3.5" />
                 {TRANSACTION_TYPES.find(t => t.value === form.transactionType)?.description}
-              </p>
+              </div>
             )}
           </div>
 
           {/* Loan-specific fields */}
           {form.transactionType.startsWith('loan_') && (
-            <div className="space-y-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-              <div className="text-sm font-medium text-blue-800">Loan Transaction Details</div>
+            <div className="space-y-4 p-5 bg-gradient-to-br from-blue-50 to-transparent rounded-xl border border-blue-100 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="flex items-center gap-2 pb-2 border-b border-blue-100">
+                <Briefcase className="h-4 w-4 text-blue-600" />
+                <div className="text-sm font-semibold text-blue-900">Loan Transaction Details</div>
+              </div>
               
               {form.transactionType === 'loan_received' && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label>Interest Rate (% per annum) *</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      value={form.interestRate}
-                      onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
-                      placeholder="e.g., 8.5"
-                    />
+                <div className="grid grid-cols-2 gap-5">
+                  <div className="space-y-1.5">
+                    <Label className="text-blue-900">Interest Rate (% per annum) *</Label>
+                    <div className="relative">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={form.interestRate}
+                        onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
+                        placeholder="e.g., 8.5"
+                        className="h-10 border-blue-200 focus:border-blue-400 focus:ring-blue-400/20"
+                      />
+                      <span className="absolute right-3 top-2.5 text-xs text-blue-400 font-bold">%</span>
+                    </div>
                   </div>
-                  <div>
-                    <Label>Loan Term (months) *</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-blue-900">Loan Term (months) *</Label>
                     <Input
                       type="number"
                       value={form.loanTerm}
                       onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
                       placeholder="e.g., 12"
+                      className="h-10 border-blue-200 focus:border-blue-400 focus:ring-blue-400/20"
                     />
                   </div>
                 </div>
               )}
 
               {(form.transactionType === 'loan_repayment' || form.transactionType === 'loan_interest') && (
-                <div>
-                  <Label>Select Loan *</Label>
+                <div className="space-y-1.5">
+                  <Label className="text-blue-900">Select Loan *</Label>
                   <Select value={form.loanId} onValueChange={(val) => setForm({ ...form, loanId: val })}>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-10 border-blue-200 focus:border-blue-400 focus:ring-blue-400/20 bg-white/50">
                       <SelectValue placeholder="Choose a loan" />
                     </SelectTrigger>
                     <SelectContent>
                       {loans.map(loan => (
                         <SelectItem key={loan.id} value={loan.id}>
-                          {loan.reference} - {loan.loan_type === 'short' ? 'Short-term' : 'Long-term'} 
-                          (Outstanding: R {loan.outstanding_balance?.toFixed(2)})
+                          <span className="font-medium text-blue-900">{loan.reference}</span>
+                          <span className="mx-2 text-blue-300">|</span>
+                          <span className="text-blue-700">{loan.loan_type === 'short' ? 'Short-term' : 'Long-term'}</span>
+                          <Badge variant="secondary" className="ml-2 bg-blue-100 text-blue-700 hover:bg-blue-200">
+                            Outstanding: R {loan.outstanding_balance?.toFixed(2)}
+                          </Badge>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1123,25 +1160,28 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                 </div>
               )}
 
-              <div className="text-xs text-blue-600">
-                {form.transactionType === 'loan_received' && 
-                  "This will create a new loan record and post the transaction to your accounts."}
-                {form.transactionType === 'loan_repayment' && 
-                  "This will reduce the loan outstanding balance and post the principal repayment."}
-                {form.transactionType === 'loan_interest' && 
-                  "This will post interest expense and update the loan interest records."}
+              <div className="text-xs text-blue-600/80 bg-blue-100/50 p-2.5 rounded border border-blue-100 flex items-start gap-2">
+                <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                <span>
+                  {form.transactionType === 'loan_received' && 
+                    "This will create a new loan record and post the transaction to your accounts."}
+                  {form.transactionType === 'loan_repayment' && 
+                    "This will reduce the loan outstanding balance and post the principal repayment."}
+                  {form.transactionType === 'loan_interest' && 
+                    "This will post interest expense and update the loan interest records."}
+                </span>
               </div>
             </div>
           )}
 
           {form.transactionType === 'loan_received' && (
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="p-4 bg-gradient-to-r from-blue-50 to-transparent border-l-4 border-blue-500 rounded-r-lg animate-in fade-in slide-in-from-left-2">
               <div className="flex items-start gap-3">
-                <div className="text-blue-600">🏦</div>
+                <div className="p-2 bg-blue-100 rounded-full text-blue-600">🏦</div>
                 <div className="text-sm">
-                  <p className="font-medium text-blue-900 mb-1">Loan Received Transaction</p>
-                  <p className="text-blue-700">
-                    When you receive a loan: <strong>Debit Bank Account</strong> (cash increases) and <strong>Credit Loan Account</strong> (liability increases).
+                  <p className="font-semibold text-blue-900 mb-1">Loan Received Transaction</p>
+                  <p className="text-blue-700/90 leading-relaxed">
+                    When you receive a loan: <strong className="text-blue-800">Debit Bank Account</strong> (cash increases) and <strong className="text-blue-800">Credit Loan Account</strong> (liability increases).
                     Select your bank account below to receive the funds, and choose either 2300 (Short-term) or 2400 (Long-term) loan account.
                   </p>
                 </div>
@@ -1150,13 +1190,13 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           )}
 
           {form.transactionType === 'loan_repayment' && (
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="p-4 bg-gradient-to-r from-green-50 to-transparent border-l-4 border-green-500 rounded-r-lg animate-in fade-in slide-in-from-left-2">
               <div className="flex items-start gap-3">
-                <div className="text-green-600">💳</div>
+                <div className="p-2 bg-green-100 rounded-full text-green-600">💳</div>
                 <div className="text-sm">
-                  <p className="font-medium text-green-900 mb-1">Loan Repayment Transaction</p>
-                  <p className="text-green-700">
-                    When repaying loan principal: <strong>Debit Loan Account</strong> (liability decreases) and <strong>Credit Bank Account</strong> (cash decreases).
+                  <p className="font-semibold text-green-900 mb-1">Loan Repayment Transaction</p>
+                  <p className="text-green-700/90 leading-relaxed">
+                    When repaying loan principal: <strong className="text-green-800">Debit Loan Account</strong> (liability decreases) and <strong className="text-green-800">Credit Bank Account</strong> (cash decreases).
                     This reduces your outstanding loan balance.
                   </p>
                 </div>
@@ -1165,13 +1205,13 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           )}
 
           {form.transactionType === 'loan_interest' && (
-            <div className="p-4 bg-orange-50 border border-orange-200 rounded-lg">
+            <div className="p-4 bg-gradient-to-r from-orange-50 to-transparent border-l-4 border-orange-500 rounded-r-lg animate-in fade-in slide-in-from-left-2">
               <div className="flex items-start gap-3">
-                <div className="text-orange-600">📈</div>
+                <div className="p-2 bg-orange-100 rounded-full text-orange-600">📈</div>
                 <div className="text-sm">
-                  <p className="font-medium text-orange-900 mb-1">Loan Interest Payment</p>
-                  <p className="text-orange-700">
-                    When paying loan interest: <strong>Debit Interest Expense</strong> (expense increases) and <strong>Credit Bank Account</strong> (cash decreases).
+                  <p className="font-semibold text-orange-900 mb-1">Loan Interest Payment</p>
+                  <p className="text-orange-700/90 leading-relaxed">
+                    When paying loan interest: <strong className="text-orange-800">Debit Interest Expense</strong> (expense increases) and <strong className="text-orange-800">Credit Bank Account</strong> (cash decreases).
                     This records the cost of borrowing, separate from principal repayment.
                   </p>
                 </div>
@@ -1179,28 +1219,31 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
-            <div>
-              <Label className="flex items-center gap-2">
-                Debit Account * (Dr)
+          <div className="grid grid-cols-2 gap-4 p-5 bg-muted/30 rounded-xl border border-border/50">
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-2 text-sm font-semibold text-foreground/80">
+                Debit Account (Dr) <span className="text-red-500">*</span>
                 {form.transactionType === 'loan_received' && (
-                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700">
+                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-green-50 text-green-700 border-green-200">
                     💰 Cash Received
                   </Badge>
                 )}
                 {form.transactionType === 'loan_repayment' && (
-                  <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700">
+                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-blue-50 text-blue-700 border-blue-200">
                     💳 Reduce Loan
                   </Badge>
                 )}
                 {form.transactionType === 'loan_interest' && (
-                  <Badge variant="outline" className="text-xs bg-orange-50 text-orange-700">
+                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-orange-50 text-orange-700 border-orange-200">
                     📈 Interest Expense
                   </Badge>
                 )}
               </Label>
               <Select value={form.debitAccount} onValueChange={(val) => setForm({ ...form, debitAccount: val })}>
-                <SelectTrigger className={form.transactionType?.startsWith('loan_') && !form.debitAccount ? "border-orange-300" : ""}>
+                <SelectTrigger className={cn(
+                  "h-11 bg-background transition-all hover:border-primary/50 focus:ring-primary/20",
+                  form.transactionType?.startsWith('loan_') && !form.debitAccount && "border-orange-300 ring-2 ring-orange-100"
+                )}>
                   <SelectValue 
                     placeholder={form.transactionType === 'loan_received' ? "Select Bank Account (Cash Received)" : 
                                  form.transactionType === 'loan_repayment' ? "Select Loan Account (Reduce Loan)" :
@@ -1208,26 +1251,26 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                                  "Select debit account"} 
                   />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-[300px]">
                   {debitAccounts.length === 0 ? (
-                    <div className="p-4 text-center text-sm text-gray-500">
+                    <div className="p-4 text-center text-sm text-muted-foreground">
                       No accounts available for this transaction type
                     </div>
                   ) : (
                     debitAccounts.map(acc => (
-                      <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id}>
+                      <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id} className="py-2">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs bg-gray-100 px-1 rounded">{acc.account_code}</span>
-                          <span>{acc.account_name}</span>
-                          <span className="text-xs text-gray-500">[{acc.account_type}]</span>
+                          <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground font-medium border">{acc.account_code}</span>
+                          <span className="font-medium">{acc.account_name}</span>
+                          <span className="text-xs text-muted-foreground/70">[{acc.account_type}]</span>
                           {form.transactionType === 'loan_received' && acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank') && (
-                            <Badge variant="secondary" className="text-xs">💰 Recommended</Badge>
+                            <Badge variant="secondary" className="text-[10px] ml-auto bg-green-100 text-green-700 hover:bg-green-200">💰 Recommended</Badge>
                           )}
                           {form.transactionType === 'loan_repayment' && (acc.account_code === '2300' || acc.account_code === '2400') && (
-                            <Badge variant="secondary" className="text-xs">💳 Loan Account</Badge>
+                            <Badge variant="secondary" className="text-[10px] ml-auto bg-blue-100 text-blue-700 hover:bg-blue-200">💳 Loan Account</Badge>
                           )}
                           {form.transactionType === 'loan_interest' && acc.account_type === 'expense' && acc.account_name.toLowerCase().includes('interest') && (
-                            <Badge variant="secondary" className="text-xs">📈 Interest</Badge>
+                            <Badge variant="secondary" className="text-[10px] ml-auto bg-orange-100 text-orange-700 hover:bg-orange-200">📈 Interest</Badge>
                           )}
                         </div>
                       </SelectItem>
@@ -1237,27 +1280,30 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
               </Select>
             </div>
             
-            <div>
-              <Label className="flex items-center gap-2">
-                Credit Account * (Cr)
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-2 text-sm font-semibold text-foreground/80">
+                Credit Account (Cr) <span className="text-red-500">*</span>
                 {form.transactionType === 'loan_received' && (
-                  <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700">
+                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-purple-50 text-purple-700 border-purple-200">
                     🏦 Loan Liability
                   </Badge>
                 )}
                 {form.transactionType === 'loan_repayment' && (
-                  <Badge variant="outline" className="text-xs bg-red-50 text-red-700">
+                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-red-50 text-red-700 border-red-200">
                     💸 Cash Paid
                   </Badge>
                 )}
                 {form.transactionType === 'loan_interest' && (
-                  <Badge variant="outline" className="text-xs bg-red-50 text-red-700">
+                  <Badge variant="outline" className="text-[10px] h-5 px-1.5 bg-red-50 text-red-700 border-red-200">
                     💸 Cash Paid
                   </Badge>
                 )}
               </Label>
               <Select value={form.creditAccount} onValueChange={(val) => setForm({ ...form, creditAccount: val })}>
-                <SelectTrigger className={form.transactionType?.startsWith('loan_') && !form.creditAccount ? "border-orange-300" : ""}>
+                <SelectTrigger className={cn(
+                  "h-11 bg-background transition-all hover:border-primary/50 focus:ring-primary/20",
+                  form.transactionType?.startsWith('loan_') && !form.creditAccount && "border-orange-300 ring-2 ring-orange-100"
+                )}>
                   <SelectValue 
                     placeholder={form.transactionType === 'loan_received' ? "Select Loan Account (Create Liability)" : 
                                  form.transactionType === 'loan_repayment' ? "Select Bank Account (Cash Paid)" :
@@ -1265,26 +1311,26 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                                  "Select credit account"} 
                   />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-[300px]">
                   {creditAccounts.length === 0 ? (
-                    <div className="p-4 text-center text-sm text-gray-500">
+                    <div className="p-4 text-center text-sm text-muted-foreground">
                       No accounts available for this transaction type
                     </div>
                   ) : (
                     creditAccounts.map(acc => (
-                      <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id}>
+                      <SelectItem key={(acc as any).id ?? (acc as any).account_id} value={(acc as any).id ?? (acc as any).account_id} className="py-2">
                         <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs bg-gray-100 px-1 rounded">{acc.account_code}</span>
-                          <span>{acc.account_name}</span>
-                          <span className="text-xs text-gray-500">[{acc.account_type}]</span>
+                          <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground font-medium border">{acc.account_code}</span>
+                          <span className="font-medium">{acc.account_name}</span>
+                          <span className="text-xs text-muted-foreground/70">[{acc.account_type}]</span>
                           {form.transactionType === 'loan_received' && (acc.account_code === '2300' || acc.account_code === '2400') && (
-                            <Badge variant="secondary" className="text-xs">🏦 Loan Payable</Badge>
+                            <Badge variant="secondary" className="text-[10px] ml-auto bg-purple-100 text-purple-700 hover:bg-purple-200">🏦 Loan Payable</Badge>
                           )}
                           {form.transactionType === 'loan_repayment' && acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank') && (
-                            <Badge variant="secondary" className="text-xs">💸 Bank Account</Badge>
+                            <Badge variant="secondary" className="text-[10px] ml-auto bg-red-100 text-red-700 hover:bg-red-200">💸 Bank Account</Badge>
                           )}
                           {form.transactionType === 'loan_interest' && acc.account_type === 'asset' && acc.account_name.toLowerCase().includes('bank') && (
-                            <Badge variant="secondary" className="text-xs">💸 Bank Account</Badge>
+                            <Badge variant="secondary" className="text-[10px] ml-auto bg-red-100 text-red-700 hover:bg-red-200">💸 Bank Account</Badge>
                           )}
                         </div>
                       </SelectItem>
@@ -1295,20 +1341,24 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label>Amount (excl. VAT) *</Label>
-              <Input
-                type="number"
-                step="0.01"
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                placeholder="0.00"
-              />
+          <div className="grid grid-cols-2 gap-6">
+            <div className="space-y-1.5">
+              <Label className="font-semibold text-foreground/80">Amount (excl. VAT) <span className="text-red-500">*</span></Label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground font-semibold">R</span>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={form.amount}
+                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                  placeholder="0.00"
+                  className="pl-7 h-11 font-mono text-lg transition-all focus:ring-2 focus:ring-primary/20 hover:border-primary/50"
+                />
+              </div>
             </div>
             {form.transactionType?.startsWith('loan_') ? (
               <div className="grid grid-cols-2 gap-4">
-                <div>
+                <div className="space-y-1.5">
                   <Label>Interest Rate (%)</Label>
                   <Input
                     type="number"
@@ -1316,10 +1366,11 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                     value={form.interestRate}
                     onChange={(e) => setForm({ ...form, interestRate: e.target.value })}
                     placeholder="e.g. 10"
+                    className="h-11"
                   />
                 </div>
                 {form.transactionType === 'loan_received' && (
-                  <div>
+                  <div className="space-y-1.5">
                     <Label>Term (months)</Label>
                     <Input
                       type="number"
@@ -1327,15 +1378,16 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                       value={form.loanTerm}
                       onChange={(e) => setForm({ ...form, loanTerm: e.target.value })}
                       placeholder="e.g. 12"
+                      className="h-11"
                     />
                   </div>
                 )}
               </div>
             ) : (
-              <div>
-                <Label>VAT Rate (%)</Label>
+              <div className="space-y-1.5">
+                <Label className="font-semibold text-foreground/80">VAT Rate (%)</Label>
                 <Select value={form.vatRate} onValueChange={(val) => setForm({ ...form, vatRate: val })}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-11 bg-background transition-all hover:border-primary/50 focus:ring-primary/20">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -1344,9 +1396,9 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                   </SelectContent>
                 </Select>
                 {['expense','purchase','product_purchase'].includes(String(form.transactionType).toLowerCase()) && (
-                  <div className="mt-3 flex items-center gap-2">
+                  <div className="mt-2 flex items-center gap-2 p-2 rounded-lg bg-muted/30 border border-transparent hover:border-border/50 transition-colors">
                     <Switch checked={form.amountIncludesVat} onCheckedChange={(val) => setForm({ ...form, amountIncludesVat: val })} />
-                    <span className="text-sm">Amount includes VAT</span>
+                    <span className="text-sm font-medium text-muted-foreground cursor-pointer" onClick={() => setForm({ ...form, amountIncludesVat: !form.amountIncludesVat })}>Amount includes VAT</span>
                   </div>
                 )}
               </div>
@@ -1354,10 +1406,10 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
           </div>
 
           {form.amount && !form.transactionType?.startsWith('loan_') && (
-            <div className="p-4 bg-primary/5 rounded-lg border border-primary/10">
-              <div className="flex justify-between text-sm">
-                <span>{['expense','purchase','product_purchase'].includes(String(form.transactionType).toLowerCase()) && form.amountIncludesVat ? 'Base (extracted):' : 'Amount:'}</span>
-                <span className="font-mono">
+            <div className="p-5 bg-gradient-to-br from-primary/5 to-primary/10 rounded-xl border border-primary/10 shadow-sm animate-in zoom-in-95 duration-300">
+              <div className="flex justify-between text-sm items-center">
+                <span className="text-muted-foreground">{['expense','purchase','product_purchase'].includes(String(form.transactionType).toLowerCase()) && form.amountIncludesVat ? 'Base Amount (excl. VAT):' : 'Amount (excl. VAT):'}</span>
+                <span className="font-mono font-medium">
                   {(() => {
                     const amt = parseFloat(form.amount || '0');
                     const rate = parseFloat(form.vatRate || '0');
@@ -1370,9 +1422,9 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                   })()}
                 </span>
               </div>
-              <div className="flex justify-between text-sm mt-1">
-                <span>VAT ({form.vatRate}%):</span>
-                <span className="font-mono">
+              <div className="flex justify-between text-sm mt-2 items-center">
+                <span className="text-muted-foreground">VAT ({form.vatRate}%):</span>
+                <span className="font-mono font-medium text-primary/80">
                   {(() => {
                     const amt = parseFloat(form.amount || '0');
                     const rate = parseFloat(form.vatRate || '0');
@@ -1387,9 +1439,9 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
                   })()}
                 </span>
               </div>
-              <div className="flex justify-between font-bold mt-2 pt-2 border-t border-primary/10">
-                <span>Total (Posted Amount):</span>
-                <span className="font-mono text-primary">
+              <div className="flex justify-between items-center mt-3 pt-3 border-t border-primary/20">
+                <span className="font-bold text-foreground">Total (Posted Amount):</span>
+                <span className="font-mono text-xl font-bold text-primary">
                   {(() => {
                     const amt = parseFloat(form.amount || '0');
                     const rate = parseFloat(form.vatRate || '0');
@@ -1405,22 +1457,37 @@ export const TransactionForm = ({ open, onOpenChange, onSuccess, editData }: Tra
             </div>
           )}
 
-          <div className="text-xs text-muted-foreground p-3 bg-muted/30 rounded">
-            <p className="font-semibold mb-1">✓ Double-Entry & Bank Balance:</p>
-            <ul className="list-disc list-inside space-y-1">
-              <li>Debit and Credit must be selected from valid account types</li>
-              <li>Both entries will post the same amount</li>
-              <li>Bank balance will be updated automatically (Dr = Add, Cr = Subtract)</li>
-              <li>Transaction will update Trial Balance automatically</li>
+          <div className="text-xs text-muted-foreground p-4 bg-muted/30 rounded-xl border border-border/50">
+            <p className="font-semibold mb-2 flex items-center gap-2">
+              <CheckCircle2 className="h-3.5 w-3.5 text-primary" />
+              Double-Entry & Bank Balance:
+            </p>
+            <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 pl-1">
+              <li className="flex items-start gap-2">
+                <span className="h-1 w-1 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                <span>Debit and Credit must be selected from valid account types</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="h-1 w-1 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                <span>Both entries will post the same amount</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="h-1 w-1 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                <span>Bank balance will be updated automatically (Dr = Add, Cr = Subtract)</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="h-1 w-1 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                <span>Transaction will update Trial Balance automatically</span>
+              </li>
             </ul>
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+        <DialogFooter className="p-6 pt-2 bg-muted/5">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading} className="h-11 px-8 hover:bg-muted/80">
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={loading || !form.bankAccount} className="gap-2">
+          <Button onClick={handleSubmit} disabled={loading || !form.bankAccount} className="h-11 px-8 gap-2 bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary shadow-md hover:shadow-lg transition-all">
             {loading ? (<><Loader2 className="h-4 w-4 animate-spin" /> Posting...</>) : "Post Transaction"}
           </Button>
         </DialogFooter>

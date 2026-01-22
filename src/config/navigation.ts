@@ -56,7 +56,6 @@ export const navGroups = [
       { icon: Settings, label: "Settings", href: "/settings" },
       { icon: Building, label: "Companies", href: "/companies" },
       { icon: Shield, label: "License", href: "/license" },
-      { icon: Users, label: "Community", href: "/community" },
       { icon: HelpCircle, label: "About", href: "/about" },
     ]
   }
