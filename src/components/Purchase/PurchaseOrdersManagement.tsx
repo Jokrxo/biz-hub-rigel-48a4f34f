@@ -248,8 +248,7 @@ export const PurchaseOrdersManagement = () => {
           tax_amount: totals.taxAmount,
           total_amount: totals.total,
           notes: form.notes || null,
-          status: "draft",
-          user_id: user.id
+          status: "draft"
         })
         .select()
         .single();

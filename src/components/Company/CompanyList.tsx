@@ -17,6 +17,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface Company {
   id: string;
@@ -31,6 +32,7 @@ interface Company {
   default_currency: string | null;
   logo_url: string | null;
   created_at: string;
+  creator_name?: string;
 }
 
 interface TeamMember {
@@ -45,12 +47,13 @@ interface TeamMember {
 
 type Role = 'administrator' | 'accountant' | 'manager';
 
-const formSchema = z.object({
+  const formSchema = z.object({
   name: z.string().min(2, "Company name must be at least 2 characters"),
   address: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email("Invalid email address").optional().or(z.literal("")),
   tax_number: z.string().optional(),
+  fiscal_year_end: z.string().regex(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/, "Format must be MM-DD (e.g. 02-28 for Feb 28)").optional().or(z.literal("")),
 });
 
 import { FinancialHealthInsight } from "@/components/Dashboard/FinancialHealthInsight";
@@ -58,6 +61,7 @@ import { FinancialHealthInsight } from "@/components/Dashboard/FinancialHealthIn
 export const CompanyList = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -101,6 +105,7 @@ export const CompanyList = () => {
       phone: "",
       email: "",
       tax_number: "",
+      fiscal_year_end: "02-28", // Default to Feb 28
     },
   });
 
@@ -114,13 +119,68 @@ export const CompanyList = () => {
   const fetchCompanies = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+      
+      // 1. Fetch Companies first
+      const { data: companiesData, error: companiesError } = await supabase
         .from("companies")
         .select("*")
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
-      setCompanies(data || []);
+      if (companiesError) throw companiesError;
+      
+      if (!companiesData || companiesData.length === 0) {
+        setCompanies([]);
+        setLoading(false);
+        return;
+      }
+
+      const companyIds = companiesData.map((c: any) => c.id);
+
+      // 2. Fetch Administrator Roles for these companies manually to avoid join errors
+      const { data: rolesData, error: rolesError } = await supabase
+        .from("user_roles")
+        .select("company_id, user_id, role")
+        .in("company_id", companyIds)
+        .eq("role", "administrator");
+
+      if (rolesError) {
+        console.warn("Error fetching roles:", rolesError);
+        // Continue without creator names if roles fail
+      }
+
+      // 3. Fetch Profiles for the found admins
+      const userIds = [...new Set((rolesData || []).map((r: any) => r.user_id))];
+      let profilesMap: Record<string, any> = {};
+      
+      if (userIds.length > 0) {
+        const { data: profilesData, error: profilesError } = await supabase
+          .from("profiles")
+          .select("user_id, first_name, last_name, email")
+          .in("user_id", userIds);
+          
+        if (profilesError) {
+           console.warn("Error fetching profiles:", profilesError);
+        } else {
+           profilesData?.forEach((p: any) => {
+             profilesMap[p.user_id] = p;
+           });
+        }
+      }
+
+      // 4. Merge data
+      const enhancedCompanies = companiesData.map((company: any) => {
+         // Find an admin for this company
+         const adminRole = rolesData?.find((r: any) => r.company_id === company.id);
+         const profile = adminRole ? profilesMap[adminRole.user_id] : null;
+         
+         const creatorName = profile 
+           ? [profile.first_name, profile.last_name].filter(Boolean).join(" ") || profile.email 
+           : "Unknown";
+         
+         return { ...company, creator_name: creatorName };
+      });
+
+      setCompanies(enhancedCompanies);
     } catch (error: any) {
       console.error("Error fetching companies:", error);
       toast({
@@ -149,26 +209,39 @@ export const CompanyList = () => {
   const fetchTeamMembers = async (companyId: string) => {
     try {
       setTeamLoading(true);
-      const { data, error } = await supabase
+      
+      // 1. Fetch Roles
+      const { data: rolesData, error: rolesError } = await supabase
         .from("user_roles")
-        .select(`
-          user_id,
-          role,
-          profiles:user_id (
-            first_name,
-            last_name,
-            email
-          )
-        `)
+        .select("user_id, role")
         .eq("company_id", companyId);
 
-      if (error) throw error;
+      if (rolesError) throw rolesError;
+      
+      if (!rolesData || rolesData.length === 0) {
+        setTeamMembers([]);
+        return;
+      }
 
-      // Transform data to match interface
-      const members = (data || []).map((item: any) => ({
+      // 2. Fetch Profiles
+      const userIds = rolesData.map((r: any) => r.user_id);
+      const { data: profilesData, error: profilesError } = await supabase
+        .from("profiles")
+        .select("user_id, first_name, last_name, email")
+        .in("user_id", userIds);
+
+      if (profilesError) throw profilesError;
+      
+      const profilesMap = (profilesData || []).reduce((acc: any, p: any) => {
+        acc[p.user_id] = p;
+        return acc;
+      }, {});
+
+      // 3. Merge
+      const members = rolesData.map((item: any) => ({
         user_id: item.user_id,
         role: item.role,
-        profile: Array.isArray(item.profiles) ? item.profiles[0] : item.profiles
+        profile: profilesMap[item.user_id]
       }));
 
       setTeamMembers(members);
@@ -226,6 +299,21 @@ export const CompanyList = () => {
 
       if (companyError) throw companyError;
 
+      // 1.5 Insert App Settings (Fiscal Year)
+      if (values.fiscal_year_end) {
+        const [month, day] = values.fiscal_year_end.split('-').map(Number);
+        // Calculate start month: if end is Feb (2), start is Mar (3)
+        // Logic: (EndMonth % 12) + 1
+        const startMonth = (month % 12) + 1;
+        
+        await supabase.from("app_settings").insert({
+          company_id: newCompanyId,
+          fiscal_year_start: startMonth,
+          fiscal_default_year: new Date().getFullYear(),
+          tax_period_frequency: 'monthly' // Default
+        });
+      }
+
       // 2. Link User to Company
       const { error: roleError } = await supabase.from("user_roles").insert({
         user_id: user.id,
@@ -263,6 +351,9 @@ export const CompanyList = () => {
   const handleSwitchCompany = async (companyId: string) => {
     try {
       if (!user) return;
+      
+      const targetCompany = companies.find(c => c.id === companyId);
+      if (!targetCompany) return;
 
       const { error } = await supabase
         .from("profiles")
@@ -272,12 +363,47 @@ export const CompanyList = () => {
       if (error) throw error;
 
       setCurrentCompanyId(companyId);
-      toast({
-        title: "Switched Company",
-        description: "You are now viewing data for " + companies.find(c => c.id === companyId)?.name,
-      });
       
-      window.location.reload();
+      // Dispatch event to update Sidebar and other listeners
+      window.dispatchEvent(new Event('company-changed'));
+      
+      // Clear roles cache and invalidate query to ensure permissions update
+      try {
+        localStorage.removeItem(`rigel_roles_${user.id}`);
+        queryClient.invalidateQueries({ queryKey: ['userRoles'] });
+      } catch (e) {
+        console.error("Error clearing role cache", e);
+      }
+
+      // Force refresh of financial reports cache if it exists for the new company
+      // This ensures we don't show stale data if they switch back and forth quickly
+      try {
+        // Optional: clear old cache or just let it reload naturally
+        localStorage.removeItem(`rigel_fin_report_${companyId}_${new Date().getFullYear()}-01-01_${new Date().toISOString().split('T')[0]}`);
+      } catch {}
+
+      toast({
+        title: "Welcome to " + targetCompany.name,
+        description: (
+          <div className="flex flex-col gap-1">
+            <span>Successfully switched workspace.</span>
+            <span className="text-xs text-muted-foreground">All modules are now synced to this company.</span>
+          </div>
+        ),
+        duration: 4000,
+        className: "bg-gradient-to-r from-emerald-50 to-white border-emerald-100",
+      });
+
+      // Show the center success box
+      setSuccessMessage(`Welcome to ${targetCompany.name}`);
+      setIsSuccess(true);
+      
+      // Auto close after 1.5 seconds
+      setTimeout(() => {
+        setIsSuccess(false);
+      }, 1500);
+      
+      // No reload - UI stays active
     } catch (error: any) {
       toast({
         title: "Error",
@@ -488,6 +614,30 @@ export const CompanyList = () => {
                     </FormItem>
                   )}
                 />
+                <FormField
+                  control={form.control}
+                  name="fiscal_year_end"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Fiscal Year End (MM-DD)</FormLabel>
+                      <FormControl>
+                        <Select onValueChange={field.onChange} defaultValue={field.value}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select year end" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="02-28">February 28 (Standard)</SelectItem>
+                            <SelectItem value="03-31">March 31</SelectItem>
+                            <SelectItem value="06-30">June 30</SelectItem>
+                            <SelectItem value="09-30">September 30</SelectItem>
+                            <SelectItem value="12-31">December 31</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                 <DialogFooter>
                   <Button type="submit">Create Company</Button>
                 </DialogFooter>
@@ -556,6 +706,14 @@ export const CompanyList = () => {
                 <div>
                    <div className="text-[10px] uppercase text-muted-foreground font-medium">Type</div>
                    <div className="text-sm font-medium capitalize">{company.business_type?.replace('_', ' ') || 'Company'}</div>
+                </div>
+                <div>
+                   <div className="text-[10px] uppercase text-muted-foreground font-medium">Created On</div>
+                   <div className="text-sm font-medium">{new Date(company.created_at).toLocaleDateString()}</div>
+                </div>
+                <div>
+                   <div className="text-[10px] uppercase text-muted-foreground font-medium">Created By</div>
+                   <div className="text-sm font-medium truncate" title={company.creator_name}>{company.creator_name || 'System'}</div>
                 </div>
               </div>
             </CardContent>

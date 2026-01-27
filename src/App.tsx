@@ -4,7 +4,7 @@ import { Toaster } from "./components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
@@ -16,6 +16,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { LayoutProvider } from "./context/LayoutContext";
 import { useAuth } from "./context/useAuth";
 import { ProtectedRoute } from "./components/Auth/ProtectedRoute";
+import { AppShell } from "./components/Layout/AppShell";
 import { SupabaseSetup } from "./components/Setup/SupabaseSetup";
 import { PageLoader } from "./components/ui/loading-spinner";
 import { InstallPrompt } from "./components/PWA/InstallPrompt";
@@ -148,34 +149,36 @@ const App = () => {
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/community" element={<Community />} />
 
-            <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />
-            <Route path="/dashboard" element={<ProtectedRoute><Index /></ProtectedRoute>} />
-            <Route path="/bank" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Bank /></Suspense></ProtectedRoute>} />
-            <Route path="/transactions" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Transactions /></Suspense></ProtectedRoute>} />
-            <Route path="/invoices" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Invoices /></Suspense></ProtectedRoute>} />
-            <Route path="/quotes" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Quotes /></Suspense></ProtectedRoute>} />
-            <Route path="/fixed-assets" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><FixedAssets /></Suspense></ProtectedRoute>} />
-            <Route path="/trial-balance" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><TrialBalance /></Suspense></ProtectedRoute>} />
-            <Route path="/reports" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Reports /></Suspense></ProtectedRoute>} />
-            <Route path="/sales" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Sales /></Suspense></ProtectedRoute>} />
-            <Route path="/purchase" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Purchase /></Suspense></ProtectedRoute>} />
-            <Route path="/tax" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Tax /></Suspense></ProtectedRoute>} />
-            <Route path="/customers" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Customers /></Suspense></ProtectedRoute>} />
-            <Route path="/budget" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Budget /></Suspense></ProtectedRoute>} />
-            <Route path="/loans" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Loans /></Suspense></ProtectedRoute>} />
-            <Route path="/investments" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Investments /></Suspense></ProtectedRoute>} />
-            <Route path="/impairment" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Impairment /></Suspense></ProtectedRoute>} />
-            <Route path="/payroll" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Payroll /></Suspense></ProtectedRoute>} />
-            <Route path="/journals" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Journals /></Suspense></ProtectedRoute>} />
-            <Route path="/billing" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense></ProtectedRoute>} />
-            <Route path="/license" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><License /></Suspense></ProtectedRoute>} />
-            <Route path="/license-admin" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><LicenseAdmin /></Suspense></ProtectedRoute>} />
-            <Route path="/companies" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Companies /></Suspense></ProtectedRoute>} />
-            <Route path="/settings" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><Settings /></Suspense></ProtectedRoute>} />
-            <Route path="/about" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
-            <Route path="/about-us" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
-            <Route path="/dashboard/about" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
-            <Route path="/dashboard/about-us" element={<ProtectedRoute><Suspense fallback={<PageLoader />}><About /></Suspense></ProtectedRoute>} />
+            <Route element={<ProtectedRoute><AppShell><Outlet /></AppShell></ProtectedRoute>}>
+              <Route path="/" element={<Index />} />
+              <Route path="/dashboard" element={<Index />} />
+              <Route path="/bank" element={<Suspense fallback={<PageLoader />}><Bank /></Suspense>} />
+              <Route path="/transactions" element={<Suspense fallback={<PageLoader />}><Transactions /></Suspense>} />
+              <Route path="/invoices" element={<Suspense fallback={<PageLoader />}><Invoices /></Suspense>} />
+              <Route path="/quotes" element={<Suspense fallback={<PageLoader />}><Quotes /></Suspense>} />
+              <Route path="/fixed-assets" element={<Suspense fallback={<PageLoader />}><FixedAssets /></Suspense>} />
+              <Route path="/trial-balance" element={<Suspense fallback={<PageLoader />}><TrialBalance /></Suspense>} />
+              <Route path="/reports" element={<Suspense fallback={<PageLoader />}><Reports /></Suspense>} />
+              <Route path="/sales" element={<Suspense fallback={<PageLoader />}><Sales /></Suspense>} />
+              <Route path="/purchase" element={<Suspense fallback={<PageLoader />}><Purchase /></Suspense>} />
+              <Route path="/tax" element={<Suspense fallback={<PageLoader />}><Tax /></Suspense>} />
+              <Route path="/customers" element={<Suspense fallback={<PageLoader />}><Customers /></Suspense>} />
+              <Route path="/budget" element={<Suspense fallback={<PageLoader />}><Budget /></Suspense>} />
+              <Route path="/loans" element={<Suspense fallback={<PageLoader />}><Loans /></Suspense>} />
+              <Route path="/investments" element={<Suspense fallback={<PageLoader />}><Investments /></Suspense>} />
+              <Route path="/impairment" element={<Suspense fallback={<PageLoader />}><Impairment /></Suspense>} />
+              <Route path="/payroll" element={<Suspense fallback={<PageLoader />}><Payroll /></Suspense>} />
+              <Route path="/journals" element={<Suspense fallback={<PageLoader />}><Journals /></Suspense>} />
+              <Route path="/billing" element={<Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense>} />
+              <Route path="/license" element={<Suspense fallback={<PageLoader />}><License /></Suspense>} />
+              <Route path="/license-admin" element={<Suspense fallback={<PageLoader />}><LicenseAdmin /></Suspense>} />
+              <Route path="/companies" element={<Suspense fallback={<PageLoader />}><Companies /></Suspense>} />
+              <Route path="/settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
+              <Route path="/about" element={<Suspense fallback={<PageLoader />}><About /></Suspense>} />
+              <Route path="/about-us" element={<Suspense fallback={<PageLoader />}><About /></Suspense>} />
+              <Route path="/dashboard/about" element={<Suspense fallback={<PageLoader />}><About /></Suspense>} />
+              <Route path="/dashboard/about-us" element={<Suspense fallback={<PageLoader />}><About /></Suspense>} />
+            </Route>
 
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

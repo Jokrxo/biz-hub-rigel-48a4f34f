@@ -16,7 +16,7 @@ import { navGroups } from "@/config/navigation";
 export const Sidebar = ({ open }: SidebarProps) => {
   const location = useLocation();
   const { user } = useAuth();
-  const [userProfile, setUserProfile] = useState<{ name: string; role: string } | null>(null);
+  const [userProfile, setUserProfile] = useState<{ name: string; role: string; company_name?: string } | null>(null);
   const [logoError, setLogoError] = useState(false);
   const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null);
 
@@ -41,10 +41,10 @@ export const Sidebar = ({ open }: SidebarProps) => {
             .eq("company_id", profile.company_id)
             .maybeSingle();
 
-          // Get company logo
+          // Get company details
           const { data: company } = await supabase
             .from("companies")
-            .select("logo_url")
+            .select("logo_url, name")
             .eq("id", profile.company_id)
             .maybeSingle();
 
@@ -54,25 +54,37 @@ export const Sidebar = ({ open }: SidebarProps) => {
           
           const role = roles?.role || "User";
 
-          setUserProfile({ name: fullName, role });
+          setUserProfile({ name: fullName, role, company_name: company?.name });
           setCompanyLogoUrl(company?.logo_url || null);
         } else {
           // Fallback to email if no profile
           setUserProfile({ 
             name: user.email?.split("@")[0] || "User", 
-            role: "User" 
+            role: "User",
+            company_name: "My Company"
           });
         }
       } catch (error) {
         // Fallback to email if error
         setUserProfile({ 
           name: user.email?.split("@")[0] || "User", 
-          role: "User" 
+          role: "User",
+          company_name: "My Company"
         });
       }
     };
 
     loadUserProfile();
+
+    const handleCompanyChange = () => {
+      loadUserProfile();
+    };
+
+    window.addEventListener('company-changed', handleCompanyChange);
+
+    return () => {
+      window.removeEventListener('company-changed', handleCompanyChange);
+    };
   }, [user]);
 
   return (
@@ -100,7 +112,7 @@ export const Sidebar = ({ open }: SidebarProps) => {
             )}
             {open && (
               <div className="flex flex-col">
-                <span className="text-lg font-bold text-sidebar-primary">Rigel Business</span>
+                <span className="text-lg font-bold text-sidebar-primary truncate max-w-[150px]">{userProfile?.company_name || "Rigel Business"}</span>
                 <span className="text-xs text-sidebar-foreground/70">Enterprise</span>
               </div>
             )}

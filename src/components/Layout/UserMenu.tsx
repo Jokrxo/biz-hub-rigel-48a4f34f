@@ -25,6 +25,23 @@ export const UserMenu = () => {
   const [openAccount, setOpenAccount] = useState(false);
   const [accountInfo, setAccountInfo] = useState<{ name?: string; email?: string; plan?: string; status?: string; expiry?: string; license_key?: string; users_count?: number }>({});
   const { isAdmin, isAccountant, isManager } = useRoles();
+  
+  // Optimistic role display to prevent "User" flicker
+  const [cachedRoles, setCachedRoles] = useState<string[]>([]);
+  useEffect(() => {
+    if (user?.id) {
+        try {
+            const cached = localStorage.getItem(`rigel_roles_${user.id}`);
+            if (cached) setCachedRoles(JSON.parse(cached));
+        } catch {}
+    }
+  }, [user?.id]);
+  
+  // Use cached roles if real roles are still loading or empty, otherwise use real roles
+  const effectiveIsAdmin = isAdmin || cachedRoles.includes('administrator');
+  const effectiveIsAccountant = isAccountant || cachedRoles.includes('accountant') || effectiveIsAdmin;
+  const effectiveIsManager = isManager || cachedRoles.includes('manager') || effectiveIsAdmin;
+
   const [rateUsOpen, setRateUsOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -152,9 +169,9 @@ export const UserMenu = () => {
           <div className="flex flex-col space-y-0.5 leading-none">
             <p className="font-semibold text-sm text-foreground">
               {accountInfo.name || "User"}
-              {isAccountant && <span className="ml-2"><Badge variant="outline">Accountant</Badge></span>}
-              {!isAccountant && isAdmin && <span className="ml-2"><Badge variant="outline">Administrator</Badge></span>}
-              {!isAccountant && !isAdmin && isManager && <span className="ml-2"><Badge variant="outline">Manager</Badge></span>}
+              {effectiveIsAccountant && <span className="ml-2"><Badge variant="outline">Accountant</Badge></span>}
+              {!effectiveIsAccountant && effectiveIsAdmin && <span className="ml-2"><Badge variant="outline">Administrator</Badge></span>}
+              {!effectiveIsAccountant && !effectiveIsAdmin && effectiveIsManager && <span className="ml-2"><Badge variant="outline">Manager</Badge></span>}
             </p>
             <p className="text-xs text-muted-foreground truncate max-w-[160px]">{accountInfo.email}</p>
           </div>
