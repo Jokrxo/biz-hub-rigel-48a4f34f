@@ -10,6 +10,7 @@ export interface TransactionRow {
   description: string;
   total_amount: number;
   status: 'pending' | 'approved' | 'rejected';
+  customer_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -382,6 +383,7 @@ export const transactionsApi = {
         total_amount: total,
         transaction_type: 'sales',
         status: 'pending',
+        customer_id: inv.customer_id || null,
       })
       .select('id')
       .single();
@@ -692,6 +694,7 @@ export const transactionsApi = {
         transaction_type: 'receipt',
         status: 'pending',
         bank_account_id: bankAccountId,
+        customer_id: inv.customer_id || null,
       })
       .select('id')
       .single();

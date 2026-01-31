@@ -325,13 +325,15 @@ export default function CustomersPage() {
     if (arId) {
       const { data: arCreditsPrior } = await supabase
         .from('transaction_entries')
-        .select('credit, description, transactions!inner (transaction_date, status, description, reference_number)')
+        .select('credit, description, transactions!inner (transaction_date, status, description, reference_number, customer_id)')
         .eq('account_id', arId)
         .lt('transactions.transaction_date', start)
-        .eq('transactions.status', 'posted');
+        .eq('transactions.status', 'posted')
+        .or(`customer_id.eq.${customer.id},description.ilike.%${customer.name}%`, { foreignTable: 'transactions' });
       openingPaymentsTotal = (arCreditsPrior || [])
         .filter((e: any) => {
           const tx = e.transactions as any;
+          if (tx.customer_id) return tx.customer_id === customer.id;
           const ref = String(tx?.reference_number || '');
           const txDesc = String(tx?.description || '').toLowerCase();
           const entryDesc = String(e.description || '').toLowerCase();
@@ -344,12 +346,14 @@ export default function CustomersPage() {
       if (arId) {
         const { data: arEntries } = await supabase
           .from('transaction_entries')
-          .select('debit, credit, description, transactions!inner (transaction_date, description, reference_number)')
+          .select('debit, credit, description, transactions!inner (transaction_date, description, reference_number, customer_id)')
           .eq('account_id', arId)
-          .lt('transactions.transaction_date', start);
+          .lt('transactions.transaction_date', start)
+          .or(`customer_id.eq.${customer.id},description.ilike.%${customer.name}%`, { foreignTable: 'transactions' });
         openingJournalTotal = (arEntries || [])
           .filter((e: any) => {
             const tx = e.transactions as any;
+            if (tx.customer_id) return tx.customer_id === customer.id;
             const ref = String(tx?.reference_number || '');
             const txDesc = String(tx?.description || '').toLowerCase();
             const entryDesc = String(e.description || '').toLowerCase();
@@ -365,15 +369,17 @@ export default function CustomersPage() {
     if (arId) {
       const { data: arCreditsPeriod } = await supabase
         .from('transaction_entries')
-        .select('credit, description, transactions!inner (transaction_date, description, reference_number, status)')
+        .select('credit, description, transactions!inner (transaction_date, description, reference_number, status, customer_id)')
         .eq('account_id', arId)
         .gte('transactions.transaction_date', start)
         .lte('transactions.transaction_date', end)
-        .eq('transactions.status', 'posted');
+        .eq('transactions.status', 'posted')
+        .or(`customer_id.eq.${customer.id},description.ilike.%${customer.name}%`, { foreignTable: 'transactions' });
       paymentsPeriodCredits = (arCreditsPeriod || [])
         .filter((e: any) => {
           if (!(Number(e.credit || 0) > 0)) return false;
           const tx = e.transactions as any;
+          if (tx.customer_id) return tx.customer_id === customer.id;
           const ref = String(tx?.reference_number || '');
           const txDesc = String(tx?.description || '').toLowerCase();
           const entryDesc = String(e.description || '').toLowerCase();
@@ -398,8 +404,11 @@ export default function CustomersPage() {
         .eq('transaction_type', 'receipt')
         .eq('status', 'posted')
         .gte('transaction_date', start)
-        .lte('transaction_date', end);
+        .lte('transaction_date', end)
+        .or(`customer_id.eq.${customer.id},description.ilike.%${customer.name}%`);
       const filtered = (txReceipts || []).filter((t: any) => {
+        // Double check using ID if available, or fallback to fuzzy match
+        if ((t as any).customer_id) return (t as any).customer_id === customer.id;
         const ref = String(t.reference_number || '');
         const desc = String(t.description || '').toLowerCase();
         return allNumbers.includes(ref) || desc.includes(nameLower);
@@ -421,15 +430,17 @@ export default function CustomersPage() {
     if (arId) {
       const { data: arDebitsPeriod } = await supabase
         .from('transaction_entries')
-        .select('debit, description, transactions!inner (transaction_date, description, reference_number, status)')
+        .select('debit, description, transactions!inner (transaction_date, description, reference_number, status, customer_id)')
         .eq('account_id', arId)
         .gte('transactions.transaction_date', start)
         .lte('transactions.transaction_date', end)
-        .eq('transactions.status', 'posted');
+        .eq('transactions.status', 'posted')
+        .or(`customer_id.eq.${customer.id},description.ilike.%${customer.name}%`, { foreignTable: 'transactions' });
       openingDebitsPeriod = (arDebitsPeriod || [])
         .filter((e: any) => {
           if (!(Number(e.debit || 0) > 0)) return false;
           const tx = e.transactions as any;
+          if (tx.customer_id) return tx.customer_id === customer.id;
           const ref = String(tx?.reference_number || '');
           const txDesc = String(tx?.description || '').toLowerCase();
           const entryDesc = String(e.description || '').toLowerCase();
@@ -817,15 +828,26 @@ export default function CustomersPage() {
                               <FileText className="h-4 w-4" />
                             </Button>
                             {canEdit && (
-                              <Button 
-                                variant="ghost" 
-                                size="icon"
-                                className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
-                                onClick={() => openPayment(customer)}
-                                title="Receive Payment"
-                              >
-                                <CreditCard className="h-4 w-4" />
-                              </Button>
+                              <>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  className="h-8 w-8 text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                                  onClick={() => { setSelectedCustomer(customer); setCustomerFormOpen(true); }}
+                                  title="Edit Customer"
+                                >
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-pencil"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+                                </Button>
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon"
+                                  className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50"
+                                  onClick={() => openPayment(customer)}
+                                  title="Receive Payment"
+                                >
+                                  <CreditCard className="h-4 w-4" />
+                                </Button>
+                              </>
                             )}
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>

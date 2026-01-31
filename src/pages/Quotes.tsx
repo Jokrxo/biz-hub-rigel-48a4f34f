@@ -273,19 +273,22 @@ export default function QuotesPage() {
 
       const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
 
-      const { error: invoiceError } = await supabase.from("invoices").insert({
-        company_id: profile!.company_id,
-        invoice_number: invoiceNumber,
-        customer_name: quote.customer_name,
-        customer_email: quote.customer_email,
-        invoice_date: new Date().toISOString().split("T")[0],
-        due_date: null,
-        total_amount: quote.total_amount,
-        subtotal: quote.total_amount / 1.15,
-        tax_amount: quote.total_amount * 0.15 / 1.15,
-        status: "draft",
-        quote_id: quote.id,
-      });
+      const { error: invoiceError } = await supabase
+        .from("invoices")
+        .insert({
+          company_id: profile!.company_id,
+          invoice_number: invoiceNumber,
+          customer_id: quote.customer_id,
+          customer_name: quote.customer_name,
+          customer_email: quote.customer_email,
+          invoice_date: new Date().toISOString().split("T")[0],
+          due_date: null,
+          total_amount: quote.total_amount,
+          subtotal: quote.total_amount / 1.15,
+          tax_amount: quote.total_amount * 0.15 / 1.15,
+          status: "draft",
+          quote_id: quote.id,
+        });
 
       if (invoiceError) throw invoiceError;
 

@@ -55,7 +55,8 @@ const initialFormState = {
   loanTerm: "",
   loanTermType: "short",
   installmentNumber: "",
-  assetFinancedByLoan: false
+  assetFinancedByLoan: false,
+  customer_id: ""
 };
 
 const ChartOfAccountsLazy = lazy(() => import("./ChartOfAccountsManagement").then(m => ({ default: m.ChartOfAccountsManagement })));
@@ -209,6 +210,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [progressText, setProgressText] = useState("Posting Transaction...");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
   const [loans, setLoans] = useState<Array<{ id: string; reference: string; outstanding_balance: number; status: string; loan_type: string; interest_rate: number; monthly_repayment?: number }>>([]);
   const [debitAccounts, setDebitAccounts] = useState<Account[]>([]);
   const [creditAccounts, setCreditAccounts] = useState<Account[]>([]);
@@ -382,6 +384,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         .eq("company_id", profile.company_id)
         .order("account_name");
       setBankAccounts(banks || []);
+      const { data: custs } = await supabase
+        .from("customers")
+        .select("id, name")
+        .eq("company_id", profile.company_id)
+        .order("name");
+      setCustomers(custs || []);
       const { data: assetsData } = await supabase
         .from("fixed_assets")
         .select("id, description, cost, purchase_date, useful_life_years, accumulated_depreciation")
@@ -1781,7 +1789,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           bank_account_id: bankAccountId,
           transaction_type: lockType === 'po_sent' ? 'purchase' : form.element,
           category: autoClassification?.category || null,
-          status: "pending"
+          status: "pending",
+          customer_id: form.customer_id || null
         })
         .select()
         .single();

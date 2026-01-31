@@ -46,6 +46,7 @@ export const SalesQuotes = () => {
   const todayStr = new Date().toISOString().split("T")[0];
 
   const [formData, setFormData] = useState({
+    customer_id: "",
     customer_name: "",
     customer_email: "",
     quote_date: new Date().toISOString().split("T")[0],
@@ -269,6 +270,7 @@ export const SalesQuotes = () => {
         .insert({
           company_id: profile!.company_id,
           quote_number: quoteNumber,
+          customer_id: formData.customer_id,
           customer_name: formData.customer_name,
           customer_email: formData.customer_email || null,
           quote_date: formData.quote_date,
@@ -357,6 +359,7 @@ export const SalesQuotes = () => {
           company_id: profile!.company_id,
           quote_id: quoteId,
           invoice_number: invoiceNumber,
+          customer_id: quote.customer_id, // Link to customer
           customer_name: quote.customer_name,
           customer_email: quote.customer_email,
           invoice_date: new Date().toISOString().split("T")[0],
