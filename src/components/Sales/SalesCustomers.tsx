@@ -12,7 +12,7 @@ import { CustomerForm, Customer } from "./CustomerForm";
 import { CustomerDetails } from "./CustomerDetails";
 import { formatCurrency } from "@/lib/utils";
 
-export default function SalesCustomers() {
+export function SalesCustomers() {
   const { toast } = useToast();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -175,7 +175,7 @@ export default function SalesCustomers() {
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" className="h-8 w-8 p-0">
                           <MoreHorizontal className="h-4 w-4" />
-                        </DropdownMenuTrigger>
+                        </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => handleView(customer)}>
