@@ -115,20 +115,54 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
       };
 
       let error;
-      if (customer) {
-        const { error: updateError } = await supabase
-          .from("customers")
-          .update(payload)
-          .eq("id", customer.id);
-        error = updateError;
-      } else {
-        const { error: insertError } = await supabase
-          .from("customers")
-          .insert(payload);
-        error = insertError;
-      }
+      try {
+        if (customer) {
+          const { error: updateError } = await supabase
+            .from("customers")
+            .update(payload)
+            .eq("id", customer.id);
+          error = updateError;
+        } else {
+          const { error: insertError } = await supabase
+            .from("customers")
+            .insert(payload);
+          error = insertError;
+        }
 
-      if (error) throw error;
+        if (error) throw error;
+      } catch (err: any) {
+        // Fallback for schema mismatch (missing columns)
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("column") || msg.includes("schema cache")) {
+          console.warn("Full customer update failed, retrying with basic fields only", err);
+          
+          const basicPayload = {
+            company_id: profile.company_id,
+            name: formData.name,
+            email: formData.email || null,
+            phone: formData.phone || null,
+            address: formData.address || null,
+          };
+
+          if (customer) {
+             const { error: retryError } = await supabase
+              .from("customers")
+              .update(basicPayload)
+              .eq("id", customer.id);
+             error = retryError;
+          } else {
+            const { error: retryError } = await supabase
+              .from("customers")
+              .insert(basicPayload);
+            error = retryError;
+          }
+          
+          if (error) throw error;
+          toast({ title: "Warning", description: "Customer saved, but some extended details could not be stored due to database schema version." });
+        } else {
+          throw err;
+        }
+      }
 
       toast({ title: "Success", description: `Customer ${customer ? 'updated' : 'created'} successfully` });
       onSuccess();

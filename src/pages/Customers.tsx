@@ -38,6 +38,7 @@ interface Customer {
   email: string | null;
   phone: string | null;
   address: string | null;
+  notes: string | null;
   created_at: string;
 }
 
@@ -75,6 +76,7 @@ export default function CustomersPage() {
     email: "",
     phone: "",
     address: "",
+    notes: "",
     openingBalance: "",
     openingDate: new Date().toISOString().split('T')[0]
   });
@@ -164,8 +166,7 @@ export default function CustomersPage() {
         email: formData.email || null,
         phone: formData.phone || null,
         address: formData.address || null,
-      }).select('id').single();
-
+      
       if (error) throw error;
 
       // Opening balance posting: Dr AR (1200), Cr Opening Equity (3900)
@@ -237,7 +238,7 @@ export default function CustomersPage() {
       setTimeout(() => {
         setIsSuccess(false);
         setDialogOpen(false);
-        setFormData({ name: "", email: "", phone: "", address: "", openingBalance: "", openingDate: new Date().toISOString().split('T')[0] });
+        setFormData({ name: "", email: "", phone: "", address: "", notes: "", openingBalance: "", openingDate: new Date().toISOString().split('T')[0] });
         loadCustomers();
       }, 2000);
     } catch (error: any) {
@@ -708,7 +709,15 @@ export default function CustomersPage() {
                             value={formData.address}
                             onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                             placeholder="Physical address"
+                          />ress"
                           />
+                        </div>
+                        <div>
+                          <Label>Notes</Label>
+                          <Input
+                            value={fomData.notes}
+                            onChange={() => etFormData({ ...formData, notes: e.target.value })}
+                            placeholder="Additional note
                         </div>
                         <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
                           <div>

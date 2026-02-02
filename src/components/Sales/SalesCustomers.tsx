@@ -166,7 +166,10 @@ export function SalesCustomers() {
                   <TableCell>{customer.customer_type}</TableCell>
                   <TableCell className="text-right">{formatCurrency(0)}</TableCell> {/* Placeholder balance */}
                   <TableCell>
-                    <span className={`px-2 py-1 rounded-full text-xs ${customer.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    <span 
+                      className={`px-2 py-1 rounded-full text-xs cursor-pointer hover:opacity-80 transition-opacity select-none ${customer.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}
+                      onClick={() => toggleStatus(customer)}
+                    >
                       {customer.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </TableCell>
@@ -183,6 +186,13 @@ export function SalesCustomers() {
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleEdit(customer)}>
                           <Edit className="mr-2 h-4 w-4" /> Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => toggleStatus(customer)}>
+                          {customer.is_active ? (
+                            <span className="text-amber-600 flex items-center"><Edit className="mr-2 h-4 w-4" /> Deactivate</span>
+                          ) : (
+                            <span className="text-green-600 flex items-center"><Edit className="mr-2 h-4 w-4" /> Activate</span>
+                          )}
                         </DropdownMenuItem>
                         <DropdownMenuItem className="text-red-600" onClick={() => handleDelete(customer.id)}>
                           <Trash2 className="mr-2 h-4 w-4" /> Delete

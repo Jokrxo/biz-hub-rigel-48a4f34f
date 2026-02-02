@@ -179,13 +179,16 @@ export const SalesQuotes = () => {
     setFormData({ ...formData, items: newItems });
   };
 
-  const applyCustomerSelection = (name: string) => {
-    const selected = customers.find((c: any) => c.name === name);
-    setFormData(prev => ({
-      ...prev,
-      customer_name: name,
-      customer_email: selected?.email ?? "",
-    }));
+  const applyCustomerSelection = (customerId: string) => {
+    const selected = customers.find((c: any) => String(c.id) === String(customerId));
+    if (selected) {
+      setFormData(prev => ({
+        ...prev,
+        customer_id: selected.id,
+        customer_name: selected.name,
+        customer_email: selected.email ?? "",
+      }));
+    }
   };
 
   const calculateTotals = () => {
@@ -765,16 +768,16 @@ export const SalesQuotes = () => {
                   <Label>Customer *</Label>
                   <Button type="button" variant="link" size="sm" onClick={() => window.open('/customers', '_blank')}>Add customer</Button>
                 </div>
-                <Select value={formData.customer_name} onValueChange={(value) => applyCustomerSelection(value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={customers.length ? "Select customer" : "No customers found"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((c: any) => (
-                      <SelectItem key={c.id ?? c.name} value={c.name}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Select value={String(formData.customer_id || "")} onValueChange={(value) => applyCustomerSelection(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={customers.length ? "Select customer" : "No customers found"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customers.map((c: any) => (
+                        <SelectItem key={c.id ?? c.name} value={String(c.id)}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
               </div>
               <div>
                 <Label>Customer Email</Label>
