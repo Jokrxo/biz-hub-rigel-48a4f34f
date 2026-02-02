@@ -160,16 +160,36 @@ export default function CustomersPage() {
         .eq("user_id", user?.id)
         .single();
 
-      const { data: insertedCustomer, error } = await supabase.from("customers").insert({
-        company_id: profile!.company_id,
-        name: formData.name,
-        email: formData.email || null,
-        phone: formData.phone || null,
-        address: formData.address || null,
-        notes: formData.notes || null,
-      }).select('id').single();
-      
-      if (error) throw error;
+      let insertedCustomer;
+      try {
+        const { data, error: insertError } = await supabase.from("customers").insert({
+          company_id: profile!.company_id,
+          name: formData.name,
+          email: formData.email || null,
+          phone: formData.phone || null,
+          address: formData.address || null,
+          notes: formData.notes || undefined,
+        }).select('id').single();
+
+        if (insertError) throw insertError;
+        insertedCustomer = data;
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("column") || msg.includes("schema cache")) {
+           const { data, error: retryError } = await supabase.from("customers").insert({
+              company_id: profile!.company_id,
+              name: formData.name,
+              email: formData.email || null,
+              phone: formData.phone || null,
+              address: formData.address || null,
+           }).select('id').single();
+           if (retryError) throw retryError;
+           insertedCustomer = data;
+           toast({ title: "Warning", description: "Customer created but notes could not be saved due to database version." });
+        } else {
+           throw err;
+        }
+      }
 
       // Opening balance posting: Dr AR (1200), Cr Opening Equity (3900)
       try {

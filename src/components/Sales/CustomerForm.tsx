@@ -99,7 +99,7 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
         company_id: profile.company_id,
         name: formData.name,
         customer_code: formData.customer_code,
-        contact_person: formData.contact_person || null,
+        contact_person: formData.contact_person || undefined,
         email: formData.email || null,
         phone: formData.phone || null,
         mobile: formData.mobile || null,
@@ -109,7 +109,7 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
         payment_terms: formData.payment_terms || null,
         tax_number: formData.tax_number || null,
         customer_type: formData.customer_type || null,
-        notes: formData.notes || null,
+        notes: formData.notes || undefined,
         is_active: formData.is_active,
         salesperson_id: formData.salesperson_id || null,
       };
