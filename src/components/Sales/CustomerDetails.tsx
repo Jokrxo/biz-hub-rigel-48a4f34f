@@ -32,31 +32,70 @@ export function CustomerDetails({ customer, open, onOpenChange, onEdit }: Custom
   const loadHistory = async () => {
     if (!customer) return;
     setLoading(true);
+
+    const safeFetch = async (table: string, dateCol: string) => {
+      try {
+        const { data, error } = await supabase
+          .from(table)
+          .select('*')
+          .or(`customer_id.eq.${customer.id},customer_name.eq."${customer.name}"`)
+          .order(dateCol, { ascending: false });
+        if (error) throw error;
+        return data || [];
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("column")) {
+           // Fallback: Fetch by company_id and filter in memory
+           const { data } = await supabase
+             .from(table)
+             .select('*')
+             .eq("company_id", customer.company_id)
+             .order(dateCol, { ascending: false })
+             .limit(200);
+           return (data || []).filter((item: any) => 
+             item.customer_id === customer.id || item.customer_name === customer.name
+           );
+        }
+        return [];
+      }
+    };
+
     try {
-      // Load Invoices (try linking by id first, then name fallback)
-      const { data: invData } = await supabase
-        .from('invoices')
-        .select('*')
-        .or(`customer_id.eq.${customer.id},customer_name.eq."${customer.name}"`)
-        .order('invoice_date', { ascending: false });
-      setInvoices(invData || []);
+      // Load Invoices
+      const invData = await safeFetch('invoices', 'invoice_date');
+      setInvoices(invData);
 
       // Load Quotes
-      const { data: quoteData } = await supabase
-        .from('quotes')
-        .select('*')
-        .or(`customer_id.eq.${customer.id},customer_name.eq."${customer.name}"`)
-        .order('quote_date', { ascending: false });
-      setQuotes(quoteData || []);
+      const quoteData = await safeFetch('quotes', 'quote_date');
+      setQuotes(quoteData);
 
-      // Load Payments (Transactions)
-      const { data: txData } = await supabase
-        .from('transactions')
-        .select('*')
-        .eq('transaction_type', 'receipt')
-        .or(`customer_id.eq.${customer.id},description.ilike.%${customer.name}%`)
-        .order('transaction_date', { ascending: false });
-      setPayments(txData || []);
+      // Load Payments (Transactions) - Special case for filter
+      try {
+        const { data: txData, error: txError } = await supabase
+          .from('transactions')
+          .select('*')
+          .eq('transaction_type', 'receipt')
+          .or(`customer_id.eq.${customer.id},description.ilike.%${customer.name}%`)
+          .order('transaction_date', { ascending: false });
+        
+        if (txError) throw txError;
+        setPayments(txData || []);
+      } catch (txErr: any) {
+         const msg = String(txErr?.message || "").toLowerCase();
+         if (msg.includes("schema cache") || msg.includes("column")) {
+            const { data } = await supabase
+             .from('transactions')
+             .select('*')
+             .eq('transaction_type', 'receipt')
+             .eq("company_id", customer.company_id)
+             .order('transaction_date', { ascending: false })
+             .limit(200);
+            
+            setPayments((data || []).filter((t: any) => 
+               t.customer_id === customer.id || (t.description || '').toLowerCase().includes(customer.name.toLowerCase())
+            ));
+         }
+      }
 
     } catch (e) {
       console.error(e);
