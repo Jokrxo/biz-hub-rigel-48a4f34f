@@ -127,6 +127,12 @@ export function CustomerDetails({ customer, open, onOpenChange, onEdit }: Custom
                 <span className="text-muted-foreground">Address:</span>
                 <span className="truncate">{customer.address}</span>
               </div>
+              {customer.notes && (
+                <div className="grid grid-cols-2">
+                  <span className="text-muted-foreground">Notes:</span>
+                  <span className="whitespace-pre-wrap">{customer.notes}</span>
+                </div>
+              )}
             </CardContent>
           </Card>
 
