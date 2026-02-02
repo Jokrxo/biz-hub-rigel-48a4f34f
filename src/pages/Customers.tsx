@@ -166,6 +166,8 @@ export default function CustomersPage() {
         email: formData.email || null,
         phone: formData.phone || null,
         address: formData.address || null,
+        notes: formData.notes || null,
+      }).select('id').single();
       
       if (error) throw error;
 
