@@ -733,15 +733,15 @@ export default function CustomersPage() {
                             value={formData.address}
                             onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                             placeholder="Physical address"
-                          />ress"
                           />
                         </div>
                         <div>
                           <Label>Notes</Label>
                           <Input
-                            value={fomData.notes}
-                            onChange={() => etFormData({ ...formData, notes: e.target.value })}
-                            placeholder="Additional note
+                            value={formData.notes}
+                            onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                            placeholder="Additional notes"
+                          />
                         </div>
                         <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
                           <div>

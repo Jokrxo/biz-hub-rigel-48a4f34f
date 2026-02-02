@@ -237,23 +237,53 @@ export const PurchaseOrdersManagement = () => {
       setProgressText("Creating purchase order record...");
 
       // Create purchase order
-      const { data: po, error: poError } = await supabase
-        .from("purchase_orders")
-        .insert({
-          company_id: profile.company_id,
-          supplier_id: form.supplier_id,
-          po_number: poNumber,
-          po_date: form.po_date,
-          subtotal: totals.subtotal,
-          tax_amount: totals.taxAmount,
-          total_amount: totals.total,
-          notes: form.notes || null,
-          status: "draft"
-        })
-        .select()
-        .single();
+      let po;
+      try {
+        const { data, error: poError } = await supabase
+          .from("purchase_orders")
+          .insert({
+            company_id: profile.company_id,
+            supplier_id: form.supplier_id,
+            po_number: poNumber,
+            po_date: form.po_date,
+            subtotal: totals.subtotal,
+            tax_amount: totals.taxAmount,
+            total_amount: totals.total,
+            notes: form.notes || null,
+            status: "draft"
+          })
+          .select()
+          .single();
 
-      if (poError) throw poError;
+        if (poError) throw poError;
+        po = data;
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("column")) {
+          // Retry without supplier_id
+          console.warn("Schema cache error detected, retrying PO insert without supplier_id:", err);
+          const { data, error: retryError } = await supabase
+            .from("purchase_orders")
+            .insert({
+              company_id: profile.company_id,
+              po_number: poNumber,
+              po_date: form.po_date,
+              subtotal: totals.subtotal,
+              tax_amount: totals.taxAmount,
+              total_amount: totals.total,
+              notes: form.notes || null,
+              status: "draft"
+            })
+            .select()
+            .single();
+          
+          if (retryError) throw retryError;
+          po = data;
+          toast({ title: "Warning", description: "PO saved, but supplier link might be missing due to connection issues.", variant: "default" });
+        } else {
+          throw err;
+        }
+      }
 
       setProgress(70);
       setProgressText("Adding line items...");

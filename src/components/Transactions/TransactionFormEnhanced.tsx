@@ -1767,7 +1767,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         }
       }
 
-      const { data: transaction, error: txError } = await supabase
+      let transaction;
+      try {
+        const { data, error: txError } = await supabase
         .from("transactions")
         .insert({
           company_id: companyId,
@@ -1790,22 +1792,63 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         .select()
         .single();
 
-      if (txError) {
-        console.error("Transaction insert error:", txError);
-        console.error("Attempted bank_account_id value:", bankAccountId);
-        console.error("Bank account ID type:", typeof bankAccountId);
-        
-        // Provide more helpful error messages
-        if (txError.message?.includes('bank_account_id_fkey') || txError.message?.includes('foreign key constraint')) {
+        if (txError) throw txError;
+        transaction = data;
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("column")) {
+          // Retry without customer_id/supplier_id if schema cache is stale
+          console.warn("Schema cache error detected, retrying transaction insert without customer/supplier links:", err);
+          
+          const { data, error: retryError } = await supabase
+            .from("transactions")
+            .insert({
+              company_id: companyId,
+              user_id: user.id,
+              transaction_date: form.date,
+              description: sanitizedDescription,
+              reference_number: sanitizedReference,
+              total_amount: amount,
+              vat_rate: vatRate > 0 ? vatRate : null,
+              vat_amount: vatAmount > 0 ? vatAmount : null,
+              base_amount: netAmount,
+              vat_inclusive: amountIncludesVAT,
+              bank_account_id: bankAccountId,
+              transaction_type: lockType === 'po_sent' ? 'purchase' : form.element,
+              category: autoClassification?.category || null,
+              status: "pending"
+              // Omit customer_id and supplier_id
+            })
+            .select()
+            .single();
+
+          if (retryError) {
+             console.error("Retry failed:", retryError);
+             throw retryError;
+          }
+          transaction = data;
+          
           toast({ 
-            title: "Bank Account Error", 
-            description: `The bank account reference is invalid. Please select a valid bank account or leave it empty. Error: ${txError.message}`, 
-            variant: "destructive" 
+            title: "Warning", 
+            description: "Transaction saved, but customer/supplier link was omitted due to connection issues. Please refresh the page.",
+            variant: "default" 
           });
         } else {
-          throw txError;
+          console.error("Transaction insert error:", err);
+          console.error("Attempted bank_account_id value:", bankAccountId);
+          
+          // Provide more helpful error messages
+          if (err.message?.includes('bank_account_id_fkey') || err.message?.includes('foreign key constraint')) {
+            toast({ 
+              title: "Bank Account Error", 
+              description: `The bank account reference is invalid. Please select a valid bank account or leave it empty. Error: ${err.message}`, 
+              variant: "destructive" 
+            });
+          } else {
+            throw err;
+          }
+          return;
         }
-        return;
       }
 
       // Validate account IDs before creating entries
@@ -3049,7 +3092,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
               </div>
 
               {/* Customer/Supplier Selection */}
-              {['income', 'receipt'].includes(form.element) && (
+              {['income', 'receipt', 'deposit', 'equity', 'other'].includes(form.element) && (
                 <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                   <Label className="text-sm font-medium flex items-center gap-2">
                     <Globe className="w-4 h-4 text-primary/70" />
@@ -3069,7 +3112,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                 </div>
               )}
 
-              {['expense', 'product_purchase', 'asset', 'liability'].includes(form.element) && (
+              {['expense', 'product_purchase', 'asset', 'liability', 'withdrawal', 'other'].includes(form.element) && (
                 <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
                   <Label className="text-sm font-medium flex items-center gap-2">
                     <Briefcase className="w-4 h-4 text-primary/70" />

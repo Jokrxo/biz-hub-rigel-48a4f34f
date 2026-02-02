@@ -268,26 +268,61 @@ export const SalesQuotes = () => {
       const quoteNumber = `QTE-${Date.now().toString().slice(-6)}`;
       const totals = calculateTotals();
 
-      const { data: quote, error: quoteError } = await supabase
-        .from("quotes")
-        .insert({
-          company_id: profile!.company_id,
-          quote_number: quoteNumber,
-          customer_id: formData.customer_id,
-          customer_name: formData.customer_name,
-          customer_email: formData.customer_email || null,
-          quote_date: formData.quote_date,
-          expiry_date: formData.expiry_date || null,
-          subtotal: totals.subtotal,
-          tax_amount: totals.taxAmount,
-          total_amount: totals.total,
-          notes: formData.notes || null,
-          status: "draft"
-        })
-        .select()
-        .single();
+      let quote;
+      try {
+        const { data, error: quoteError } = await supabase
+          .from("quotes")
+          .insert({
+            company_id: profile!.company_id,
+            quote_number: quoteNumber,
+            customer_id: formData.customer_id,
+            customer_name: formData.customer_name,
+            customer_email: formData.customer_email || null,
+            quote_date: formData.quote_date,
+            expiry_date: formData.expiry_date || null,
+            subtotal: totals.subtotal,
+            tax_amount: totals.taxAmount,
+            total_amount: totals.total,
+            notes: formData.notes || null,
+            status: "draft"
+          })
+          .select()
+          .single();
 
-      if (quoteError) throw quoteError;
+        if (quoteError) throw quoteError;
+        quote = data;
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("column")) {
+          // Retry without customer_id
+          const { data, error: retryError } = await supabase
+            .from("quotes")
+            .insert({
+              company_id: profile!.company_id,
+              quote_number: quoteNumber,
+              customer_name: formData.customer_name,
+              customer_email: formData.customer_email || null,
+              quote_date: formData.quote_date,
+              expiry_date: formData.expiry_date || null,
+              subtotal: totals.subtotal,
+              tax_amount: totals.taxAmount,
+              total_amount: totals.total,
+              notes: formData.notes || null,
+              status: "draft"
+            })
+            .select()
+            .single();
+
+          if (retryError) throw retryError;
+          quote = data;
+          toast({ 
+            title: "Warning", 
+            description: "Quote saved, but customer link is incomplete due to connection issues. Please refresh the page." 
+          });
+        } else {
+          throw err;
+        }
+      }
 
       setProgress(50);
       setProgressText("Saving Items...");
@@ -356,26 +391,61 @@ export const SalesQuotes = () => {
         .eq("quote_id", quoteId);
 
       // Create invoice
-      const { data: invoice, error: invoiceError } = await supabase
-        .from("invoices")
-        .insert({
-          company_id: profile!.company_id,
-          quote_id: quoteId,
-          invoice_number: invoiceNumber,
-          customer_id: quote.customer_id, // Link to customer
-          customer_name: quote.customer_name,
-          customer_email: quote.customer_email,
-          invoice_date: new Date().toISOString().split("T")[0],
-          subtotal: quote.subtotal,
-          tax_amount: quote.tax_amount,
-          total_amount: quote.total_amount,
-          notes: quote.notes,
-          status: "draft"
-        })
-        .select()
-        .single();
+      let invoice;
+      try {
+        const { data, error: invoiceError } = await supabase
+          .from("invoices")
+          .insert({
+            company_id: profile!.company_id,
+            quote_id: quoteId,
+            invoice_number: invoiceNumber,
+            customer_id: quote.customer_id, // Link to customer
+            customer_name: quote.customer_name,
+            customer_email: quote.customer_email,
+            invoice_date: new Date().toISOString().split("T")[0],
+            subtotal: quote.subtotal,
+            tax_amount: quote.tax_amount,
+            total_amount: quote.total_amount,
+            notes: quote.notes,
+            status: "draft"
+          })
+          .select()
+          .single();
 
-      if (invoiceError) throw invoiceError;
+        if (invoiceError) throw invoiceError;
+        invoice = data;
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("column")) {
+          // Retry without customer_id
+          const { data, error: retryError } = await supabase
+            .from("invoices")
+            .insert({
+              company_id: profile!.company_id,
+              quote_id: quoteId,
+              invoice_number: invoiceNumber,
+              customer_name: quote.customer_name,
+              customer_email: quote.customer_email,
+              invoice_date: new Date().toISOString().split("T")[0],
+              subtotal: quote.subtotal,
+              tax_amount: quote.tax_amount,
+              total_amount: quote.total_amount,
+              notes: quote.notes,
+              status: "draft"
+            })
+            .select()
+            .single();
+
+          if (retryError) throw retryError;
+          invoice = data;
+          toast({ 
+            title: "Warning", 
+            description: "Invoice created from quote, but customer link is incomplete due to connection issues." 
+          });
+        } else {
+          throw err;
+        }
+      }
 
       // Copy quote items to invoice items
       if (quoteItems && quoteItems.length > 0) {

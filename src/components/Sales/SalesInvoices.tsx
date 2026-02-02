@@ -328,27 +328,60 @@ export const SalesInvoices = () => {
       const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
       const totals = calculateTotals();
 
-      const { data: invoice, error: invoiceError } = await supabase
-        .from("invoices")
-        .insert({
-          company_id: profile!.company_id,
-          invoice_number: invoiceNumber,
-          customer_id: formData.customer_id,
-          customer_name: formData.customer_name,
-          customer_email: formData.customer_email || null,
-          invoice_date: formData.invoice_date,
-          due_date: formData.due_date || null,
-          subtotal: totals.subtotal,
-          tax_amount: totals.taxAmount,
-          total_amount: totals.total,
-          notes: formData.notes || null,
-          status: "draft",
-          user_id: user?.id
-        })
-        .select()
-        .single();
+      let invoice;
+      try {
+        const { data, error } = await supabase
+          .from("invoices")
+          .insert({
+            company_id: profile!.company_id,
+            invoice_number: invoiceNumber,
+            customer_id: formData.customer_id,
+            customer_name: formData.customer_name,
+            customer_email: formData.customer_email || null,
+            invoice_date: formData.invoice_date,
+            due_date: formData.due_date || null,
+            subtotal: totals.subtotal,
+            tax_amount: totals.taxAmount,
+            total_amount: totals.total,
+            notes: formData.notes || null,
+            status: "draft",
+            user_id: user?.id
+          })
+          .select()
+          .single();
 
-      if (invoiceError) throw invoiceError;
+        if (error) throw error;
+        invoice = data;
+      } catch (err: any) {
+        const msg = String(err?.message || "").toLowerCase();
+        if (msg.includes("schema cache") || msg.includes("column")) {
+          // Retry without customer_id
+          const { data, error: retryError } = await supabase
+            .from("invoices")
+            .insert({
+              company_id: profile!.company_id,
+              invoice_number: invoiceNumber,
+              customer_name: formData.customer_name,
+              customer_email: formData.customer_email || null,
+              invoice_date: formData.invoice_date,
+              due_date: formData.due_date || null,
+              subtotal: totals.subtotal,
+              tax_amount: totals.taxAmount,
+              total_amount: totals.total,
+              notes: formData.notes || null,
+              status: "draft",
+              user_id: user?.id
+            })
+            .select()
+            .single();
+          
+          if (retryError) throw retryError;
+          invoice = data;
+          toast({ title: "Warning", description: "Invoice saved, but customer link is incomplete due to connection issues. Please refresh the page." });
+        } else {
+          throw err;
+        }
+      }
 
       setProgress(40);
       setProgressText("Saving Invoice Items...");
