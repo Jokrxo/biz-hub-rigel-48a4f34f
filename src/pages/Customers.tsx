@@ -174,8 +174,10 @@ export default function CustomersPage() {
         if (insertError) throw insertError;
         insertedCustomer = data;
       } catch (err: any) {
-        const msg = String(err?.message || "").toLowerCase();
-        if (msg.includes("column") || msg.includes("schema cache")) {
+        const errStr = typeof err === 'string' ? err : (err?.message || JSON.stringify(err || {}));
+        const msg = String(errStr).toLowerCase();
+        
+        if (msg.includes("column") || msg.includes("schema cache") || msg.includes("relation")) {
            const { data, error: retryError } = await supabase.from("customers").insert({
               company_id: profile!.company_id,
               name: formData.name,

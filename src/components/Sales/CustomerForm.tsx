@@ -132,8 +132,10 @@ export function CustomerForm({ customer, onSuccess, onCancel }: CustomerFormProp
         if (error) throw error;
       } catch (err: any) {
         // Fallback for schema mismatch (missing columns)
-        const msg = String(err?.message || "").toLowerCase();
-        if (msg.includes("column") || msg.includes("schema cache")) {
+        const errStr = typeof err === 'string' ? err : (err?.message || JSON.stringify(err || {}));
+        const msg = String(errStr).toLowerCase();
+        
+        if (msg.includes("column") || msg.includes("schema cache") || msg.includes("relation")) {
           console.warn("Full customer update failed, retrying with basic fields only", err);
           
           const basicPayload = {
