@@ -607,6 +607,7 @@ export const PurchaseOrdersManagement = () => {
         lockType: 'po_sent',
         vat_rate: includeVAT ? String(rate.toFixed(2)) : '0',
         amount_includes_vat: Boolean(includeVAT),
+        supplier_id: po.supplier_id || null
       };
       setJournalEditData(editData);
       setJournalOpen(true);

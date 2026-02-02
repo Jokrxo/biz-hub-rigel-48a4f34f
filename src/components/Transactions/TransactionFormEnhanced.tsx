@@ -56,7 +56,8 @@ const initialFormState = {
   loanTermType: "short",
   installmentNumber: "",
   assetFinancedByLoan: false,
-  customer_id: ""
+  customer_id: "",
+  supplier_id: ""
 };
 
 const ChartOfAccountsLazy = lazy(() => import("./ChartOfAccountsManagement").then(m => ({ default: m.ChartOfAccountsManagement })));
@@ -233,24 +234,7 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
   const [assetUsefulLifeStartDate, setAssetUsefulLifeStartDate] = useState<string>(new Date().toISOString().slice(0,10));
   const fixedAssetCodes = ['1500','1510','1600','1700','1800'];
   
-  const [form, setForm] = useState({
-    date: new Date().toISOString().slice(0, 10),
-    description: "",
-    reference: "",
-    bankAccountId: "",
-    element: "",
-    paymentMethod: "bank",
-    debitAccount: "",
-    creditAccount: "",
-    amount: "",
-    vatRate: "0",
-    loanId: "",
-    interestRate: "",
-    loanTerm: "",
-    loanTermType: "short",
-    installmentNumber: "",
-    assetFinancedByLoan: false
-  });
+  const [form, setForm] = useState(initialFormState);
   const [showFixedAssetsUI, setShowFixedAssetsUI] = useState<boolean>(false);
   const [cogsTotal, setCogsTotal] = useState<number>(0);
   const [amountIncludesVAT, setAmountIncludesVAT] = useState<boolean>(false);
@@ -390,6 +374,12 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         .eq("company_id", profile.company_id)
         .order("name");
       setCustomers(custs || []);
+      const { data: supps } = await supabase
+          .from("suppliers")
+          .select("id, name")
+          .eq("company_id", profile.company_id)
+          .order("name");
+        setSuppliers(supps || []);
       const { data: assetsData } = await supabase
         .from("fixed_assets")
         .select("id, description, cost, purchase_date, useful_life_years, accumulated_depreciation")
@@ -473,7 +463,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         loanTerm: "",
         loanTermType: "short",
         installmentNumber: "",
-        assetFinancedByLoan: false
+        assetFinancedByLoan: false,
+        customer_id: "",
+        supplier_id: ""
       });
       setDebitSearch("");
       setCreditSearch("");
@@ -498,7 +490,9 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
         creditAccount: editData.credit_account_id || prev.creditAccount,
         amount: String(Math.abs(editData.total_amount || 0)),
         vatRate: editData.vat_rate ? String(editData.vat_rate) : "0",
-        loanTermType: prev.loanTermType
+        loanTermType: prev.loanTermType,
+        customer_id: editData.customer_id || prev.customer_id,
+        supplier_id: editData.supplier_id || prev.supplier_id
       }));
       setLockAccounts(Boolean(editData.lockType));
       setLockType(String(editData.lockType || ''));
@@ -1790,7 +1784,8 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
           transaction_type: lockType === 'po_sent' ? 'purchase' : form.element,
           category: autoClassification?.category || null,
           status: "pending",
-          customer_id: form.customer_id || null
+          customer_id: form.customer_id || null,
+          supplier_id: form.supplier_id || null
         })
         .select()
         .single();
@@ -3052,6 +3047,47 @@ export const TransactionFormEnhanced = ({ open, onOpenChange, onSuccess, editDat
                   </div>
                 )}
               </div>
+
+              {/* Customer/Supplier Selection */}
+              {['income', 'receipt'].includes(form.element) && (
+                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-primary/70" />
+                    Select Customer
+                  </Label>
+                  <Select value={form.customer_id || ""} onValueChange={(val) => setForm({ ...form, customer_id: val === "__none__" ? "" : val })} disabled={lockAccounts}>
+                    <SelectTrigger className="h-12 border-muted-foreground/20 bg-muted/5">
+                      <SelectValue placeholder="Select customer (optional)" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[200px]">
+                      <SelectItem value="__none__" className="text-muted-foreground">None</SelectItem>
+                      {customers.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {['expense', 'product_purchase', 'asset', 'liability'].includes(form.element) && (
+                <div className="space-y-2 animate-in fade-in slide-in-from-top-2">
+                  <Label className="text-sm font-medium flex items-center gap-2">
+                    <Briefcase className="w-4 h-4 text-primary/70" />
+                    Select Supplier
+                  </Label>
+                  <Select value={form.supplier_id || ""} onValueChange={(val) => setForm({ ...form, supplier_id: val === "__none__" ? "" : val })} disabled={lockAccounts}>
+                    <SelectTrigger className="h-12 border-muted-foreground/20 bg-muted/5">
+                      <SelectValue placeholder="Select supplier (optional)" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[200px]">
+                      <SelectItem value="__none__" className="text-muted-foreground">None</SelectItem>
+                      {suppliers.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               {showFixedAssetsUI && (form.element === 'asset' || (form.element === 'equity' && form.paymentMethod === 'asset')) && (
                 <div className="space-y-4 p-5 bg-gradient-to-br from-muted/30 to-muted/10 rounded-xl border border-border/50 animate-in fade-in zoom-in-95 shadow-sm">

@@ -11,6 +11,7 @@ export interface TransactionRow {
   total_amount: number;
   status: 'pending' | 'approved' | 'rejected';
   customer_id?: string | null;
+  supplier_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1319,6 +1320,7 @@ export const transactionsApi = {
         vat_amount: taxAmount > 0 ? taxAmount : null,
         base_amount: subtotal,
         vat_inclusive: taxAmount > 0,
+        supplier_id: po.supplier_id || null,
       })
       .select('id')
       .single();
@@ -1388,7 +1390,18 @@ export const transactionsApi = {
     if (!apId || !bankId) throw new Error('Accounts Payable or Bank account missing');
     const { data: tx, error: txErr } = await supabase
       .from('transactions')
-      .insert({ company_id: companyId, user_id: user.id, transaction_date: payDate, description: `Payment for PO ${po.po_number || po.id}`, reference_number: po.po_number || null, total_amount: amt, transaction_type: 'payment', status: 'pending', bank_account_id: bankAccountId })
+      .insert({ 
+        company_id: companyId, 
+        user_id: user.id, 
+        transaction_date: payDate, 
+        description: `Payment for PO ${po.po_number || po.id}`, 
+        reference_number: po.po_number || null, 
+        total_amount: amt, 
+        transaction_type: 'payment', 
+        status: 'pending', 
+        bank_account_id: bankAccountId,
+        supplier_id: po.supplier_id || null 
+      })
       .select('id')
       .single();
     if (txErr) throw txErr;

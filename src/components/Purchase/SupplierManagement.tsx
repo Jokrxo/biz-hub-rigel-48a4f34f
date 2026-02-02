@@ -171,7 +171,8 @@ export const SupplierManagement = () => {
                 reference_number: `SUP-OB-${inserted?.id || ''}`,
                 total_amount: obAmt,
                 transaction_type: 'opening',
-                status: 'posted'
+                status: 'posted',
+                supplier_id: inserted?.id
               })
               .select('id')
               .single();
