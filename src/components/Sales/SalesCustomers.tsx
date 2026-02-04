@@ -133,8 +133,22 @@ export function SalesCustomers() {
 
   return (
     <div className="space-y-6">
+      {/* Green Masterfile Header */}
+      <div className="bg-emerald-600 text-white p-4 rounded-t-md -mb-6 shadow-md flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Customer Masterfile</h1>
+          <div className="text-sm opacity-90">Manage your customer database</div>
+        </div>
+        <Button 
+          onClick={() => { setSelectedCustomer(null); setIsAddOpen(true); }}
+          className="bg-white text-emerald-700 hover:bg-emerald-50 border-0 font-semibold shadow-sm"
+        >
+          <Plus className="mr-2 h-4 w-4" /> Add Customer
+        </Button>
+      </div>
+
       {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Customers</CardTitle>
@@ -172,9 +186,6 @@ export function SalesCustomers() {
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <Button onClick={() => { setSelectedCustomer(null); setIsAddOpen(true); }}>
-          <Plus className="mr-2 h-4 w-4" /> Add Customer
-        </Button>
       </div>
 
       {/* Customers Table */}
@@ -189,7 +200,7 @@ export function SalesCustomers() {
               <TableHead>Type</TableHead>
               <TableHead className="text-right">Balance</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="w-[50px]"></TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -214,32 +225,18 @@ export function SalesCustomers() {
                       {customer.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" className="h-8 w-8 p-0">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleView(customer)}>
-                          <Eye className="mr-2 h-4 w-4" /> View Details
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleEdit(customer)}>
-                          <Edit className="mr-2 h-4 w-4" /> Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => toggleStatus(customer)}>
-                          {customer.is_active ? (
-                            <span className="text-amber-600 flex items-center"><Edit className="mr-2 h-4 w-4" /> Deactivate</span>
-                          ) : (
-                            <span className="text-green-600 flex items-center"><Edit className="mr-2 h-4 w-4" /> Activate</span>
-                          )}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className="text-red-600" onClick={() => handleDelete(customer.id)}>
-                          <Trash2 className="mr-2 h-4 w-4" /> Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50" onClick={() => handleView(customer)} title="View Details">
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-600 hover:text-amber-700 hover:bg-amber-50" onClick={() => handleEdit(customer)} title="Edit Customer">
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => handleDelete(customer.id)} title="Delete Customer">
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))

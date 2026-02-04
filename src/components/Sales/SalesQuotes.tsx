@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -486,20 +487,22 @@ export const SalesQuotes = () => {
       toast({ title: "Success", description: "Quote converted to invoice successfully" });
       setIsSubmitting(false);
       loadData();
+      navigate(`/sales?tab=invoices&action=edit&id=${invoice.id}`);
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
       setIsSubmitting(false);
     }
   };
 
-  const fetchCompanyForPDF = async (): Promise<CompanyForPDF> => {
+  // Helpers for PDF generation and email sending
+  const fetchCompanyForPDF = async (): Promise<any> => {
     const { data, error } = await supabase
       .from('companies')
-      .select('name,email,phone,address,tax_number,vat_number,logo_url')
+      .select('name,email,phone,address,tax_number,vat_number,logo_url,bank_name,account_holder,branch_code,account_number')
       .limit(1)
       .maybeSingle();
     if (error || !data) {
-      return { name: 'Company' } as CompanyForPDF;
+      return { name: 'Company' };
     }
     return {
       name: (data as any).name,
@@ -509,7 +512,11 @@ export const SalesQuotes = () => {
       tax_number: (data as any).tax_number ?? null,
       vat_number: (data as any).vat_number ?? null,
       logo_url: (data as any).logo_url ?? null,
-    } as CompanyForPDF;
+      bank_name: (data as any).bank_name ?? null,
+      account_holder: (data as any).account_holder ?? null,
+      branch_code: (data as any).branch_code ?? null,
+      account_number: (data as any).account_number ?? null,
+    };
   };
 
   const fetchQuoteItemsForPDF = async (quoteId: string): Promise<QuoteItemForPDF[]> => {
@@ -650,19 +657,30 @@ export const SalesQuotes = () => {
   useEffect(() => { setPage(0); }, [startDate, endDate]);
 
   return (
-    <Card className="mt-6">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-2">
-          <FileText className="h-5 w-5 text-primary" />
-          Sales Quotes
-        </CardTitle>
+    <div className="space-y-6">
+      {/* Green Masterfile Header */}
+      <div className="bg-emerald-600 text-white p-4 rounded-t-md -mb-6 shadow-md flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Sales Quotes</h1>
+          <div className="text-sm opacity-90">Manage your sales quotations</div>
+        </div>
         {canEdit && (
-          <Button className="bg-gradient-primary" onClick={() => setDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Quote
+          <Button 
+            onClick={() => setDialogOpen(true)}
+            className="bg-white text-emerald-700 hover:bg-emerald-50 border-0 font-semibold shadow-sm"
+          >
+            <Plus className="mr-2 h-4 w-4" /> New Quote
           </Button>
         )}
-      </CardHeader>
+      </div>
+
+      <Card className="shadow-sm pt-6">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-primary" />
+            Quotes
+          </CardTitle>
+        </CardHeader>
       <CardContent>
         {loading ? (
           <div className="text-center py-8">Loading...</div>
@@ -1035,5 +1053,6 @@ export const SalesQuotes = () => {
         </div>
       )}
     </Card>
+    </div>
   );
 };

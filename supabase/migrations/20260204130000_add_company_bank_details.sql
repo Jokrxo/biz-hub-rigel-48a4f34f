@@ -1,0 +1,5 @@
+ALTER TABLE public.companies
+ADD COLUMN IF NOT EXISTS bank_name TEXT,
+ADD COLUMN IF NOT EXISTS account_holder TEXT,
+ADD COLUMN IF NOT EXISTS branch_code TEXT,
+ADD COLUMN IF NOT EXISTS account_number TEXT;

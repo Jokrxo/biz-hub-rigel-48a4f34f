@@ -1501,4 +1501,113 @@ export const transactionsApi = {
     await supabase.from('items').update({ quantity_on_hand: newQty, cost_price: cp }).eq('id', opts.productId);
     try { const { data: profile } = await supabase.from('profiles').select('company_id').eq('user_id', user.id).maybeSingle(); if ((profile as any)?.company_id) await supabase.rpc('refresh_afs_cache', { _company_id: (profile as any).company_id }); } catch {}
   },
+  postCreditNote: async (creditNoteId: string): Promise<void> => {
+    const { error } = await supabase.rpc('post_credit_note', { _cn_id: creditNoteId });
+    if (error) throw error;
+  },
+
+  postReceipt: async (receiptId: string): Promise<void> => {
+    const { error } = await supabase.rpc('post_receipt', { _receipt_id: receiptId });
+    if (error) throw error;
+  },
+
+  seedSalesModule: async (): Promise<void> => {
+    const companyId = await getUserCompanyId();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const { data: accounts } = await supabase
+      .from('chart_of_accounts')
+      .select('id, account_name, account_type, account_code, is_active')
+      .eq('company_id', companyId)
+      .eq('is_active', true);
+    const list = (accounts || []).map(a => ({
+      id: a.id as string,
+      name: String(a.account_name || '').toLowerCase(),
+      type: String(a.account_type || '').toLowerCase(),
+      code: String(a.account_code || ''),
+    }));
+    const pick = (type: string, codes: string[], names: string[]) => {
+      const byType = list.filter(a => a.type === type.toLowerCase());
+      const byCode = byType.find(a => codes.includes(a.code));
+      if (byCode) return byCode.id;
+      const byName = byType.find(a => names.some(n => a.name.includes(n)));
+      return byName?.id || '';
+    };
+    let bankId = pick('asset', ['1100'], ['bank','cash']);
+    if (!bankId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1100', account_name: 'Bank - Current Account', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      bankId = (created as any)?.id || '';
+    }
+    let arId = pick('asset', ['1200'], ['receiv','accounts receiv']);
+    if (!arId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1200', account_name: 'Trade Receivables', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      arId = (created as any)?.id || '';
+    }
+    let revId = pick('income', ['4000'], ['revenue','sales']);
+    if (!revId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '4000', account_name: 'Sales', account_type: 'income', is_active: true })
+        .select('id')
+        .single();
+      revId = (created as any)?.id || '';
+    }
+    let vatOutId = pick('liability', ['2200'], ['vat output','vat payable','output tax']);
+    if (!vatOutId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '2200', account_name: 'VAT Output', account_type: 'liability', is_active: true })
+        .select('id')
+        .single();
+      vatOutId = (created as any)?.id || '';
+    }
+    let inventoryId = pick('asset', ['1300'], ['inventory','stock']);
+    if (!inventoryId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '1300', account_name: 'Inventory', account_type: 'asset', is_active: true })
+        .select('id')
+        .single();
+      inventoryId = (created as any)?.id || '';
+    }
+    let cogsId = pick('expense', ['5000'], ['cost of sales','cost of goods','cogs']);
+    if (!cogsId) {
+      const { data: created } = await supabase
+        .from('chart_of_accounts')
+        .insert({ company_id: companyId, account_code: '5000', account_name: 'Cost of Sales', account_type: 'expense', is_active: true })
+        .select('id')
+        .single();
+      cogsId = (created as any)?.id || '';
+    }
+    const { data: existingCustomers } = await supabase
+      .from('customers')
+      .select('id')
+      .eq('company_id', companyId)
+      .limit(1);
+    if (!existingCustomers || existingCustomers.length === 0) {
+      await supabase.from('customers').insert([
+        { company_id: companyId, name: 'Acme Corp', email: 'accounts@acme.test', phone: '021-000-0000', is_active: true },
+        { company_id: companyId, name: 'Globex Ltd', email: 'billing@globex.test', phone: '011-100-2000', is_active: true },
+      ] as any);
+    }
+    const { data: existingItems } = await supabase
+      .from('items')
+      .select('id')
+      .eq('company_id', companyId)
+      .limit(1);
+    if (!existingItems || existingItems.length === 0) {
+      await supabase.from('items').insert([
+        { company_id: companyId, name: 'Widget A', description: 'Standard product', item_type: 'product', unit_price: 100, cost_price: 50, quantity_on_hand: 0 },
+        { company_id: companyId, name: 'Consulting Service', description: 'Hourly consulting', item_type: 'service', unit_price: 500, quantity_on_hand: 0 },
+      ] as any);
+    }
+  },
 };

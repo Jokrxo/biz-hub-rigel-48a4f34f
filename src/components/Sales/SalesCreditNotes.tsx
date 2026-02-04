@@ -25,6 +25,8 @@ interface CreditNote {
   customer?: { name: string };
 }
 
+import { transactionsApi } from "@/lib/transactions-api";
+
 export const SalesCreditNotes = () => {
   const [creditNotes, setCreditNotes] = useState<CreditNote[]>([]);
   const [loading, setLoading] = useState(true);
@@ -171,8 +173,7 @@ export const SalesCreditNotes = () => {
   const handlePost = async (id: string) => {
     try {
       setLoading(true);
-      const { error } = await supabase.rpc('post_credit_note', { _cn_id: id });
-      if (error) throw error;
+      await transactionsApi.postCreditNote(id);
       toast({ title: "Posted", description: "Credit Note posted and GL updated" });
       loadData();
     } catch (error: any) {
@@ -184,16 +185,26 @@ export const SalesCreditNotes = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold tracking-tight">Credit Notes</h2>
-        <Button onClick={() => setDialogOpen(true)}>
+      {/* Green Masterfile Header */}
+      <div className="bg-emerald-600 text-white p-4 rounded-t-md -mb-6 shadow-md flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Credit Notes</h1>
+          <div className="text-sm opacity-90">Manage customer credit notes and refunds</div>
+        </div>
+        <Button 
+          onClick={() => setDialogOpen(true)}
+          className="bg-white text-emerald-700 hover:bg-emerald-50 border-0 font-semibold shadow-sm"
+        >
           <Plus className="mr-2 h-4 w-4" /> New Credit Note
         </Button>
       </div>
 
-      <Card>
+      <Card className="shadow-sm pt-6">
         <CardHeader>
-          <CardTitle>Credit Notes List</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-primary" />
+            Credit Notes List
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>

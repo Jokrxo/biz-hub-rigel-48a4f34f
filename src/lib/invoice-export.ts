@@ -7,6 +7,8 @@ export interface InvoiceForPDF {
   due_date: string | null;
   customer_name: string;
   customer_email?: string | null;
+  customer_address?: string | null;
+  customer_vat_number?: string | null;
   notes?: string | null;
   subtotal: number;
   tax_amount: number;
@@ -21,6 +23,10 @@ export interface CompanyForPDF {
   tax_number?: string | null;
   vat_number?: string | null;
   logo_url?: string | null;
+  bank_name?: string | null;
+  account_holder?: string | null;
+  branch_code?: string | null;
+  account_number?: string | null;
 }
 
 export interface InvoiceItemForPDF {
@@ -130,6 +136,16 @@ export const buildInvoicePDF = (
   metaY += 5;
   if (invoice.customer_email) {
     doc.text(invoice.customer_email, rightColX, metaY);
+    metaY += 5;
+  }
+  if (invoice.customer_address) {
+    const addressLines = doc.splitTextToSize(invoice.customer_address, 60);
+    doc.text(addressLines, rightColX, metaY);
+    metaY += (addressLines.length * 5);
+  }
+  if (invoice.customer_vat_number) {
+    doc.text(`VAT No: ${invoice.customer_vat_number}`, rightColX, metaY);
+    metaY += 5;
   }
 
   // Ensure items table starts below the lowest content
@@ -178,6 +194,34 @@ export const buildInvoicePDF = (
   // --- Totals Section ---
   let finalY = (doc as any).lastAutoTable.finalY + 10;
   
+  // Banking Details (Left Side)
+  if (company.bank_name) {
+    let bankingY = finalY;
+    doc.setFont(undefined, 'bold');
+    doc.setFontSize(10);
+    doc.setTextColor(0, 0, 0);
+    doc.text("Banking Details:", 14, bankingY + 5);
+    bankingY += 10;
+    
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    
+    doc.text(`Bank: ${company.bank_name}`, 14, bankingY);
+    bankingY += 5;
+    if (company.account_holder) {
+        doc.text(`Account Name: ${company.account_holder}`, 14, bankingY);
+        bankingY += 5;
+    }
+    doc.text(`Account No: ${company.account_number || ''}`, 14, bankingY);
+    bankingY += 5;
+    if (company.branch_code) {
+        doc.text(`Branch Code: ${company.branch_code}`, 14, bankingY);
+        bankingY += 5;
+    }
+    doc.text(`Reference: ${invoice.invoice_number}`, 14, bankingY);
+  }
+
   // Draw Totals Box Background
   doc.setFillColor(248, 250, 252);
   doc.rect(130, finalY - 2, 70, 40, 'F');

@@ -316,8 +316,8 @@ export const useDashboardData = (
         const t = String(a.account_type || '').toLowerCase();
         return ['expense', 'expenses', 'cost of goods sold', 'cogs'].includes(t);
       }).map((a: any) => ({ name: String(a.account_name || ''), value: Math.abs(Number(a.balance || 0)) }));
-      let incomeBreakdown = incomeAccounts.sort((a: any, b: any) => b.value - a.value).slice(0, 10);
-      let expenseBreakdown = expenseAccounts.sort((a: any, b: any) => b.value - a.value).slice(0, 10);
+      const incomeBreakdown = incomeAccounts.sort((a: any, b: any) => b.value - a.value).slice(0, 10);
+      const expenseBreakdown = expenseAccounts.sort((a: any, b: any) => b.value - a.value).slice(0, 10);
 
       // Chart Data Logic
       const months: Array<{ start: Date; end: Date; label: string }> = [];

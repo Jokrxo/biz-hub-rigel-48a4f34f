@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,7 @@ import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFo
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
-import { Download, Mail, Plus, Trash2, FileText, MoreHorizontal, CheckCircle2, Clock, AlertTriangle, DollarSign, FilePlus, ArrowRight, Check, History, Upload, Loader2 } from "lucide-react";
+import { Download, Mail, Plus, Trash2, FileText, MoreHorizontal, CheckCircle2, Clock, AlertTriangle, DollarSign, FilePlus, ArrowRight, Check, History, Upload, Loader2, Edit } from "lucide-react";
 import { exportInvoiceToPDF, buildInvoicePDF, addLogoToPDF, fetchLogoDataUrl, type InvoiceForPDF, type InvoiceItemForPDF, type CompanyForPDF } from '@/lib/invoice-export';
 import { exportInvoicesToExcel } from '@/lib/export-utils';
 import { MetricCard } from "@/components/ui/MetricCard";
@@ -25,6 +26,7 @@ import { Progress } from "@/components/ui/progress";
 interface Invoice {
   id: string;
   invoice_number: string;
+  customer_id?: string;
   customer_name: string;
   customer_email: string | null;
   invoice_date: string;
@@ -48,6 +50,7 @@ export const SalesInvoices = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [invoiceTypeDialogOpen, setInvoiceTypeDialogOpen] = useState(false);
   const [invoicePaymentMode, setInvoicePaymentMode] = useState<'cash' | 'credit' | null>(null);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [yearFilter, setYearFilter] = useState<string>('all');
   const [monthFilter, setMonthFilter] = useState<string>('all');
@@ -64,6 +67,7 @@ export const SalesInvoices = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState("");
+  const [selectedCustomerDetails, setSelectedCustomerDetails] = useState<any>(null);
 
   const [formData, setFormData] = useState({
     customer_id: "",
@@ -82,6 +86,10 @@ export const SalesInvoices = () => {
   const [sending, setSending] = useState<boolean>(false);
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
   const [companyEmail, setCompanyEmail] = useState<string>('');
+  const [viewDialogOpen, setViewDialogOpen] = useState(false);
+  const [viewInvoice, setViewInvoice] = useState<any>(null);
+  const [viewCompany, setViewCompany] = useState<any>(null);
+  const [viewItems, setViewItems] = useState<any[]>([]);
 
   // Payment dialog state
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
@@ -193,10 +201,27 @@ export const SalesInvoices = () => {
         .update({ status: "sent", sent_at: new Date(sentDate).toISOString() })
         .eq("id", sentInvoice.id);
       if (error) throw error;
-      await openJournalForSent(sentInvoice, sentDate, sentIncludeVAT);
-      toast({ title: "Success", description: "Opening transaction form to post Debtors (AR), Revenue and VAT; plus COGS/Inventory if applicable" });
+      
+      // Auto-post to ledger using RPC if available, otherwise client-side
+      await postInvoiceSent(sentInvoice, sentDate);
+      
       setSentDialogOpen(false);
       setSentInvoice(null);
+      loadData();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const handlePostToLedger = async (inv: any) => {
+    if (!inv) return;
+    try {
+      if (inv.status === 'draft') {
+        // Auto-mark as sent first
+        await supabase.from("invoices").update({ status: "sent", sent_at: new Date().toISOString() }).eq("id", inv.id);
+        inv.status = 'sent';
+      }
+      await postInvoiceSent(inv, new Date().toISOString());
       loadData();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -247,6 +272,10 @@ export const SalesInvoices = () => {
         customer_name: selected.name,
         customer_email: selected.email ?? "",
       }));
+      setSelectedCustomerDetails({
+        address: selected.address,
+        vat_number: selected.vat_number || selected.tax_number
+      });
     }
   };
 
@@ -262,6 +291,57 @@ export const SalesInvoices = () => {
 
     return { subtotal, taxAmount, total: subtotal + taxAmount };
   };
+
+  const handleEdit = async (invoice: Invoice) => {
+    setEditingInvoiceId(invoice.id);
+    try {
+      const { data: items } = await supabase
+        .from('invoice_items')
+        .select('*')
+        .eq('invoice_id', invoice.id);
+      
+      const loadedItems = (items || []).map((i: any) => ({
+        product_id: i.product_id || "",
+        description: i.description,
+        quantity: i.quantity,
+        unit_price: i.unit_price,
+        tax_rate: i.tax_rate
+      }));
+
+      setFormData({
+        customer_id: invoice.customer_id || "",
+        customer_name: invoice.customer_name,
+        customer_email: invoice.customer_email || "",
+        invoice_date: invoice.invoice_date.split('T')[0],
+        due_date: invoice.due_date ? invoice.due_date.split('T')[0] : "",
+        notes: invoice.notes || "",
+        items: loadedItems.length > 0 ? loadedItems : [{ product_id: "", description: "", quantity: 1, unit_price: 0, tax_rate: 15 }]
+      });
+      
+      if (invoice.customer_id) {
+         applyCustomerSelection(invoice.customer_id);
+      }
+
+      setDialogOpen(true);
+    } catch (e) {
+      toast({ title: "Error", description: "Failed to load invoice details", variant: "destructive" });
+    }
+  };
+
+  useEffect(() => {
+    const action = searchParams.get('action');
+    const id = searchParams.get('id');
+    if (action === 'edit' && id && !editingInvoiceId && invoices.length > 0) {
+      const inv = invoices.find(i => i.id === id);
+      if (inv) {
+        handleEdit(inv);
+        const newParams = new URLSearchParams(searchParams);
+        newParams.delete('action');
+        newParams.delete('id');
+        setSearchParams(newParams);
+      }
+    }
+  }, [invoices, searchParams, editingInvoiceId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -325,16 +405,13 @@ export const SalesInvoices = () => {
         .eq("user_id", user?.id)
         .single();
 
-      const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
       const totals = calculateTotals();
-
       let invoice;
-      try {
+
+      if (editingInvoiceId) {
         const { data, error } = await supabase
           .from("invoices")
-          .insert({
-            company_id: profile!.company_id,
-            invoice_number: invoiceNumber,
+          .update({
             customer_id: formData.customer_id,
             customer_name: formData.customer_name,
             customer_email: formData.customer_email || null,
@@ -344,23 +421,37 @@ export const SalesInvoices = () => {
             tax_amount: totals.taxAmount,
             total_amount: totals.total,
             notes: formData.notes || null,
-            status: "draft",
-            user_id: user?.id
           })
+          .eq('id', editingInvoiceId)
           .select()
           .single();
-
+          
         if (error) throw error;
         invoice = data;
-      } catch (err: any) {
-        const msg = String(err?.message || "").toLowerCase();
-        if (msg.includes("schema cache") || msg.includes("column")) {
-          // Retry without customer_id
-          const { data, error: retryError } = await supabase
+        
+        // Revert stock for old items before deleting them
+        const { data: oldItems } = await supabase.from('invoice_items').select('*').eq('invoice_id', editingInvoiceId);
+        if (oldItems) {
+           for (const oldIt of oldItems) {
+              if (!oldIt.product_id) continue;
+              const { data: prod } = await supabase.from('items').select('quantity_on_hand').eq('id', oldIt.product_id).single();
+              if (prod) {
+                 await supabase.from('items').update({ quantity_on_hand: (prod.quantity_on_hand || 0) + (oldIt.quantity || 0) }).eq('id', oldIt.product_id);
+              }
+           }
+        }
+        
+        await supabase.from('invoice_items').delete().eq('invoice_id', editingInvoiceId);
+
+      } else {
+        const invoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
+        try {
+          const { data, error } = await supabase
             .from("invoices")
             .insert({
               company_id: profile!.company_id,
               invoice_number: invoiceNumber,
+              customer_id: formData.customer_id,
               customer_name: formData.customer_name,
               customer_email: formData.customer_email || null,
               invoice_date: formData.invoice_date,
@@ -374,12 +465,38 @@ export const SalesInvoices = () => {
             })
             .select()
             .single();
-          
-          if (retryError) throw retryError;
+
+          if (error) throw error;
           invoice = data;
-          toast({ title: "Warning", description: "Invoice saved, but customer link is incomplete due to connection issues. Please refresh the page." });
-        } else {
-          throw err;
+        } catch (err: any) {
+          const msg = String(err?.message || "").toLowerCase();
+          if (msg.includes("schema cache") || msg.includes("column")) {
+            // Retry without customer_id
+            const { data, error: retryError } = await supabase
+              .from("invoices")
+              .insert({
+                company_id: profile!.company_id,
+                invoice_number: invoiceNumber,
+                customer_name: formData.customer_name,
+                customer_email: formData.customer_email || null,
+                invoice_date: formData.invoice_date,
+                due_date: formData.due_date || null,
+                subtotal: totals.subtotal,
+                tax_amount: totals.taxAmount,
+                total_amount: totals.total,
+                notes: formData.notes || null,
+                status: "draft",
+                user_id: user?.id
+              })
+              .select()
+              .single();
+            
+            if (retryError) throw retryError;
+            invoice = data;
+            toast({ title: "Warning", description: "Invoice saved, but customer link is incomplete due to connection issues. Please refresh the page." });
+          } else {
+            throw err;
+          }
         }
       }
 
@@ -468,6 +585,7 @@ export const SalesInvoices = () => {
   };
 
   const resetForm = () => {
+    setEditingInvoiceId(null);
     setFormData({
       customer_id: "",
       customer_name: "",
@@ -563,8 +681,18 @@ export const SalesInvoices = () => {
       setProgressText("Posting Invoice to Ledger...");
 
       const postDate = postDateStr || inv.invoice_date;
-      // Post full AR/Revenue/VAT and COGS/Inventory via client to guarantee all four accounts
-      await transactionsApi.postInvoiceSentClient(inv, postDate);
+      
+      // Try RPC first for atomicity
+      try {
+        await (supabase as any).rpc('post_invoice_sent', { 
+          _invoice_id: inv.id, 
+          _post_date: postDate 
+        });
+      } catch (rpcErr: any) {
+        console.warn("RPC post_invoice_sent failed, falling back to client:", rpcErr);
+        // Fallback to client-side logic if RPC fails or not exists
+        await transactionsApi.postInvoiceSentClient(inv, postDate);
+      }
       
       setProgress(70);
       setProgressText("Updating Financial Statements...");
@@ -579,7 +707,7 @@ export const SalesInvoices = () => {
       setProgressText("Posted Successfully");
       await new Promise(r => setTimeout(r, 400));
 
-      toast({ title: "Success", description: `Posted invoice ${inv.invoice_number}: Dr Receivable | Cr Revenue, Cr VAT; Dr COGS | Cr Inventory` });
+      toast({ title: "Success", description: `Posted invoice ${inv.invoice_number} to Sales & Debtors` });
     } catch (e: any) {
       toast({ title: "Error", description: e.message || 'Failed to post Sent invoice', variant: 'destructive' });
     } finally {
@@ -826,12 +954,11 @@ export const SalesInvoices = () => {
         })
         .eq("id", paymentInvoice.id);
       if (error) throw error;
+      
+      // Use RPC for automatic ledger posting
       const invForPost = { ...paymentInvoice, _payment_amount: amount };
-      await openJournalForPaid(invForPost, paymentDate, selectedBankId, amount);
-      // Optionally record paid date if schema supports it (non-blocking)
-      // if your invoices table includes paid_at, you can enable the following:
-      // await (supabase as any).from('invoices').update({ paid_at: new Date(paymentDate).toISOString() }).eq('id', paymentInvoice.id);
-      toast({ title: "Success", description: "Opening journal to post payment" });
+      await postInvoicePaid(invForPost, paymentDate, selectedBankId);
+      
       setPaymentInvoice(null);
       loadData();
     } catch (e: any) {
@@ -932,7 +1059,7 @@ export const SalesInvoices = () => {
   const fetchCompanyForPDF = async (): Promise<any> => {
     const { data, error } = await supabase
       .from('companies')
-      .select('name,email,phone,address,tax_number,vat_number,logo_url')
+      .select('name,email,phone,address,tax_number,vat_number,logo_url,bank_name,account_holder,branch_code,account_number')
       .limit(1)
       .maybeSingle();
     if (error || !data) {
@@ -946,6 +1073,10 @@ export const SalesInvoices = () => {
       tax_number: (data as any).tax_number ?? null,
       vat_number: (data as any).vat_number ?? null,
       logo_url: (data as any).logo_url ?? null,
+      bank_name: (data as any).bank_name ?? null,
+      account_holder: (data as any).account_holder ?? null,
+      branch_code: (data as any).branch_code ?? null,
+      account_number: (data as any).account_number ?? null,
     };
   };
 
@@ -958,17 +1089,22 @@ export const SalesInvoices = () => {
     return data as any[];
   };
 
-  const mapInvoiceForPDF = (inv: any) => ({
-    invoice_number: inv.invoice_number || String(inv.id),
-    invoice_date: inv.invoice_date || new Date().toISOString(),
-    due_date: inv.due_date || null,
-    customer_name: inv.customer_name || inv.customer?.name || 'Customer',
-    customer_email: inv.customer_email || inv.customer?.email || null,
-    notes: inv.notes || null,
-    subtotal: inv.subtotal ?? inv.total_before_tax ?? 0,
-    tax_amount: inv.tax_amount ?? inv.tax ?? 0,
-    total_amount: inv.total_amount ?? inv.total ?? inv.amount ?? 0,
-  });
+  const mapInvoiceForPDF = (inv: any) => {
+    const customer = customers.find((c: any) => c.id === inv.customer_id);
+    return {
+      invoice_number: inv.invoice_number || String(inv.id),
+      invoice_date: inv.invoice_date || new Date().toISOString(),
+      due_date: inv.due_date || null,
+      customer_name: inv.customer_name || customer?.name || 'Customer',
+      customer_email: inv.customer_email || customer?.email || null,
+      customer_address: customer?.address || null,
+      customer_vat_number: customer?.vat_number || customer?.tax_number || null,
+      notes: inv.notes || null,
+      subtotal: inv.subtotal ?? inv.total_before_tax ?? 0,
+      tax_amount: inv.tax_amount ?? inv.tax ?? 0,
+      total_amount: inv.total_amount ?? inv.total ?? inv.amount ?? 0,
+    };
+  };
 
   const handleDownloadInvoice = async (inv: any) => {
     try {
@@ -996,6 +1132,21 @@ export const SalesInvoices = () => {
     const msg = `Hello,\n\nPlease find your Invoice ${inv.invoice_number} for our company.\nTotal due: R ${totalText}.\n\nThank you.\n`;
     setSendMessage(msg);
     setSendDialogOpen(true);
+  };
+  const openViewDialog = async (inv: any) => {
+    setViewInvoice(inv);
+    const company = await fetchCompanyForPDF();
+    setViewCompany(company);
+    try {
+      const { data } = await supabase
+        .from('invoice_items')
+        .select('description,quantity,unit_price,tax_rate')
+        .eq('invoice_id', inv.id);
+      setViewItems(data || []);
+    } catch {
+      setViewItems([]);
+    }
+    setViewDialogOpen(true);
   };
 
   const handleSendEmail = async () => {
@@ -1105,9 +1256,23 @@ export const SalesInvoices = () => {
 
   return (
     <div className="space-y-6">
-      {/* Charts and Metric Cards REMOVED */}
-      
-      <Card className="shadow-sm">
+      {/* Green Masterfile Header */}
+      <div className="bg-emerald-600 text-white p-4 rounded-t-md -mb-6 shadow-md flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Tax Invoices</h1>
+          <div className="text-sm opacity-90">Manage and track your tax invoices</div>
+        </div>
+        {canEdit && (
+          <Button 
+            onClick={() => setInvoiceTypeDialogOpen(true)}
+            className="bg-white text-emerald-700 hover:bg-emerald-50 border-0 font-semibold shadow-sm"
+          >
+            <Plus className="mr-2 h-4 w-4" /> New Invoice
+          </Button>
+        )}
+      </div>
+
+      <Card className="shadow-sm pt-6">
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5 text-primary" />
@@ -1150,12 +1315,6 @@ export const SalesInvoices = () => {
               </SelectContent>
             </Select>
             <Button variant="outline" onClick={exportFilteredInvoicesDate}>Export</Button>
-            {canEdit && (
-              <Button className="bg-gradient-primary" onClick={() => setInvoiceTypeDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                New Invoice
-              </Button>
-            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -1209,15 +1368,26 @@ export const SalesInvoices = () => {
                           <DropdownMenuItem onClick={() => handleDownloadInvoice(invoice)}>
                             <Download className="mr-2 h-4 w-4" /> Download PDF
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openViewDialog(invoice)}>
+                            <FileText className="mr-2 h-4 w-4" /> View Details
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openSendDialog(invoice)}>
                             <Mail className="mr-2 h-4 w-4" /> Send Email
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
+                          {invoice.status === 'draft' && canEdit && (
+                            <DropdownMenuItem onClick={() => handleEdit(invoice)}>
+                              <Edit className="mr-2 h-4 w-4" /> Edit Invoice
+                            </DropdownMenuItem>
+                          )}
                           {canEdit && (
                             <>
                               <DropdownMenuLabel>Update Status</DropdownMenuLabel>
                               <DropdownMenuItem onClick={() => updateStatus(invoice.id, "sent")}>
                                 Mark as Sent
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handlePostToLedger(invoice)}>
+                                <CheckCircle2 className="mr-2 h-4 w-4 text-emerald-600" /> Post to Ledger
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => updateStatus(invoice.id, "paid")}>
                                 <DollarSign className="mr-2 h-4 w-4" /> Mark as Paid
@@ -1285,6 +1455,12 @@ export const SalesInvoices = () => {
                       ))}
                     </SelectContent>
                   </Select>
+                  {selectedCustomerDetails && (
+                    <div className="mt-2 p-2 bg-muted/50 rounded text-xs text-muted-foreground">
+                      {selectedCustomerDetails.address && <div>{selectedCustomerDetails.address}</div>}
+                      {selectedCustomerDetails.vat_number && <div>VAT: {selectedCustomerDetails.vat_number}</div>}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <Label>Customer Email</Label>
@@ -1435,6 +1611,140 @@ export const SalesInvoices = () => {
             </form>
           </DialogContent>
         </Dialog>
+        <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Tax Invoice</DialogTitle>
+            </DialogHeader>
+            {viewInvoice && viewCompany ? (
+              <div className="space-y-6 p-2">
+                {/* Header Section */}
+                <div className="flex justify-between items-start border-b pb-6">
+                  <div className="space-y-1">
+                     {viewCompany.logo_url && <img src={viewCompany.logo_url} alt="Company Logo" className="h-16 object-contain mb-2" />}
+                     <div className="text-xl font-bold text-emerald-800">{viewCompany.name || 'Company Name'}</div>
+                     <div className="text-sm text-muted-foreground whitespace-pre-wrap max-w-xs">{viewCompany.address}</div>
+                     <div className="text-sm text-muted-foreground">Phone: {viewCompany.phone}</div>
+                     <div className="text-sm text-muted-foreground">Email: {viewCompany.email}</div>
+                     {viewCompany.vat_number && <div className="text-sm font-medium mt-1">VAT Reg No: {viewCompany.vat_number}</div>}
+                  </div>
+                  <div className="text-right space-y-1">
+                    <div className="text-4xl font-light text-emerald-600 mb-4">TAX INVOICE</div>
+                    <div className="grid grid-cols-2 gap-x-4 text-sm">
+                      <div className="text-muted-foreground font-medium">Invoice No:</div>
+                      <div>{viewInvoice.invoice_number}</div>
+                      <div className="text-muted-foreground font-medium">Date:</div>
+                      <div>{new Date(viewInvoice.invoice_date).toLocaleDateString('en-ZA')}</div>
+                      <div className="text-muted-foreground font-medium">Due Date:</div>
+                      <div>{viewInvoice.due_date ? new Date(viewInvoice.due_date).toLocaleDateString('en-ZA') : 'Due on Receipt'}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bill To Section */}
+                <div className="grid grid-cols-2 gap-8">
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">Bill To</h3>
+                    <div className="text-base font-medium">{viewInvoice.customer_name}</div>
+                    {customers.find((c: any) => c.id === viewInvoice.customer_id)?.address && (
+                      <div className="text-sm text-muted-foreground whitespace-pre-wrap">
+                        {customers.find((c: any) => c.id === viewInvoice.customer_id)?.address}
+                      </div>
+                    )}
+                    {customers.find((c: any) => c.id === viewInvoice.customer_id)?.vat_number && (
+                      <div className="text-sm mt-1 font-medium">
+                        VAT No: {customers.find((c: any) => c.id === viewInvoice.customer_id)?.vat_number}
+                      </div>
+                    )}
+                    {viewInvoice.customer_email && (
+                      <div className="text-sm text-muted-foreground">{viewInvoice.customer_email}</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Line Items */}
+                <div className="border rounded-lg overflow-hidden">
+                  <Table>
+                    <TableHeader className="bg-emerald-50">
+                      <TableRow>
+                        <TableHead className="text-emerald-900 font-bold">Description</TableHead>
+                        <TableHead className="text-center text-emerald-900 font-bold w-24">Qty</TableHead>
+                        <TableHead className="text-right text-emerald-900 font-bold w-32">Unit Price</TableHead>
+                        <TableHead className="text-center text-emerald-900 font-bold w-24">Tax</TableHead>
+                        <TableHead className="text-right text-emerald-900 font-bold w-32">Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {viewItems.map((it: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell>{it.description}</TableCell>
+                          <TableCell className="text-center">{it.quantity}</TableCell>
+                          <TableCell className="text-right">R {Number(it.unit_price).toFixed(2)}</TableCell>
+                          <TableCell className="text-center">{Number(it.tax_rate || 0).toFixed(0)}%</TableCell>
+                          <TableCell className="text-right">R {(Number(it.quantity) * Number(it.unit_price)).toFixed(2)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                {/* Footer Section */}
+                <div className="grid grid-cols-12 gap-8 mt-4">
+                   {/* Banking Details & Notes */}
+                   <div className="col-span-7 space-y-4">
+                      {viewCompany.bank_name && (
+                        <div className="bg-muted/30 p-4 rounded-md border">
+                          <h4 className="font-semibold text-sm mb-2 text-emerald-800">Banking Details</h4>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                            <div className="text-muted-foreground">Bank:</div>
+                            <div className="font-medium">{viewCompany.bank_name}</div>
+                            <div className="text-muted-foreground">Account Name:</div>
+                            <div className="font-medium">{viewCompany.account_holder}</div>
+                            <div className="text-muted-foreground">Account No:</div>
+                            <div className="font-medium">{viewCompany.account_number}</div>
+                            {viewCompany.branch_code && (
+                              <>
+                                <div className="text-muted-foreground">Branch Code:</div>
+                                <div className="font-medium">{viewCompany.branch_code}</div>
+                              </>
+                            )}
+                            <div className="text-muted-foreground">Reference:</div>
+                            <div className="font-medium">{viewInvoice.invoice_number}</div>
+                          </div>
+                        </div>
+                      )}
+                      {viewInvoice.notes && (
+                        <div className="text-sm text-muted-foreground">
+                          <div className="font-semibold mb-1">Notes:</div>
+                          {viewInvoice.notes}
+                        </div>
+                      )}
+                   </div>
+
+                   {/* Totals */}
+                   <div className="col-span-5">
+                      <div className="bg-emerald-50 p-4 rounded-md space-y-3">
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Subtotal</span>
+                          <span className="font-medium">R {Number(viewInvoice.subtotal).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">VAT (15%)</span>
+                          <span className="font-medium">R {Number(viewInvoice.tax_amount).toFixed(2)}</span>
+                        </div>
+                        <div className="border-t border-emerald-200 pt-3 flex justify-between items-center">
+                          <span className="text-lg font-bold text-emerald-900">Total Due</span>
+                          <span className="text-lg font-bold text-emerald-900">R {Number(viewInvoice.total_amount).toFixed(2)}</span>
+                        </div>
+                      </div>
+                   </div>
+                </div>
+              </div>
+            ) : (
+              <div className="py-6 text-center text-muted-foreground">Loading...</div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={sentDialogOpen} onOpenChange={setSentDialogOpen}>
           <DialogContent className="max-w-md">
@@ -1455,10 +1765,6 @@ export const SalesInvoices = () => {
                   <div className="flex justify-between"><span>VAT amount</span><span className="font-mono">R {Number(sentInvoice.tax_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
                   <div className="flex justify-between"><span>Total</span><span className="font-mono">R {Number(sentInvoice.total_amount || 0).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</span></div>
                   <div className="flex justify-between"><span>Revenue account</span><span className="font-mono">4000 - Sales Revenue</span></div>
-                  <div className="flex items-center gap-2 pt-2">
-                    <Label htmlFor="includeVat">Include VAT in posting?</Label>
-                    <input id="includeVat" type="checkbox" checked={sentIncludeVAT} onChange={e => setSentIncludeVAT(e.target.checked)} />
-                  </div>
                 </div>
               )}
               <div className="flex justify-end gap-2">
@@ -1600,6 +1906,45 @@ export const SalesInvoices = () => {
                   placeholder="Reason for return or cancellation..."
                   className="min-h-[80px]"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Supporting Document (Optional)</Label>
+                <div className="border-2 border-dashed rounded-lg p-6 text-center hover:bg-muted/50 transition-colors cursor-pointer" onClick={() => toast({ title: "Upload", description: "File upload will be available in the next update." })}>
+                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                    <Upload className="h-8 w-8 opacity-50" />
+                    <span className="text-sm">Click to upload document</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button variant="outline" onClick={() => setCreditNoteOpen(false)} className="w-full sm:w-auto">Cancel</Button>
+              <Button 
+                onClick={handleCreditNote}
+                disabled={isCrediting || !creditReason.trim()}
+                className="w-full sm:w-auto bg-amber-600 hover:bg-amber-700 text-white"
+              >
+                {isCrediting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <History className="mr-2 h-4 w-4" />
+                    Issue Credit Note
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </Card>
+    </div>
+  );
+};
               </div>
 
               <div className="space-y-2">

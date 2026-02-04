@@ -23,6 +23,8 @@ interface Receipt {
   customer?: { name: string };
 }
 
+import { transactionsApi } from "@/lib/transactions-api";
+
 export const SalesReceipts = () => {
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [loading, setLoading] = useState(true);
@@ -163,8 +165,7 @@ export const SalesReceipts = () => {
   const handlePost = async (id: string) => {
     try {
       setLoading(true);
-      const { error } = await supabase.rpc('post_receipt', { _receipt_id: id });
-      if (error) throw error;
+      await transactionsApi.postReceipt(id);
       toast({ title: "Posted", description: "Receipt posted and GL updated" });
       loadData();
     } catch (error: any) {
@@ -176,16 +177,26 @@ export const SalesReceipts = () => {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-3xl font-bold tracking-tight">Receipts</h2>
-        <Button onClick={() => setDialogOpen(true)}>
+      {/* Green Masterfile Header */}
+      <div className="bg-emerald-600 text-white p-4 rounded-t-md -mb-6 shadow-md flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Receipts</h1>
+          <div className="text-sm opacity-90">Manage customer payments and receipts</div>
+        </div>
+        <Button 
+          onClick={() => setDialogOpen(true)}
+          className="bg-white text-emerald-700 hover:bg-emerald-50 border-0 font-semibold shadow-sm"
+        >
           <Plus className="mr-2 h-4 w-4" /> New Receipt
         </Button>
       </div>
 
-      <Card>
+      <Card className="shadow-sm pt-6">
         <CardHeader>
-          <CardTitle>Receipts List</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            <Wallet className="h-5 w-5 text-primary" />
+            Receipts List
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>

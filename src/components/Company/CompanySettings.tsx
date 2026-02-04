@@ -20,6 +20,10 @@ interface CompanyData {
   business_type?: string;
   tax_number?: string;
   vat_number?: string;
+  bank_name?: string;
+  account_holder?: string;
+  branch_code?: string;
+  account_number?: string;
 }
 
 export const CompanySettings = () => {
@@ -141,6 +145,10 @@ export const CompanySettings = () => {
       if (companyData.vat_number) {
         updateData.vat_number = companyData.vat_number;
       }
+      if (companyData.bank_name) updateData.bank_name = companyData.bank_name;
+      if (companyData.account_holder) updateData.account_holder = companyData.account_holder;
+      if (companyData.branch_code) updateData.branch_code = companyData.branch_code;
+      if (companyData.account_number) updateData.account_number = companyData.account_number;
 
       const { error } = await supabase
         .from("companies")
@@ -393,6 +401,44 @@ export const CompanySettings = () => {
               onChange={(e) => setCompanyData({ ...companyData, vat_number: e.target.value })}
               placeholder="VAT registration number"
             />
+          </div>
+        </div>
+
+        <div className="pt-4 border-t">
+          <Label className="text-lg font-semibold mb-4 block">Banking Details (For Invoices)</Label>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label>Bank Name</Label>
+              <Input
+                value={companyData.bank_name || ""}
+                onChange={(e) => setCompanyData({ ...companyData, bank_name: e.target.value })}
+                placeholder="e.g. FNB, Standard Bank"
+              />
+            </div>
+            <div>
+              <Label>Account Holder</Label>
+              <Input
+                value={companyData.account_holder || ""}
+                onChange={(e) => setCompanyData({ ...companyData, account_holder: e.target.value })}
+                placeholder="Account holder name"
+              />
+            </div>
+            <div>
+              <Label>Branch Code</Label>
+              <Input
+                value={companyData.branch_code || ""}
+                onChange={(e) => setCompanyData({ ...companyData, branch_code: e.target.value })}
+                placeholder="Universal or branch code"
+              />
+            </div>
+            <div>
+              <Label>Account Number</Label>
+              <Input
+                value={companyData.account_number || ""}
+                onChange={(e) => setCompanyData({ ...companyData, account_number: e.target.value })}
+                placeholder="Bank account number"
+              />
+            </div>
           </div>
         </div>
 

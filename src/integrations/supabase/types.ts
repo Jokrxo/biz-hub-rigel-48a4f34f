@@ -452,6 +452,10 @@ export type Database = {
           default_currency: string | null
           email: string | null
           id: string
+          bank_name: string | null
+          account_holder: string | null
+          branch_code: string | null
+          account_number: string | null
           logo_url: string | null
           name: string
           phone: string | null
@@ -467,6 +471,10 @@ export type Database = {
           default_currency?: string | null
           email?: string | null
           id?: string
+          bank_name?: string | null
+          account_holder?: string | null
+          branch_code?: string | null
+          account_number?: string | null
           logo_url?: string | null
           name: string
           phone?: string | null
@@ -482,6 +490,10 @@ export type Database = {
           default_currency?: string | null
           email?: string | null
           id?: string
+          bank_name?: string | null
+          account_holder?: string | null
+          branch_code?: string | null
+          account_number?: string | null
           logo_url?: string | null
           name?: string
           phone?: string | null
@@ -501,6 +513,18 @@ export type Database = {
           name: string
           phone: string | null
           updated_at: string | null
+          vat_number: string | null
+          tax_number: string | null
+          customer_code: string | null
+          contact_person: string | null
+          mobile: string | null
+          shipping_address: string | null
+          credit_limit: number | null
+          payment_terms: string | null
+          customer_type: string | null
+          notes: string | null
+          is_active: boolean | null
+          salesperson_id: string | null
         }
         Insert: {
           address?: string | null
@@ -511,6 +535,18 @@ export type Database = {
           name: string
           phone?: string | null
           updated_at?: string | null
+          vat_number?: string | null
+          tax_number?: string | null
+          customer_code?: string | null
+          contact_person?: string | null
+          mobile?: string | null
+          shipping_address?: string | null
+          credit_limit?: number | null
+          payment_terms?: string | null
+          customer_type?: string | null
+          notes?: string | null
+          is_active?: boolean | null
+          salesperson_id?: string | null
         }
         Update: {
           address?: string | null
@@ -521,6 +557,18 @@ export type Database = {
           name?: string
           phone?: string | null
           updated_at?: string | null
+          vat_number?: string | null
+          tax_number?: string | null
+          customer_code?: string | null
+          contact_person?: string | null
+          mobile?: string | null
+          shipping_address?: string | null
+          credit_limit?: number | null
+          payment_terms?: string | null
+          customer_type?: string | null
+          notes?: string | null
+          is_active?: boolean | null
+          salesperson_id?: string | null
         }
         Relationships: [
           {

@@ -325,6 +325,21 @@ export const SalesProducts = () => {
             <Button size="sm" variant="secondary" onClick={() => setOpeningOpen(true)}>
               <Plus className="h-4 w-4 mr-2" /> Opening Stock
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={async () => {
+                try {
+                  await transactionsApi.seedSalesModule();
+                  toast({ title: "Seeded", description: "Sample accounts, customers, and items added" });
+                  loadProducts();
+                } catch (e: any) {
+                  toast({ title: "Error", description: e.message || "Failed to seed data", variant: "destructive" });
+                }
+              }}
+            >
+              <History className="h-4 w-4 mr-2" /> Seed Sample Data
+            </Button>
           </div>
         )}
       </div>
