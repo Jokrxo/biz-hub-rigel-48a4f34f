@@ -43,11 +43,20 @@ export const navGroups = [
     ]
   },
   {
+    title: "Sales",
+    items: [
+      { icon: LayoutDashboard, label: "Overview", href: "/sales" },
+      { icon: Users, label: "Customers", href: "/sales/customers" },
+      { icon: FileText, label: "Quotations", href: "/sales/quotations" },
+      { icon: Receipt, label: "Invoices", href: "/sales/invoices" },
+      { icon: AlertCircle, label: "Credit Notes", href: "/sales/credit-notes" },
+      { icon: Wallet, label: "Receipts", href: "/sales/receipts" },
+    ]
+  },
+  {
     title: "Operations",
     items: [
-      { icon: TrendingUp, label: "Sales Management", href: "/sales" },
       { icon: Receipt, label: "Purchase Management", href: "/purchase" },
-      { icon: FileText, label: "Quotes", href: "/quotes" },
     ]
   },
   {

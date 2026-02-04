@@ -390,6 +390,7 @@ export const SalesInvoices = () => {
       // Create invoice items
       const items = formData.items.map(item => ({
         invoice_id: invoice.id,
+        product_id: item.product_id || null,
         description: item.description,
         quantity: item.quantity,
         unit_price: item.unit_price,

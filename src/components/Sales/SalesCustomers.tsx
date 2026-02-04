@@ -44,14 +44,39 @@ export function SalesCustomers() {
       if (error) throw error;
       
       const customerData = data as Customer[];
-      setCustomers(customerData);
+      
+      // Fetch outstanding invoices
+      const { data: invoiceData } = await supabase
+        .from("invoices")
+        .select("customer_id, total_amount, status")
+        .neq("status", "draft")
+        .neq("status", "paid")
+        .neq("status", "cancelled");
+        
+      // Map balances
+      const balanceMap = new Map<string, number>();
+      let totalOutstandingAll = 0;
+      
+      if (invoiceData) {
+        invoiceData.forEach((inv: any) => {
+          const current = balanceMap.get(inv.customer_id) || 0;
+          balanceMap.set(inv.customer_id, current + (inv.total_amount || 0));
+          totalOutstandingAll += (inv.total_amount || 0);
+        });
+      }
 
-      // Calculate stats (Mocking outstanding for now as it requires invoice aggregation)
-      // Ideally: fetch sum of unpaid invoices per customer
+      // Update customers with balance
+      const customersWithBalance = customerData.map(c => ({
+        ...c,
+        balance: balanceMap.get(c.id) || 0
+      }));
+
+      setCustomers(customersWithBalance);
+
       setStats({
         totalCustomers: customerData.length,
         activeCustomers: customerData.filter(c => c.is_active).length,
-        totalOutstanding: 0 // To be implemented with invoices linkage
+        totalOutstanding: totalOutstandingAll
       });
 
     } catch (error: any) {
@@ -78,6 +103,22 @@ export function SalesCustomers() {
       const { error } = await supabase.from("customers").delete().eq("id", id);
       if (error) throw error;
       toast({ title: "Success", description: "Customer deleted successfully" });
+      loadCustomers();
+    } catch (error: any) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    }
+  };
+
+  const toggleStatus = async (customer: Customer) => {
+    try {
+      const { error } = await supabase
+        .from("customers")
+        .update({ is_active: !customer.is_active })
+        .eq("id", customer.id);
+      
+      if (error) throw error;
+      
+      toast({ title: "Success", description: `Customer ${customer.is_active ? 'deactivated' : 'activated'} successfully` });
       loadCustomers();
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -164,7 +205,7 @@ export function SalesCustomers() {
                   <TableCell>{customer.contact_person || '-'}</TableCell>
                   <TableCell>{customer.phone}</TableCell>
                   <TableCell>{customer.customer_type}</TableCell>
-                  <TableCell className="text-right">{formatCurrency(0)}</TableCell> {/* Placeholder balance */}
+                  <TableCell className="text-right">{formatCurrency((customer as any).balance || 0)}</TableCell>
                   <TableCell>
                     <span 
                       className={`px-2 py-1 rounded-full text-xs cursor-pointer hover:opacity-80 transition-opacity select-none ${customer.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}

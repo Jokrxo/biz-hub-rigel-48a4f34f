@@ -11,6 +11,8 @@ import { SalesInvoices } from "@/components/Sales/SalesInvoices";
 import { SalesQuotes } from "@/components/Sales/SalesQuotes";
 import { SalesProducts } from "@/components/Sales/SalesProducts";
 import { SalesCustomers } from "@/components/Sales/SalesCustomers";
+import { SalesCreditNotes } from "@/components/Sales/SalesCreditNotes";
+import { SalesReceipts } from "@/components/Sales/SalesReceipts";
 import { useAuth } from "@/context/useAuth";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger, SheetDescription } from "@/components/ui/sheet";
 
@@ -78,12 +80,20 @@ export default function SalesPage() {
                       <Receipt className="h-5 w-5 mr-3 text-purple-500" />
                       Create Quote
                     </Button>
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { setActiveTab("credit-notes"); setIsQuickActionsOpen(false); }}>
+                      <AlertCircle className="h-5 w-5 mr-3 text-red-500" />
+                      Create Credit Note
+                    </Button>
+                    <Button variant="outline" className="justify-start h-12" onClick={() => { setActiveTab("receipts"); setIsQuickActionsOpen(false); }}>
+                      <DollarSign className="h-5 w-5 mr-3 text-green-500" />
+                      Receive Payment
+                    </Button>
                     <Button variant="outline" className="justify-start h-12" onClick={() => { setActiveTab("products"); setIsQuickActionsOpen(false); }}>
-                      <Package className="h-5 w-5 mr-3 text-green-500" />
+                      <Package className="h-5 w-5 mr-3 text-orange-500" />
                       Add Product
                     </Button>
                     <Button variant="outline" className="justify-start h-12" onClick={() => { setActiveTab("customers"); setIsQuickActionsOpen(false); }}>
-                      <Users className="h-5 w-5 mr-3 text-orange-500" />
+                      <Users className="h-5 w-5 mr-3 text-indigo-500" />
                       Add Customer
                     </Button>
                   </div>
@@ -108,6 +118,20 @@ export default function SalesPage() {
                 >
                   <FileText className="h-4 w-4" />
                   Invoices
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="credit-notes"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <AlertCircle className="h-4 w-4" />
+                  Credit Notes
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="receipts"
+                  className="data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:border-primary border-b-2 border-transparent px-4 py-2 rounded-none shadow-none transition-all hover:text-primary flex items-center gap-2"
+                >
+                  <DollarSign className="h-4 w-4" />
+                  Receipts
                 </TabsTrigger>
                 <TabsTrigger 
                   value="quotes"
@@ -139,6 +163,14 @@ export default function SalesPage() {
 
             <TabsContent value="invoices">
               <SalesInvoices />
+            </TabsContent>
+
+            <TabsContent value="credit-notes">
+              <SalesCreditNotes />
+            </TabsContent>
+
+            <TabsContent value="receipts">
+              <SalesReceipts />
             </TabsContent>
 
             <TabsContent value="quotes">

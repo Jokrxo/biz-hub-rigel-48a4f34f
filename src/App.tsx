@@ -33,6 +33,8 @@ const Sales = lazy(() => import("./pages/Sales"));
 const Purchase = lazy(() => import("./pages/Purchase"));
 const Tax = lazy(() => import("./pages/Tax"));
 const Customers = lazy(() => import("./pages/Customers"));
+const CreditNotes = lazy(() => import("./pages/CreditNotes"));
+const Receipts = lazy(() => import("./pages/Receipts"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Bank = lazy(() => import("./pages/Bank"));
 const Budget = lazy(() => import("./pages/Budget"));
@@ -160,6 +162,11 @@ const App = () => {
               <Route path="/trial-balance" element={<Suspense fallback={<PageLoader />}><TrialBalance /></Suspense>} />
               <Route path="/reports" element={<Suspense fallback={<PageLoader />}><Reports /></Suspense>} />
               <Route path="/sales" element={<Suspense fallback={<PageLoader />}><Sales /></Suspense>} />
+              <Route path="/sales/customers" element={<Suspense fallback={<PageLoader />}><Customers /></Suspense>} />
+              <Route path="/sales/quotations" element={<Suspense fallback={<PageLoader />}><Quotes /></Suspense>} />
+              <Route path="/sales/invoices" element={<Suspense fallback={<PageLoader />}><Invoices /></Suspense>} />
+              <Route path="/sales/credit-notes" element={<Suspense fallback={<PageLoader />}><CreditNotes /></Suspense>} />
+              <Route path="/sales/receipts" element={<Suspense fallback={<PageLoader />}><Receipts /></Suspense>} />
               <Route path="/purchase" element={<Suspense fallback={<PageLoader />}><Purchase /></Suspense>} />
               <Route path="/tax" element={<Suspense fallback={<PageLoader />}><Tax /></Suspense>} />
               <Route path="/customers" element={<Suspense fallback={<PageLoader />}><Customers /></Suspense>} />

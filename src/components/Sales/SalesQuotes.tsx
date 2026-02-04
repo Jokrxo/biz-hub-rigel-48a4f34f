@@ -331,6 +331,7 @@ export const SalesQuotes = () => {
       // Create quote items
       const items = formData.items.map(item => ({
         quote_id: quote.id,
+        product_id: item.product_id || null,
         description: item.description,
         quantity: item.quantity,
         unit_price: item.unit_price,
@@ -361,6 +362,7 @@ export const SalesQuotes = () => {
 
   const resetForm = () => {
     setFormData({
+      customer_id: "",
       customer_name: "",
       customer_email: "",
       quote_date: new Date().toISOString().split("T")[0],
@@ -449,15 +451,20 @@ export const SalesQuotes = () => {
 
       // Copy quote items to invoice items
       if (quoteItems && quoteItems.length > 0) {
-        const invoiceItems = quoteItems.map(item => ({
-          invoice_id: invoice.id,
-          description: item.description,
-          quantity: item.quantity,
-          unit_price: item.unit_price,
-          tax_rate: item.tax_rate,
-          amount: item.amount,
-          item_type: 'product'
-        }));
+        const invoiceItems = quoteItems.map(item => {
+           // Determine item type based on products/services list
+           const isService = services.some((s: any) => s.id === item.product_id);
+           return {
+            invoice_id: invoice.id,
+            product_id: item.product_id,
+            description: item.description,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            tax_rate: item.tax_rate,
+            amount: item.amount,
+            item_type: isService ? 'service' : 'product'
+          };
+        });
 
         const { error: itemsError } = await supabase
           .from("invoice_items")
