@@ -29,6 +29,7 @@ interface Invoice {
   customer_id?: string;
   customer_name: string;
   customer_email: string | null;
+  po_number?: string | null;
   invoice_date: string;
   due_date: string | null;
   subtotal: number;
@@ -73,6 +74,7 @@ export const SalesInvoices = () => {
     customer_id: "",
     customer_name: "",
     customer_email: "",
+    po_number: "",
     invoice_date: new Date().toISOString().split("T")[0],
     due_date: "",
     notes: "",
@@ -312,6 +314,7 @@ export const SalesInvoices = () => {
         customer_id: invoice.customer_id || "",
         customer_name: invoice.customer_name,
         customer_email: invoice.customer_email || "",
+        po_number: (invoice as any).po_number || "",
         invoice_date: invoice.invoice_date.split('T')[0],
         due_date: invoice.due_date ? invoice.due_date.split('T')[0] : "",
         notes: invoice.notes || "",
@@ -454,6 +457,7 @@ export const SalesInvoices = () => {
               customer_id: formData.customer_id,
               customer_name: formData.customer_name,
               customer_email: formData.customer_email || null,
+              po_number: formData.po_number || null,
               invoice_date: formData.invoice_date,
               due_date: formData.due_date || null,
               subtotal: totals.subtotal,
@@ -479,6 +483,7 @@ export const SalesInvoices = () => {
                 invoice_number: invoiceNumber,
                 customer_name: formData.customer_name,
                 customer_email: formData.customer_email || null,
+                po_number: formData.po_number || null,
                 invoice_date: formData.invoice_date,
                 due_date: formData.due_date || null,
                 subtotal: totals.subtotal,
@@ -1099,6 +1104,7 @@ export const SalesInvoices = () => {
       customer_email: inv.customer_email || customer?.email || null,
       customer_address: customer?.address || null,
       customer_vat_number: customer?.vat_number || customer?.tax_number || null,
+      po_number: inv.po_number || null,
       notes: inv.notes || null,
       subtotal: inv.subtotal ?? inv.total_before_tax ?? 0,
       tax_amount: inv.tax_amount ?? inv.tax ?? 0,
@@ -1494,6 +1500,14 @@ export const SalesInvoices = () => {
                 </div>
               </div>
               <div>
+                <Label>PO Number</Label>
+                <Input
+                  value={formData.po_number || ""}
+                  onChange={(e) => setFormData({ ...formData, po_number: e.target.value })}
+                  placeholder="Purchase Order #"
+                />
+              </div>
+              <div>
                 <Label>Notes</Label>
                 <Textarea
                   value={formData.notes}
@@ -1637,6 +1651,12 @@ export const SalesInvoices = () => {
                       <div>{new Date(viewInvoice.invoice_date).toLocaleDateString('en-ZA')}</div>
                       <div className="text-muted-foreground font-medium">Due Date:</div>
                       <div>{viewInvoice.due_date ? new Date(viewInvoice.due_date).toLocaleDateString('en-ZA') : 'Due on Receipt'}</div>
+                      {viewInvoice.po_number && (
+                        <>
+                          <div className="text-muted-foreground font-medium">PO Number:</div>
+                          <div>{viewInvoice.po_number}</div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>

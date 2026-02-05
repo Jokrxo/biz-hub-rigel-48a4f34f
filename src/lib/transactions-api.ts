@@ -440,7 +440,7 @@ export const transactionsApi = {
           const isProd = String(it.item_type || '').toLowerCase() === 'product';
           if (!isProd) return;
           let cp = costMap.get(String(it.product_id)) || 0;
-          if (!cp || cp <= 0) cp = Number(it.unit_price || 0); // fallback to sales price when cost missing
+          // if (!cp || cp <= 0) cp = Number(it.unit_price || 0); // Removed fallback: cost is 0 if missing
           const qty = Number(it.quantity || 0);
           const itemCost = cp * qty;
           console.log(`Item: ${it.description}, Cost: ${cp}, Qty: ${qty}, Total: ${itemCost}`);
@@ -470,7 +470,7 @@ export const transactionsApi = {
           (invItems || []).forEach((it: any) => {
             if (String(it.item_type || '').toLowerCase() !== 'product') return;
             let cp = costByName.get(String(it.description || '')) || 0;
-            if (!cp || cp <= 0) cp = Number(it.unit_price || 0);
+            // if (!cp || cp <= 0) cp = Number(it.unit_price || 0); // Removed fallback
             const qty = Number(it.quantity || 0);
             const itemCost = cp * qty;
             console.log(`Item by name: ${it.description}, Cost: ${cp}, Qty: ${qty}, Total: ${itemCost}`);
@@ -910,12 +910,13 @@ export const transactionsApi = {
     monthEnd.setDate(monthEnd.getDate() - 1);
     const monthEndStr = monthEnd.toISOString().slice(0,10);
     const { data: interestDup } = await supabase
-      .from('loan_payments')
+      .from('transactions')
       .select('id')
-      .eq('loan_id', opts.loanId)
-      .gte('payment_date', monthStartStr)
-      .lt('payment_date', nextMonthStr)
-      .gt('interest_component', 0);
+      .eq('company_id', companyId)
+      .eq('reference_number', loan.reference)
+      .eq('transaction_type', 'loan_interest')
+      .gte('transaction_date', monthStartStr)
+      .lt('transaction_date', nextMonthStr);
     if ((interestDup || []).length > 0) throw new Error('Interest installment for this month is already recorded');
     const computed = Number(loan.outstanding_balance || 0) * Number(loan.interest_rate || 0) / 12;
     const amt = opts.amountOverride != null ? Number(opts.amountOverride) : computed;

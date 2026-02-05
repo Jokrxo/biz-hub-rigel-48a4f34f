@@ -20,6 +20,7 @@ interface Receipt {
   amount: number;
   payment_method: string;
   status: string;
+  po_number?: string;
   customer?: { name: string };
 }
 
@@ -40,6 +41,7 @@ export const SalesReceipts = () => {
     amount: 0,
     payment_method: "EFT",
     reference: "",
+    po_number: "",
     allocations: {} as Record<string, number> // invoice_id -> amount
   });
 
@@ -128,6 +130,7 @@ export const SalesReceipts = () => {
           amount: formData.amount,
           payment_method: formData.payment_method,
           reference: formData.reference,
+          po_number: formData.po_number,
           status: 'draft',
           created_by: user?.id
         })
@@ -203,6 +206,7 @@ export const SalesReceipts = () => {
             <TableHeader>
               <TableRow>
                 <TableHead>Number</TableHead>
+                <TableHead>PO Number</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Customer</TableHead>
                 <TableHead>Method</TableHead>
@@ -215,6 +219,7 @@ export const SalesReceipts = () => {
               {receipts.map((rec) => (
                 <TableRow key={rec.id}>
                   <TableCell className="font-medium">{rec.receipt_number}</TableCell>
+                  <TableCell>{rec.po_number || '-'}</TableCell>
                   <TableCell>{rec.receipt_date}</TableCell>
                   <TableCell>{rec.customer?.name}</TableCell>
                   <TableCell>{rec.payment_method}</TableCell>
@@ -269,6 +274,14 @@ export const SalesReceipts = () => {
                   type="date" 
                   value={formData.receipt_date}
                   onChange={(e) => setFormData({...formData, receipt_date: e.target.value})}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>PO Number</Label>
+                <Input 
+                  value={formData.po_number}
+                  onChange={(e) => setFormData({...formData, po_number: e.target.value})}
+                  placeholder="Optional"
                 />
               </div>
             </div>

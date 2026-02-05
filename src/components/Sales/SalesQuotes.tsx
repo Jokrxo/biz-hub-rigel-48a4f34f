@@ -25,6 +25,7 @@ interface Quote {
   quote_number: string;
   customer_name: string;
   customer_email: string | null;
+  po_number?: string | null;
   quote_date: string;
   expiry_date: string | null;
   subtotal: number;
@@ -50,6 +51,7 @@ export const SalesQuotes = () => {
     customer_id: "",
     customer_name: "",
     customer_email: "",
+    po_number: "",
     quote_date: new Date().toISOString().split("T")[0],
     expiry_date: "",
     notes: "",
@@ -279,6 +281,7 @@ export const SalesQuotes = () => {
             customer_id: formData.customer_id,
             customer_name: formData.customer_name,
             customer_email: formData.customer_email || null,
+            po_number: formData.po_number || null,
             quote_date: formData.quote_date,
             expiry_date: formData.expiry_date || null,
             subtotal: totals.subtotal,
@@ -303,6 +306,7 @@ export const SalesQuotes = () => {
               quote_number: quoteNumber,
               customer_name: formData.customer_name,
               customer_email: formData.customer_email || null,
+              po_number: formData.po_number || null,
               quote_date: formData.quote_date,
               expiry_date: formData.expiry_date || null,
               subtotal: totals.subtotal,
@@ -366,6 +370,7 @@ export const SalesQuotes = () => {
       customer_id: "",
       customer_name: "",
       customer_email: "",
+      po_number: "",
       quote_date: new Date().toISOString().split("T")[0],
       expiry_date: "",
       notes: "",
@@ -405,7 +410,9 @@ export const SalesQuotes = () => {
             customer_id: quote.customer_id, // Link to customer
             customer_name: quote.customer_name,
             customer_email: quote.customer_email,
+            po_number: quote.po_number || null,
             invoice_date: new Date().toISOString().split("T")[0],
+            due_date: quote.expiry_date || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
             subtotal: quote.subtotal,
             tax_amount: quote.tax_amount,
             total_amount: quote.total_amount,
@@ -429,7 +436,9 @@ export const SalesQuotes = () => {
               invoice_number: invoiceNumber,
               customer_name: quote.customer_name,
               customer_email: quote.customer_email,
+              po_number: quote.po_number || null,
               invoice_date: new Date().toISOString().split("T")[0],
+              due_date: quote.expiry_date || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
               subtotal: quote.subtotal,
               tax_amount: quote.tax_amount,
               total_amount: quote.total_amount,
@@ -534,6 +543,7 @@ export const SalesQuotes = () => {
     expiry_date: q.expiry_date || null,
     customer_name: q.customer_name || 'Customer',
     customer_email: q.customer_email || null,
+    po_number: q.po_number || null,
     notes: q.notes || null,
     subtotal: q.subtotal ?? (q.total_amount ?? 0) - (q.tax_amount ?? 0),
     tax_amount: q.tax_amount ?? 0,
@@ -881,6 +891,14 @@ export const SalesQuotes = () => {
                   value={formData.customer_email}
                   onChange={(e) => setFormData({ ...formData, customer_email: e.target.value })}
                   placeholder="customer@example.com"
+                />
+              </div>
+              <div>
+                <Label>PO Number</Label>
+                <Input
+                  value={formData.po_number || ""}
+                  onChange={(e) => setFormData({ ...formData, po_number: e.target.value })}
+                  placeholder="Purchase Order #"
                 />
               </div>
             </div>

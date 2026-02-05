@@ -9,6 +9,7 @@ export interface InvoiceForPDF {
   customer_email?: string | null;
   customer_address?: string | null;
   customer_vat_number?: string | null;
+  po_number?: string | null;
   notes?: string | null;
   subtotal: number;
   tax_amount: number;
@@ -122,6 +123,9 @@ export const buildInvoicePDF = (
   };
 
   addMetaRow("Invoice #:", invoice.invoice_number);
+  if (invoice.po_number) {
+    addMetaRow("PO Number:", invoice.po_number);
+  }
   addMetaRow("Date:", new Date(invoice.invoice_date).toLocaleDateString('en-ZA'));
   addMetaRow("Due Date:", invoice.due_date ? new Date(invoice.due_date).toLocaleDateString('en-ZA') : 'Due on Receipt');
   

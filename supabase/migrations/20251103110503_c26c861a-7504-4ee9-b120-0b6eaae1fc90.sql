@@ -206,7 +206,10 @@ BEGIN
         COALESCE(v_entry.description, v_transaction.description),
         v_entry.debit,
         0,
-        COALESCE(v_transaction.transaction_type, 'standard'),
+        CASE 
+          WHEN v_transaction.transaction_type IN ('standard', 'adjustment', 'closing', 'tax', 'vat', 'paye', 'opening_balance') THEN v_transaction.transaction_type 
+          ELSE 'standard' 
+        END,
         v_transaction.user_id,
         'Auto-posted from transaction ' || NEW.id
       );
@@ -235,7 +238,10 @@ BEGIN
         COALESCE(v_entry.description, v_transaction.description),
         0,
         v_entry.credit,
-        COALESCE(v_transaction.transaction_type, 'standard'),
+        CASE 
+          WHEN v_transaction.transaction_type IN ('standard', 'adjustment', 'closing', 'tax', 'vat', 'paye', 'opening_balance') THEN v_transaction.transaction_type 
+          ELSE 'standard' 
+        END,
         v_transaction.user_id,
         'Auto-posted from transaction ' || NEW.id
       );
