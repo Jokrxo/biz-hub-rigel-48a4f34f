@@ -121,6 +121,7 @@ export type Database = {
       companies: {
         Row: {
           address: string | null
+          code: string | null
           created_at: string
           email: string | null
           id: string
@@ -133,6 +134,7 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          code?: string | null
           created_at?: string
           email?: string | null
           id?: string
@@ -145,6 +147,7 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          code?: string | null
           created_at?: string
           email?: string | null
           id?: string
@@ -451,27 +454,39 @@ export type Database = {
         Row: {
           company_id: string | null
           created_at: string
+          email: string | null
+          first_name: string | null
           full_name: string | null
           id: string
+          last_name: string | null
           role: string | null
+          subscription_status: string | null
           updated_at: string
           user_id: string
         }
         Insert: {
           company_id?: string | null
           created_at?: string
+          email?: string | null
+          first_name?: string | null
           full_name?: string | null
           id?: string
+          last_name?: string | null
           role?: string | null
+          subscription_status?: string | null
           updated_at?: string
           user_id: string
         }
         Update: {
           company_id?: string | null
           created_at?: string
+          email?: string | null
+          first_name?: string | null
           full_name?: string | null
           id?: string
+          last_name?: string | null
           role?: string | null
+          subscription_status?: string | null
           updated_at?: string
           user_id?: string
         }
@@ -636,6 +651,41 @@ export type Database = {
           },
           {
             foreignKeyName: "transactions_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          role: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          id?: string
+          role?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          role?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_roles_company_id_fkey"
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
