@@ -4,16 +4,31 @@ import type { Database } from './types';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-let lsUrl: string | null = null;
-let lsKey: string | null = null;
+
+// Clear stale localStorage credentials that might conflict with env vars
 try {
-  lsUrl = typeof localStorage !== 'undefined' ? localStorage.getItem('supabase_url') : null;
-  lsKey = typeof localStorage !== 'undefined' ? localStorage.getItem('supabase_anon_key') : null;
+  if (typeof localStorage !== 'undefined') {
+    const storedUrl = localStorage.getItem('supabase_url');
+    const storedKey = localStorage.getItem('supabase_anon_key');
+    // If env vars are set and differ from localStorage, clear stale values
+    if (SUPABASE_URL && storedUrl && storedUrl !== SUPABASE_URL) {
+      localStorage.removeItem('supabase_url');
+      localStorage.removeItem('supabase_anon_key');
+    }
+    if (SUPABASE_PUBLISHABLE_KEY && storedKey && storedKey !== SUPABASE_PUBLISHABLE_KEY) {
+      localStorage.removeItem('supabase_url');
+      localStorage.removeItem('supabase_anon_key');
+    }
+  }
 } catch {}
+
 const FALLBACK_URL = 'https://example.supabase.co';
 const FALLBACK_KEY = 'public-anon-key';
-const effectiveUrl = SUPABASE_URL || lsUrl || FALLBACK_URL;
-const effectiveKey = SUPABASE_PUBLISHABLE_KEY || lsKey || FALLBACK_KEY;
+
+// Always prioritize environment variables over localStorage
+const effectiveUrl = SUPABASE_URL || FALLBACK_URL;
+const effectiveKey = SUPABASE_PUBLISHABLE_KEY || FALLBACK_KEY;
+
 const containsService = typeof effectiveKey === 'string' && effectiveKey.toLowerCase().includes('service');
 const finalUrl = containsService ? FALLBACK_URL : effectiveUrl;
 const finalKey = containsService ? FALLBACK_KEY : effectiveKey;
