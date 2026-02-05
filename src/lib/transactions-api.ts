@@ -439,7 +439,7 @@ export const transactionsApi = {
         (invItems || []).forEach((it: any) => {
           const isProd = String(it.item_type || '').toLowerCase() === 'product';
           if (!isProd) return;
-          let cp = costMap.get(String(it.product_id)) || 0;
+          const cp = costMap.get(String(it.product_id)) || 0;
           // if (!cp || cp <= 0) cp = Number(it.unit_price || 0); // Removed fallback: cost is 0 if missing
           const qty = Number(it.quantity || 0);
           const itemCost = cp * qty;
@@ -469,7 +469,7 @@ export const transactionsApi = {
           (prodByName || []).forEach((p: any) => costByName.set(String(p.name || ''), Number(p.cost_price || 0)));
           (invItems || []).forEach((it: any) => {
             if (String(it.item_type || '').toLowerCase() !== 'product') return;
-            let cp = costByName.get(String(it.description || '')) || 0;
+            const cp = costByName.get(String(it.description || '')) || 0;
             // if (!cp || cp <= 0) cp = Number(it.unit_price || 0); // Removed fallback
             const qty = Number(it.quantity || 0);
             const itemCost = cp * qty;

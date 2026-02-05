@@ -150,7 +150,7 @@ export const CompanyList = () => {
 
       // 3. Fetch Profiles for the found admins
       const userIds = [...new Set((rolesData || []).map((r: any) => r.user_id))];
-      let profilesMap: Record<string, any> = {};
+      const profilesMap: Record<string, any> = {};
       
       if (userIds.length > 0) {
         const { data: profilesData, error: profilesError } = await supabase

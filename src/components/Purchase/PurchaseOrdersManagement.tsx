@@ -398,7 +398,7 @@ export const PurchaseOrdersManagement = () => {
     setIsAdjusting(true);
     try {
       // 1. Find original transactions linked to this PO
-      let reversalEntries: any[] = [];
+      const reversalEntries: any[] = [];
       let originalTxIds: string[] = [];
 
       if (poToAdjust.po_number) {
