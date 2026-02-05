@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
 const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -27,7 +27,10 @@ const jsonResponse = (data: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
-async function getCompanyId(client: ReturnType<typeof createClient>): Promise<string> {
+// deno-lint-ignore no-explicit-any
+type AnySupabaseClient = SupabaseClient<any, any, any>;
+
+async function getCompanyId(client: AnySupabaseClient): Promise<string> {
   const { data: { user } } = await client.auth.getUser();
   if (!user?.id) throw new Error("Not authenticated");
   const { data, error } = await client
@@ -40,7 +43,7 @@ async function getCompanyId(client: ReturnType<typeof createClient>): Promise<st
   return String(data.company_id);
 }
 
-async function getSettings(client: ReturnType<typeof createClient>, companyId: string) {
+async function getSettings(client: AnySupabaseClient, companyId: string) {
   const { data } = await client
     .from("impairment_settings")
     .select("*")
@@ -74,7 +77,7 @@ function pickAccount(
   return byName?.id || null;
 }
 
-async function ensureAccount(client: ReturnType<typeof createClient>, companyId: string, desired: { code: string; name: string; type: "asset" | "liability" | "expense" | "revenue" | "equity"; normal_balance?: "debit" | "credit" }) {
+async function ensureAccount(client: AnySupabaseClient, companyId: string, desired: { code: string; name: string; type: "asset" | "liability" | "expense" | "revenue" | "equity"; normal_balance?: "debit" | "credit" }) {
   const { data: found } = await client
     .from("chart_of_accounts")
     .select("id")
@@ -92,7 +95,7 @@ async function ensureAccount(client: ReturnType<typeof createClient>, companyId:
   return String((created as any)?.id || "");
 }
 
-async function getAccountsList(client: ReturnType<typeof createClient>, companyId: string) {
+async function getAccountsList(client: AnySupabaseClient, companyId: string) {
   const { data: accounts } = await client
     .from("chart_of_accounts")
     .select("id, account_name, account_type, account_code, is_active")
@@ -106,7 +109,7 @@ async function getAccountsList(client: ReturnType<typeof createClient>, companyI
   }));
 }
 
-async function previewReceivables(client: ReturnType<typeof createClient>, companyId: string, periodEnd: string) {
+async function previewReceivables(client: AnySupabaseClient, companyId: string, periodEnd: string) {
   const settings = await getSettings(client, companyId);
   const end = new Date(periodEnd);
   const { data: invoices } = await client
@@ -137,7 +140,7 @@ async function previewReceivables(client: ReturnType<typeof createClient>, compa
   return { settings, items: list, summary: totals };
 }
 
-async function postReceivables(client: ReturnType<typeof createClient>, companyId: string, userId: string, periodEnd: string, preview: any) {
+async function postReceivables(client: AnySupabaseClient, companyId: string, userId: string, periodEnd: string, preview: any) {
   const { data: existingCalc } = await client
     .from("impairment_calculations")
     .select("id")
@@ -217,7 +220,7 @@ async function postReceivables(client: ReturnType<typeof createClient>, companyI
   return { posted: true, transaction_id: txId, total };
 }
 
-async function previewAssets(client: ReturnType<typeof createClient>, companyId: string, periodEnd: string, params: any) {
+async function previewAssets(client: AnySupabaseClient, companyId: string, periodEnd: string, params: any) {
   const recMap: Record<string, number> = (params?.recoverables || []).reduce((acc: Record<string, number>, r: any) => {
     acc[String(r.asset_id)] = Number(r.recoverable_amount || 0);
     return acc;
@@ -240,7 +243,7 @@ async function previewAssets(client: ReturnType<typeof createClient>, companyId:
   return { items, summary };
 }
 
-async function postAssets(client: ReturnType<typeof createClient>, companyId: string, userId: string, periodEnd: string, preview: any) {
+async function postAssets(client: AnySupabaseClient, companyId: string, userId: string, periodEnd: string, preview: any) {
   const { data: existingCalc } = await client
     .from("impairment_calculations")
     .select("id")
@@ -320,7 +323,7 @@ async function postAssets(client: ReturnType<typeof createClient>, companyId: st
   return { posted: true, transaction_id: txId, total };
 }
 
-async function previewInventory(client: ReturnType<typeof createClient>, companyId: string, periodEnd: string, params: any) {
+async function previewInventory(client: AnySupabaseClient, companyId: string, periodEnd: string, params: any) {
   const nrvMap: Record<string, number> = (params?.nrv || []).reduce((acc: Record<string, number>, r: any) => {
     acc[String(r.item_id)] = Number(r.nrv_per_unit || 0);
     return acc;
@@ -345,7 +348,7 @@ async function previewInventory(client: ReturnType<typeof createClient>, company
   return { items: rows, summary };
 }
 
-async function postInventory(client: ReturnType<typeof createClient>, companyId: string, userId: string, periodEnd: string, preview: any) {
+async function postInventory(client: AnySupabaseClient, companyId: string, userId: string, periodEnd: string, preview: any) {
   const { data: existingCalc } = await client
     .from("impairment_calculations")
     .select("id")
@@ -427,7 +430,10 @@ async function postInventory(client: ReturnType<typeof createClient>, companyId:
 
 Deno.serve(async (req) => {
   try {
-    const client = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: req.headers } });
+    const authHeader = req.headers.get("Authorization") || "";
+    const client = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
     const body = (await req.json()) as RequestBody;
     const periodEnd = body.period_end;
     if (!periodEnd) return jsonResponse({ error: "period_end is required" }, 400);
@@ -542,7 +548,8 @@ Deno.serve(async (req) => {
       default:
         return jsonResponse({ error: "Unknown action" }, 400);
     }
-  } catch (e) {
-    return jsonResponse({ error: e?.message || String(e) }, 500);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
+    return jsonResponse({ error: message }, 500);
   }
 });
