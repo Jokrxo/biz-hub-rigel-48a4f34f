@@ -123,7 +123,9 @@ export type Database = {
           address: string | null
           code: string | null
           created_at: string
+          default_currency: string | null
           email: string | null
+          fiscal_year_start: number | null
           id: string
           logo_url: string | null
           name: string
@@ -136,7 +138,9 @@ export type Database = {
           address?: string | null
           code?: string | null
           created_at?: string
+          default_currency?: string | null
           email?: string | null
+          fiscal_year_start?: number | null
           id?: string
           logo_url?: string | null
           name: string
@@ -149,7 +153,9 @@ export type Database = {
           address?: string | null
           code?: string | null
           created_at?: string
+          default_currency?: string | null
           email?: string | null
+          fiscal_year_start?: number | null
           id?: string
           logo_url?: string | null
           name?: string
@@ -496,6 +502,122 @@ export type Database = {
             columns: ["company_id"]
             isOneToOne: false
             referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchase_order_items: {
+        Row: {
+          amount: number | null
+          created_at: string
+          description: string
+          id: string
+          purchase_order_id: string
+          quantity: number | null
+          tax_rate: number | null
+          unit_price: number | null
+        }
+        Insert: {
+          amount?: number | null
+          created_at?: string
+          description: string
+          id?: string
+          purchase_order_id: string
+          quantity?: number | null
+          tax_rate?: number | null
+          unit_price?: number | null
+        }
+        Update: {
+          amount?: number | null
+          created_at?: string
+          description?: string
+          id?: string
+          purchase_order_id?: string
+          quantity?: number | null
+          tax_rate?: number | null
+          unit_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_order_items_purchase_order_id_fkey"
+            columns: ["purchase_order_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchase_orders: {
+        Row: {
+          company_id: string
+          created_at: string
+          created_by: string | null
+          currency: string | null
+          due_date: string | null
+          exchange_rate: number | null
+          id: string
+          notes: string | null
+          po_date: string
+          po_number: string
+          status: string | null
+          subtotal: number | null
+          supplier_id: string | null
+          supplier_name: string | null
+          tax_amount: number | null
+          total_amount: number | null
+          updated_at: string
+        }
+        Insert: {
+          company_id: string
+          created_at?: string
+          created_by?: string | null
+          currency?: string | null
+          due_date?: string | null
+          exchange_rate?: number | null
+          id?: string
+          notes?: string | null
+          po_date: string
+          po_number: string
+          status?: string | null
+          subtotal?: number | null
+          supplier_id?: string | null
+          supplier_name?: string | null
+          tax_amount?: number | null
+          total_amount?: number | null
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          created_by?: string | null
+          currency?: string | null
+          due_date?: string | null
+          exchange_rate?: number | null
+          id?: string
+          notes?: string | null
+          po_date?: string
+          po_number?: string
+          status?: string | null
+          subtotal?: number | null
+          supplier_id?: string | null
+          supplier_name?: string | null
+          tax_amount?: number | null
+          total_amount?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_orders_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
             referencedColumns: ["id"]
           },
         ]
