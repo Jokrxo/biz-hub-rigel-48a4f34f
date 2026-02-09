@@ -30,7 +30,7 @@ import {
   Filter,
   Check
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";

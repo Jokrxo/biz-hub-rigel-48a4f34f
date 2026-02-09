@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { toast } from "@/hooks/use-toast";
 import logo from "@/assets/logo.png";
 import { Key, RefreshCw, CheckCircle2, Clock, Users, Calendar, Shield, CreditCard, Star, Mail, Phone, Info, Download } from "lucide-react";

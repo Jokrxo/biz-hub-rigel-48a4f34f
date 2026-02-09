@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 
 export const getEMP201 = async (company_id: string, period_start: string, period_end: string) => {
   const { data: runs } = await supabase.from("pay_runs" as any).select("id").eq("company_id", company_id).gte("period_start", period_start).lte("period_end", period_end);

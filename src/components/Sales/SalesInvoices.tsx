@@ -596,6 +596,7 @@ export const SalesInvoices = () => {
       customer_id: "",
       customer_name: "",
       customer_email: "",
+      po_number: "",
       invoice_date: new Date().toISOString().split("T")[0],
       due_date: "",
       notes: "",

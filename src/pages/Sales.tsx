@@ -5,7 +5,7 @@ import SEO from "@/components/SEO";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Info, Plus, FileText, Package, LayoutDashboard, Receipt, Users } from "lucide-react";
+import { Info, Plus, FileText, Package, LayoutDashboard, Receipt, Users, AlertCircle, DollarSign } from "lucide-react";
 import { ARDashboard } from "@/components/Sales/ARDashboard";
 import { SalesInvoices } from "@/components/Sales/SalesInvoices";
 import { SalesQuotes } from "@/components/Sales/SalesQuotes";

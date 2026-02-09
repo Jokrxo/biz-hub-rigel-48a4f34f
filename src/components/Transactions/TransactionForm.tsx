@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { AlertTriangle, CheckCircle2, Building2, AlertCircle, Loader2, Check, XCircle, Briefcase, Info, History } from "lucide-react";
 
 // Loan calculation function

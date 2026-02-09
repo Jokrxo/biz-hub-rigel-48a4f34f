@@ -12,7 +12,7 @@ import { useAuth } from "@/context/useAuth";
 import { useNavigate, Link, useSearchParams } from "react-router-dom";
 import SEO from "@/components/SEO";
 import { useToast } from "@/components/ui/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { ArrowRight, Check, X } from "lucide-react";
 import signupBg from "@/assets/background-picture.jpg";
 

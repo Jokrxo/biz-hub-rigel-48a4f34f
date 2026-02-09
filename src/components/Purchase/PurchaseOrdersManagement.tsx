@@ -18,7 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { transactionsApi } from "@/lib/transactions-api";
 import { TransactionFormEnhanced } from "@/components/Transactions/TransactionFormEnhanced";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";

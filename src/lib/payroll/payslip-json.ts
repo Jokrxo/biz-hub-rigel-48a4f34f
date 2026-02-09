@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { PayslipJSON } from "./types";
 
 export const buildPayslipJSON = async (pay_run_id: string, employee_id: string): Promise<PayslipJSON> => {

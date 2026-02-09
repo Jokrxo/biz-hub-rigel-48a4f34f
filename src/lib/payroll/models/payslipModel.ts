@@ -1,5 +1,6 @@
-import { supabase } from "@/integrations/supabase/client";
-import { buildPayslipPDF, addLogoToPDF } from "../payslip-export";
+import { supabase } from "@/lib/supabase";
+import { buildPayslipPDF } from "../../payslip-export";
+const addLogoToPDF = (doc: any, logo: string) => { try { doc.addImage(logo, 'PNG', 14, 10, 40, 40); } catch {} };
 
 export type PayslipRequest = { pay_run_id: string; employee_id: string };
 

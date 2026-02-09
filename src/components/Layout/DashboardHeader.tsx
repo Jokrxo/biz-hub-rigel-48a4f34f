@@ -11,7 +11,7 @@ import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { Bell, Menu, Search, LogOut, Building2, Settings, User, CreditCard, PanelLeft, CheckCheck, Trash2, Info, CheckCircle2, AlertCircle, X, Calendar } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
