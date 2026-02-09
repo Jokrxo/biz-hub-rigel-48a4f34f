@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 
 export type PeriodData = { period_start: string; period_end: string; gross: number; taxableAllowances?: number; fringeBenefits?: number };
 

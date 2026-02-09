@@ -16,7 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Plus, Search, Filter, Download, Edit, Receipt, ArrowUpDown, Calendar, CheckCircle, XCircle, MoreHorizontal, Loader2, TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownLeft, Copy, FileText, Paperclip, Eye, SlidersHorizontal, ShoppingCart, FileSpreadsheet, Landmark, Percent, ArrowLeft, PieChart, CreditCard, Upload, AlertTriangle, AlertOctagon, RefreshCw, History, Trash2, Check, ChevronsUpDown, BookOpen } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 // Lazy-load the enhanced transaction form to avoid route-level stalls if it errors
 const TransactionFormLazy = lazy(() =>
   import("./TransactionFormEnhanced").then((m) => ({ default: m.TransactionFormEnhanced }))

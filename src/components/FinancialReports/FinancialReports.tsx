@@ -20,7 +20,7 @@ import {
   Activity,
   Loader2
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { exportFinancialReportToExcel, exportFinancialReportToPDF } from "@/lib/export-utils";
 import type { FinancialReportLine } from "@/lib/export-utils";

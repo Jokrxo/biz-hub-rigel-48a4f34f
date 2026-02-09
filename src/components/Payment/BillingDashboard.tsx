@@ -17,7 +17,8 @@ import {
   RefreshCw,
   Settings
 } from 'lucide-react';
-import { formatPrice } from '@/utils/subscriptionPlans';
+// import { formatPrice } from '@/utils/subscriptionPlans';
+const formatPrice = (amount: number) => `R ${(amount / 100).toFixed(2)}`;
 
 interface BillingHistoryItem {
   id: string;

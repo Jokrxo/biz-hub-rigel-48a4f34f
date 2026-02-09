@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/context/useAuth";
 import { useToast } from "@/hooks/use-toast";
 import { useRoles } from "@/hooks/use-roles";
@@ -407,7 +407,7 @@ export const SalesQuotes = () => {
             company_id: profile!.company_id,
             quote_id: quoteId,
             invoice_number: invoiceNumber,
-            customer_id: quote.customer_id, // Link to customer
+            customer_id: (quote as any).customer_id, // Link to customer
             customer_name: quote.customer_name,
             customer_email: quote.customer_email,
             po_number: quote.po_number || null,
@@ -496,7 +496,7 @@ export const SalesQuotes = () => {
       toast({ title: "Success", description: "Quote converted to invoice successfully" });
       setIsSubmitting(false);
       loadData();
-      navigate(`/sales?tab=invoices&action=edit&id=${invoice.id}`);
+      window.location.href = `/sales?tab=invoices&action=edit&id=${invoice.id}`;
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
       setIsSubmitting(false);
@@ -537,7 +537,7 @@ export const SalesQuotes = () => {
     return data as any;
   };
 
-  const mapQuoteForPDF = (q: any): QuoteForPDF => ({
+  const mapQuoteForPDF = (q: any): any => ({
     quote_number: q.quote_number || String(q.id),
     quote_date: q.quote_date || new Date().toISOString(),
     expiry_date: q.expiry_date || null,

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FileText, AlertCircle, CheckCircle, Clock } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 
 type StatusScope = 'sent_overdue' | 'include_draft';
@@ -24,27 +24,6 @@ export const SalesOverviewReal = () => {
     days90plus: 0
   });
   const [statusScope, setStatusScope] = useState<StatusScope>('sent_overdue');
-
-  useEffect(() => {
-    loadSalesData();
-
-    // Real-time updates
-    const channel = supabase
-      .channel('sales-overview-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => {
-        loadSalesData();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => {
-        loadSalesData();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [loadSalesData]);
-
-  useEffect(() => { loadSalesData(); }, [loadSalesData]);
 
   const loadSalesData = useCallback(async () => {
     try {
@@ -130,6 +109,16 @@ export const SalesOverviewReal = () => {
       setLoading(false);
     }
   }, [statusScope, toast]);
+
+  useEffect(() => {
+    loadSalesData();
+    const channel = supabase
+      .channel('sales-overview-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices' }, () => loadSalesData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'quotes' }, () => loadSalesData())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [loadSalesData]);
 
   const formatCurrency = (value: number) => {
     return `R ${value.toLocaleString('en-ZA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

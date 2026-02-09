@@ -1,4 +1,4 @@
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from '@/lib/supabase';
 import { emitDashboardCacheInvalidation } from '@/stores/dashboardCache';
 
 export interface TransactionRow {

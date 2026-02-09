@@ -1,4 +1,4 @@
-import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
+import { supabase, hasSupabaseEnv } from "@/lib/supabase";
 
 const uuid = () => {
   try { return crypto.randomUUID(); } catch {}

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
+import { supabase, hasSupabaseEnv } from "@/lib/supabase";
 import type { User } from "@supabase/supabase-js";
 import AuthContext, { AuthContextValue } from "./AuthContextBase";
 import { enableDemoMode, disableDemoMode } from "@/lib/demo-data";

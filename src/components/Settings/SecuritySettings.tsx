@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
+import { supabase, hasSupabaseEnv } from "@/lib/supabase";
 import { useAuth } from "@/context/useAuth";
 import { Lock, Mail, LogOut, ShieldCheck, Smartphone, Globe, ShieldAlert, History, Key, CheckCircle2, XCircle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";

@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, FileSpreadsheet, FileText, RefreshCw, Loader2, ArrowUpRight, ArrowDownLeft, Scale, Filter, FolderTree, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { exportToExcel, exportToPDF } from "@/lib/export-utils";
 
 interface TrialBalanceEntry {
@@ -208,12 +208,12 @@ export const TrialBalanceAutoGenerate = () => {
   };
 
   const handleExportExcel = () => {
-    exportToExcel(entries, `trial_balance_${periodType}_${selectedYear}`);
+    exportToExcel(entries as any, `trial_balance_${periodType}_${selectedYear}`);
     toast({ title: "Success", description: "Trial balance exported to Excel" });
   };
 
   const handleExportPDF = () => {
-    exportToPDF(entries, `trial_balance_${periodType}_${selectedYear}`);
+    exportToPDF(entries as any, `trial_balance_${periodType}_${selectedYear}`);
     toast({ title: "Success", description: "Trial balance exported to PDF" });
   };
 

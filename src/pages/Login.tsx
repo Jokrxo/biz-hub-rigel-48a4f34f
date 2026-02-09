@@ -10,7 +10,7 @@ import { useAuth } from "@/context/useAuth";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import SEO from "@/components/SEO";
 import { useToast } from "@/components/ui/use-toast";
-import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
+import { supabase, hasSupabaseEnv } from "@/lib/supabase";
 import { Github, Users, ArrowRight, CheckCircle2 } from "lucide-react";
 import { enableDemoMode } from "@/lib/demo-data";
 import signupBg from "@/assets/stella-sign-up.jpg";

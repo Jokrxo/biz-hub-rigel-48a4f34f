@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { calculatePAYE } from "../services/taxService";
 
 export type ProcessInput = { company_id: string; employee_id: string; period_start: string; period_end: string; pay_run_id?: string | null };

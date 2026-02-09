@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Shield, UserPlus, Trash2, Edit, Check, X } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
@@ -452,9 +452,9 @@ export const AdministrationSettings = () => {
                         <div key={module.id} className="flex items-start space-x-2 p-2 hover:bg-muted rounded-md transition-colors">
                           <Checkbox 
                             id={`module-${module.id}`} 
-                            checked={newUser.role === 'administrator' ? true : newUser.modules.includes(module.id)}
+                            checked={(newUser.role as string) === 'administrator' ? true : newUser.modules.includes(module.id)}
                             onCheckedChange={() => toggleModule(module.id)}
-                            disabled={newUser.role === 'administrator'}
+                            disabled={(newUser.role as string) === 'administrator'}
                           />
                           <div className="grid gap-1.5 leading-none">
                             <label

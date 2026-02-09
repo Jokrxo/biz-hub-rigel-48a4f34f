@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
@@ -369,7 +369,7 @@ export const GAAPFinancialStatements = () => {
       setLoadingProgress(20);
 
       const demo = isDemoMode();
-      const tbData = demo ? demoTBPeriod(periodStart, periodEnd) : await fetchTrialBalanceForPeriod(companyProfile.company_id, periodStart, periodEnd);
+      const tbData: any[] = await (demo ? Promise.resolve(demoTBPeriod(periodStart, periodEnd)) : fetchTrialBalanceForPeriod(companyProfile.company_id, periodStart, periodEnd));
       const normalized = (tbData || []).map((r: any) => ({
         account_id: String(r.account_id || ''),
         account_code: String(r.account_code || ''),
@@ -398,7 +398,7 @@ export const GAAPFinancialStatements = () => {
 
       setLoadingProgress(60);
 
-      const tbAsOf = demo ? demoTBAsOf(periodEnd) : await fetchTrialBalanceAsOf(companyProfile.company_id, periodEnd);
+      const tbAsOf: any[] = await (demo ? Promise.resolve(demoTBAsOf(periodEnd)) : fetchTrialBalanceAsOf(companyProfile.company_id, periodEnd));
       const normalizedAsOf = (tbAsOf || []).map((r: any) => ({
         account_id: String(r.account_id || ''),
         account_code: String(r.account_code || ''),

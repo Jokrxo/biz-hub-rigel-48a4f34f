@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { toast as notify } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { emitDashboardCacheInvalidation } from "@/stores/dashboardCache";
 import { AlertCircle, CheckCircle2, Sparkles, TrendingUp, TrendingDown, Info, Search, Loader2, Check, XCircle, DollarSign, Percent, Calculator, Save, ArrowRight, FileText, Calendar, Lock, Wallet, CreditCard, Globe, Plus, Briefcase, BookOpen, Package, Landmark, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";

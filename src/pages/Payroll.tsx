@@ -17,7 +17,7 @@ import React, { useEffect, useMemo, useState, useCallback, FormEvent } from "rea
 import { Users, FileText, Calculator, Plus, Check, BarChart, Info, ArrowRight, X, Wallet, ArrowUpRight, ArrowDownLeft, TrendingUp, TrendingDown, MoreHorizontal, LayoutDashboard, Landmark, Upload, History } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
-import { supabase, hasSupabaseEnv } from "@/integrations/supabase/client";
+import { supabase, hasSupabaseEnv } from "@/lib/supabase";
 import { useAuth } from "@/context/useAuth";
 import { useRoles } from "@/hooks/use-roles";
 import { buildPayslipPDF, type PayslipForPDF } from "@/lib/payslip-export";
