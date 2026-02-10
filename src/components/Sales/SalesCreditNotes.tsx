@@ -22,6 +22,7 @@ interface CreditNote {
   total_amount: number;
   status: string;
   reason: string;
+  po_number?: string;
   customer?: { name: string };
 }
 
@@ -42,6 +43,7 @@ export const SalesCreditNotes = () => {
     invoice_id: "none",
     credit_note_date: new Date().toISOString().split("T")[0],
     reason: "",
+    po_number: "",
     total_amount: 0,
     items: [{ product_id: "", description: "", quantity: 1, unit_price: 0 }]
   });
@@ -74,7 +76,7 @@ export const SalesCreditNotes = () => {
 
       const { data: invData } = await supabase
         .from("invoices")
-        .select("id, invoice_number, total_amount, status")
+        .select("id, invoice_number, total_amount, status, po_number")
         .eq("company_id", profile.company_id)
         .neq("status", "draft")
         .order("invoice_date", { ascending: false });
@@ -97,6 +99,15 @@ export const SalesCreditNotes = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (formData.invoice_id && formData.invoice_id !== "none") {
+      const invoice = invoices.find(inv => inv.id === formData.invoice_id);
+      if (invoice?.po_number) {
+        setFormData(prev => ({ ...prev, po_number: invoice.po_number }));
+      }
+    }
+  }, [formData.invoice_id, invoices]);
 
   const handleSubmit = async () => {
     try {
@@ -132,6 +143,7 @@ export const SalesCreditNotes = () => {
           customer_id: formData.customer_id,
           invoice_id: formData.invoice_id === "none" ? null : formData.invoice_id,
           reason: formData.reason,
+          po_number: formData.po_number || null,
           subtotal,
           tax_amount: taxAmount,
           total_amount: totalAmount,
@@ -211,6 +223,7 @@ export const SalesCreditNotes = () => {
             <TableHeader>
               <TableRow>
                 <TableHead>Number</TableHead>
+                <TableHead>PO Number</TableHead>
                 <TableHead>Date</TableHead>
                 <TableHead>Customer</TableHead>
                 <TableHead>Reason</TableHead>
@@ -223,6 +236,7 @@ export const SalesCreditNotes = () => {
               {creditNotes.map((cn) => (
                 <TableRow key={cn.id}>
                   <TableCell className="font-medium">{cn.credit_note_number}</TableCell>
+                  <TableCell>{cn.po_number || '-'}</TableCell>
                   <TableCell>{cn.credit_note_date}</TableCell>
                   <TableCell>{cn.customer?.name}</TableCell>
                   <TableCell>{cn.reason}</TableCell>
@@ -280,24 +294,34 @@ export const SalesCreditNotes = () => {
                 />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Linked Invoice (Optional)</Label>
-              <Select 
-                onValueChange={(val) => setFormData({...formData, invoice_id: val})}
-                value={formData.invoice_id}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Invoice" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {invoices.map(inv => (
-                    <SelectItem key={inv.id} value={inv.id}>
-                      {inv.invoice_number} - {new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(inv.total_amount)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Linked Invoice (Optional)</Label>
+                <Select 
+                  onValueChange={(val) => setFormData({...formData, invoice_id: val})}
+                  value={formData.invoice_id}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Invoice" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {invoices.map(inv => (
+                      <SelectItem key={inv.id} value={inv.id}>
+                        {inv.invoice_number} - {new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' }).format(inv.total_amount)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>PO Number</Label>
+                <Input 
+                  value={formData.po_number}
+                  onChange={(e) => setFormData({...formData, po_number: e.target.value})}
+                  placeholder="Optional"
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Reason</Label>
