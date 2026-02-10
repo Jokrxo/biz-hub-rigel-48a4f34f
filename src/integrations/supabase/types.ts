@@ -14,6 +14,203 @@ export type Database = {
   }
   public: {
     Tables: {
+      app_settings: {
+        Row: {
+          company_id: string
+          created_at: string | null
+          date_format: string
+          enable_auto_backup: boolean
+          enable_notifications: boolean
+          fiscal_default_year: number | null
+          fiscal_lock_year: boolean | null
+          fiscal_year_start: number
+          id: string
+          language: string
+          theme: string
+          updated_at: string | null
+        }
+        Insert: {
+          company_id: string
+          created_at?: string | null
+          date_format?: string
+          enable_auto_backup?: boolean
+          enable_notifications?: boolean
+          fiscal_default_year?: number | null
+          fiscal_lock_year?: boolean | null
+          fiscal_year_start?: number
+          id?: string
+          language?: string
+          theme?: string
+          updated_at?: string | null
+        }
+        Update: {
+          company_id?: string
+          created_at?: string | null
+          date_format?: string
+          enable_auto_backup?: boolean
+          enable_notifications?: boolean
+          fiscal_default_year?: number | null
+          fiscal_lock_year?: boolean | null
+          fiscal_year_start?: number
+          id?: string
+          language?: string
+          theme?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_settings_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      audit_logs: {
+        Row: {
+          id: string
+          company_id: string
+          user_id: string | null
+          action: string
+          entity: string
+          entity_id: string
+          description: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          company_id: string
+          user_id?: string | null
+          action: string
+          entity: string
+          entity_id: string
+          description?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          company_id?: string
+          user_id?: string | null
+          action?: string
+          entity?: string
+          entity_id?: string
+          description?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_logs_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      purchase_orders: {
+        Row: {
+          id: string
+          po_number: string
+          company_id: string
+          supplier_id: string
+          po_date: string
+          status: string
+          currency: string | null
+          exchange_rate: number | null
+          subtotal: number
+          tax_amount: number
+          total_amount: number
+          notes: string | null
+          created_at: string
+          updated_at: string
+          created_by: string | null
+        }
+        Insert: {
+          id?: string
+          po_number: string
+          company_id: string
+          supplier_id: string
+          po_date: string
+          status?: string
+          currency?: string | null
+          exchange_rate?: number | null
+          subtotal?: number
+          tax_amount?: number
+          total_amount?: number
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+        }
+        Update: {
+          id?: string
+          po_number?: string
+          company_id?: string
+          supplier_id?: string
+          po_date?: string
+          status?: string
+          currency?: string | null
+          exchange_rate?: number | null
+          subtotal?: number
+          tax_amount?: number
+          total_amount?: number
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+          created_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_orders_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      purchase_order_items: {
+        Row: {
+          id: string
+          purchase_order_id: string
+          description: string
+          quantity: number
+          unit_price: number
+          tax_rate: number
+          amount: number
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          purchase_order_id: string
+          description: string
+          quantity: number
+          unit_price: number
+          tax_rate: number
+          amount: number
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          purchase_order_id?: string
+          description?: string
+          quantity?: number
+          unit_price?: number
+          tax_rate?: number
+          amount?: number
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_order_items_purchase_order_id_fkey"
+            columns: ["purchase_order_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       bank_accounts: {
         Row: {
           account_name: string
