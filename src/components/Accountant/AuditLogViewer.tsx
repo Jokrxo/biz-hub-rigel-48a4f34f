@@ -82,7 +82,7 @@ export const AuditLogViewer = () => {
     }
   };
 
-  const uniqueEntities = ["transactions", "invoices", "customers", "suppliers", "items", "purchase_orders", "quotes", "ledger_entries"];
+  const uniqueEntities = ["transactions", "invoices", "credit_notes", "receipts", "customers", "suppliers", "items", "purchase_orders", "quotes", "ledger_entries"];
 
   return (
     <Card className="mt-8">
