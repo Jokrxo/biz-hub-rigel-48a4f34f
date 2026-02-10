@@ -98,12 +98,12 @@ export default defineConfig({
     }
   },
   server: {
-    port: 5175,
+    port: 8080,
     strictPort: false,
     host: true
   },
   preview: {
-    port: 5175,
+    port: 8080,
     strictPort: false,
     host: true
   }
