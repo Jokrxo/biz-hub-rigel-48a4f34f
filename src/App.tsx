@@ -50,6 +50,7 @@ const Journals = lazy(() => import("./pages/Journals"));
 const AccountantDashboard = lazy(() => import("./pages/AccountantDashboard"));
 import About from "./pages/About";
 import Community from "./pages/Community";
+import PlaceholderPage from "./pages/Placeholder";
 
 const queryClient = new QueryClient();
 
@@ -154,35 +155,83 @@ const App = () => {
 
             <Route element={<ProtectedRoute><AppShell><Outlet /></AppShell></ProtectedRoute>}>
               <Route path="/" element={<Index />} />
-              <Route path="/accountant" element={<Suspense fallback={<PageLoader />}><AccountantDashboard /></Suspense>} />
               <Route path="/dashboard" element={<Index />} />
+              
+              {/* Settings Group */}
+              <Route path="/signup-wizard" element={<PlaceholderPage />} />
+              <Route path="/import-statement" element={<PlaceholderPage />} />
+              <Route path="/companies" element={<Suspense fallback={<PageLoader />}><Companies /></Suspense>} />
+              <Route path="/qr-code" element={<PlaceholderPage />} />
+              <Route path="/help" element={<PlaceholderPage />} />
+              <Route path="/settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
+              
+              {/* Financial Reports Group */}
               <Route path="/bank" element={<Suspense fallback={<PageLoader />}><Bank /></Suspense>} />
-              <Route path="/transactions" element={<Suspense fallback={<PageLoader />}><Transactions /></Suspense>} />
-              <Route path="/invoices" element={<Suspense fallback={<PageLoader />}><Invoices /></Suspense>} />
-              <Route path="/quotes" element={<Suspense fallback={<PageLoader />}><Quotes /></Suspense>} />
-              <Route path="/fixed-assets" element={<Suspense fallback={<PageLoader />}><FixedAssets /></Suspense>} />
-              <Route path="/trial-balance" element={<Suspense fallback={<PageLoader />}><TrialBalance /></Suspense>} />
-              <Route path="/reports" element={<Suspense fallback={<PageLoader />}><Reports /></Suspense>} />
+              <Route path="/tax" element={<Suspense fallback={<PageLoader />}><Tax /></Suspense>} />
+              <Route path="/financial-analysis" element={<PlaceholderPage />} />
+              <Route path="/management-accounts" element={<PlaceholderPage />} />
+              <Route path="/reports/income-statement" element={<PlaceholderPage />} />
+              <Route path="/reports/balance-sheet" element={<PlaceholderPage />} />
+              <Route path="/reports/cash-flow" element={<PlaceholderPage />} />
+              <Route path="/reports/changes-in-equity" element={<PlaceholderPage />} />
+              <Route path="/reports/notes" element={<PlaceholderPage />} />
+              <Route path="/reports/fixed-asset-register" element={<Suspense fallback={<PageLoader />}><FixedAssets /></Suspense>} />
+              <Route path="/reports/aged-debtors" element={<PlaceholderPage />} />
+              <Route path="/reports/aged-creditors" element={<PlaceholderPage />} />
+              <Route path="/reports/inventory-valuation" element={<PlaceholderPage />} />
+              <Route path="/reports/vat-return" element={<PlaceholderPage />} />
+              <Route path="/reports/budget-variance" element={<PlaceholderPage />} />
+              
+              {/* Monthly Reports Group */}
+              <Route path="/monthly-reports/income-statement" element={<PlaceholderPage />} />
+              <Route path="/monthly-reports/balance-sheet" element={<PlaceholderPage />} />
+              <Route path="/monthly-reports/cash-flow" element={<PlaceholderPage />} />
+              <Route path="/monthly-reports/trial-balance" element={<Suspense fallback={<PageLoader />}><TrialBalance /></Suspense>} />
+              <Route path="/monthly-reports/general-ledger" element={<PlaceholderPage />} />
+              
+              {/* Accountant Group */}
+              <Route path="/accountant" element={<Suspense fallback={<PageLoader />}><AccountantDashboard /></Suspense>} />
+              <Route path="/journals" element={<Suspense fallback={<PageLoader />}><Journals /></Suspense>} />
+              <Route path="/accounting-cycle" element={<PlaceholderPage />} />
+              
+              {/* Sales Group */}
               <Route path="/sales" element={<Suspense fallback={<PageLoader />}><Sales /></Suspense>} />
               <Route path="/sales/customers" element={<Suspense fallback={<PageLoader />}><Customers /></Suspense>} />
               <Route path="/sales/quotations" element={<Suspense fallback={<PageLoader />}><Quotes /></Suspense>} />
               <Route path="/sales/invoices" element={<Suspense fallback={<PageLoader />}><Invoices /></Suspense>} />
               <Route path="/sales/credit-notes" element={<Suspense fallback={<PageLoader />}><CreditNotes /></Suspense>} />
               <Route path="/sales/receipts" element={<Suspense fallback={<PageLoader />}><Receipts /></Suspense>} />
+              
+              {/* Purchase Group */}
               <Route path="/purchase" element={<Suspense fallback={<PageLoader />}><Purchase /></Suspense>} />
-              <Route path="/tax" element={<Suspense fallback={<PageLoader />}><Tax /></Suspense>} />
+              <Route path="/purchase/suppliers" element={<PlaceholderPage />} />
+              <Route path="/purchase/orders" element={<PlaceholderPage />} />
+              <Route path="/purchase/invoices" element={<PlaceholderPage />} />
+              <Route path="/purchase/payments" element={<PlaceholderPage />} />
+              <Route path="/purchase/credit-notes" element={<PlaceholderPage />} />
+              
+              {/* Payroll Group */}
+              <Route path="/payroll" element={<Suspense fallback={<PageLoader />}><Payroll /></Suspense>} />
+              <Route path="/payroll/run" element={<PlaceholderPage />} />
+              <Route path="/payroll/employees" element={<PlaceholderPage />} />
+              <Route path="/payroll/payslips" element={<PlaceholderPage />} />
+              <Route path="/payroll/settings" element={<PlaceholderPage />} />
+
+              {/* Other Existing Routes (kept for backward compatibility or direct access) */}
+              <Route path="/transactions" element={<Suspense fallback={<PageLoader />}><Transactions /></Suspense>} />
+              <Route path="/invoices" element={<Suspense fallback={<PageLoader />}><Invoices /></Suspense>} />
+              <Route path="/quotes" element={<Suspense fallback={<PageLoader />}><Quotes /></Suspense>} />
+              <Route path="/fixed-assets" element={<Suspense fallback={<PageLoader />}><FixedAssets /></Suspense>} />
+              <Route path="/trial-balance" element={<Suspense fallback={<PageLoader />}><TrialBalance /></Suspense>} />
+              <Route path="/reports" element={<Suspense fallback={<PageLoader />}><Reports /></Suspense>} />
               <Route path="/customers" element={<Suspense fallback={<PageLoader />}><Customers /></Suspense>} />
               <Route path="/budget" element={<Suspense fallback={<PageLoader />}><Budget /></Suspense>} />
               <Route path="/loans" element={<Suspense fallback={<PageLoader />}><Loans /></Suspense>} />
               <Route path="/investments" element={<Suspense fallback={<PageLoader />}><Investments /></Suspense>} />
               <Route path="/impairment" element={<Suspense fallback={<PageLoader />}><Impairment /></Suspense>} />
-              <Route path="/payroll" element={<Suspense fallback={<PageLoader />}><Payroll /></Suspense>} />
-              <Route path="/journals" element={<Suspense fallback={<PageLoader />}><Journals /></Suspense>} />
               <Route path="/billing" element={<Suspense fallback={<PageLoader />}><PaymentPortal /></Suspense>} />
               <Route path="/license" element={<Suspense fallback={<PageLoader />}><License /></Suspense>} />
               <Route path="/license-admin" element={<Suspense fallback={<PageLoader />}><LicenseAdmin /></Suspense>} />
-              <Route path="/companies" element={<Suspense fallback={<PageLoader />}><Companies /></Suspense>} />
-              <Route path="/settings" element={<Suspense fallback={<PageLoader />}><Settings /></Suspense>} />
               <Route path="/about" element={<Suspense fallback={<PageLoader />}><About /></Suspense>} />
               <Route path="/about-us" element={<Suspense fallback={<PageLoader />}><About /></Suspense>} />
               <Route path="/dashboard/about" element={<Suspense fallback={<PageLoader />}><About /></Suspense>} />

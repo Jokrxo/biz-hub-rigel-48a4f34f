@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "react-router-dom";
-import { Calculator } from "lucide-react";
+import { Calculator, ChevronDown, ChevronRight, Circle } from "lucide-react";
 import { useAuth } from "@/context/useAuth";
 import { supabase } from "@/lib/supabase";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -11,11 +11,115 @@ interface SidebarProps {
   open: boolean;
 }
 
-import { navGroups } from "@/config/navigation";
+import { navGroups, NavItem } from "@/config/navigation";
 import { CompanySwitcher } from "./CompanySwitcher";
 
-export const Sidebar = ({ open }: SidebarProps) => {
+const SidebarItem = ({ item, isOpen, depth = 0 }: { item: NavItem, isOpen: boolean, depth?: number }) => {
   const location = useLocation();
+  const hasChildren = item.items && item.items.length > 0;
+  
+  // Check if active (self or children)
+  const isSelfActive = item.href ? location.pathname === item.href : false;
+  const isChildActive = hasChildren ? item.items?.some(sub => sub.href === location.pathname || (sub.items && sub.items.some(s => s.href === location.pathname))) : false;
+  const isActive = isSelfActive || isChildActive;
+
+  // Auto-expand if child is active
+  const [expanded, setExpanded] = useState(isChildActive);
+
+  useEffect(() => {
+    if (isChildActive) setExpanded(true);
+  }, [isChildActive]);
+
+  const Icon = item.icon;
+
+  const content = (
+    <Button
+      variant="ghost"
+      className={cn(
+        "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1 relative",
+        !isOpen && "justify-center px-2 h-10 w-10 mx-auto rounded-xl",
+        isActive && !hasChildren // Only highlight leaf as active
+          ? "bg-sidebar-accent text-sidebar-primary shadow-sm font-medium"
+          : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-primary",
+        depth > 0 && isOpen && "pl-9 h-9" // Indent if depth > 0
+      )}
+      onClick={(e) => {
+        if (hasChildren && isOpen) {
+          e.preventDefault();
+          setExpanded(!expanded);
+        }
+      }}
+    >
+       {isActive && isOpen && !hasChildren && (
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r bg-primary" />
+      )}
+      {Icon && (
+        <Icon
+          className={cn(
+            "h-5 w-5 shrink-0 transition-transform duration-200",
+            isActive ? "text-primary" : "text-muted-foreground"
+          )}
+        />
+      )}
+      {!Icon && depth > 0 && (
+         <Circle className={cn("h-2 w-2 shrink-0", isActive ? "fill-primary text-primary" : "text-muted-foreground")} />
+      )}
+      {isOpen && (
+        <>
+          <span className="truncate flex-1 text-left text-sm">{item.label}</span>
+          {hasChildren && (
+            expanded ? <ChevronDown className="h-4 w-4 opacity-50" /> : <ChevronRight className="h-4 w-4 opacity-50" />
+          )}
+        </>
+      )}
+    </Button>
+  );
+
+  if (!isOpen) {
+    if (item.href) {
+        return (
+            <Link to={item.href} className="block mb-1">
+                <Tooltip>
+                    <TooltipTrigger asChild>{content}</TooltipTrigger>
+                    <TooltipContent side="right">{item.label}</TooltipContent>
+                </Tooltip>
+            </Link>
+        );
+    }
+    // If no href (group parent), show tooltip but no link.
+    // Ideally we should open a popover, but for now we just show the icon (or nothing if no icon).
+    if (!Icon) return null;
+    return (
+        <div className="block mb-1">
+             <Tooltip>
+                <TooltipTrigger asChild>{content}</TooltipTrigger>
+                <TooltipContent side="right">{item.label}</TooltipContent>
+            </Tooltip>
+        </div>
+    );
+  }
+
+  return (
+    <div className="w-full">
+      {item.href && !hasChildren ? (
+        <Link to={item.href} className="block">
+          {content}
+        </Link>
+      ) : (
+        content
+      )}
+      {isOpen && hasChildren && expanded && (
+        <div className="mt-1 space-y-1">
+          {item.items?.map((subItem, idx) => (
+            <SidebarItem key={idx} item={subItem} isOpen={isOpen} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export const Sidebar = ({ open }: SidebarProps) => {
   const { user } = useAuth();
   const [userProfile, setUserProfile] = useState<{ name: string; role: string; company_name?: string } | null>(null);
   const [logoError, setLogoError] = useState(false);
@@ -128,46 +232,9 @@ export const Sidebar = ({ open }: SidebarProps) => {
                   </h3>
                 )}
                 <div className="space-y-1">
-                  {group.items.map((item) => {
-                    const isActive = location.pathname === item.href;
-
-                    const button = (
-                      <Button
-                        variant="ghost"
-                        className={cn(
-                          "w-full justify-start gap-3 hover:bg-sidebar-accent transition-all duration-200 mb-1 relative",
-                          !open && "justify-center px-2 h-10 w-10 mx-auto rounded-xl",
-                          isActive
-                            ? "bg-sidebar-accent text-sidebar-primary shadow-sm font-medium"
-                            : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-primary"
-                        )}
-                      >
-                        {isActive && open && (
-                          <span className="absolute left-0 top-1/2 -translate-y-1/2 h-6 w-1 rounded-r bg-primary" />
-                        )}
-                        <item.icon
-                          className={cn(
-                            "h-5 w-5 shrink-0 transition-transform duration-200",
-                            isActive ? "text-primary" : "text-muted-foreground"
-                          )}
-                        />
-                        {open && <span className="truncate">{item.label}</span>}
-                      </Button>
-                    );
-
-                    return (
-                      <Link key={item.href} to={item.href} className="block">
-                        {open ? (
-                          button
-                        ) : (
-                          <Tooltip>
-                            <TooltipTrigger asChild>{button}</TooltipTrigger>
-                            <TooltipContent side="right">{item.label}</TooltipContent>
-                          </Tooltip>
-                        )}
-                      </Link>
-                    );
-                  })}
+                  {group.items.map((item, idx) => (
+                    <SidebarItem key={idx} item={item} isOpen={open} />
+                  ))}
                 </div>
               </div>
             ))}
