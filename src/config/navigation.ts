@@ -15,7 +15,8 @@ import {
   Settings,
   Shield,
   HelpCircle,
-  AlertCircle
+  AlertCircle,
+  UserCog
 } from "lucide-react";
 
 export const navGroups = [
@@ -23,6 +24,7 @@ export const navGroups = [
     title: "Overview",
     items: [
       { icon: LayoutDashboard, label: "Dashboard", href: "/" },
+      { icon: UserCog, label: "Accountant", href: "/accountant" },
       { icon: Receipt, label: "Transactions", href: "/transactions" },
       { icon: Building, label: "Bank", href: "/bank" },
     ]

@@ -12,6 +12,7 @@ interface SidebarProps {
 }
 
 import { navGroups } from "@/config/navigation";
+import { CompanySwitcher } from "./CompanySwitcher";
 
 export const Sidebar = ({ open }: SidebarProps) => {
   const location = useLocation();
@@ -111,10 +112,7 @@ export const Sidebar = ({ open }: SidebarProps) => {
               />
             )}
             {open && (
-              <div className="flex flex-col">
-                <span className="text-lg font-bold text-sidebar-primary truncate max-w-[150px]">{userProfile?.company_name || "Rigel Business"}</span>
-                <span className="text-xs text-sidebar-foreground/70">Enterprise</span>
-              </div>
+              <CompanySwitcher />
             )}
           </div>
         </div>

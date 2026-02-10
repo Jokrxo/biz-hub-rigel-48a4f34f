@@ -47,6 +47,7 @@ const License = lazy(() => import("./pages/License"));
 const LicenseAdmin = lazy(() => import("./pages/LicenseAdmin"));
 const Companies = lazy(() => import("./pages/Companies"));
 const Journals = lazy(() => import("./pages/Journals"));
+const AccountantDashboard = lazy(() => import("./pages/AccountantDashboard"));
 import About from "./pages/About";
 import Community from "./pages/Community";
 
@@ -153,6 +154,7 @@ const App = () => {
 
             <Route element={<ProtectedRoute><AppShell><Outlet /></AppShell></ProtectedRoute>}>
               <Route path="/" element={<Index />} />
+              <Route path="/accountant" element={<Suspense fallback={<PageLoader />}><AccountantDashboard /></Suspense>} />
               <Route path="/dashboard" element={<Index />} />
               <Route path="/bank" element={<Suspense fallback={<PageLoader />}><Bank /></Suspense>} />
               <Route path="/transactions" element={<Suspense fallback={<PageLoader />}><Transactions /></Suspense>} />
