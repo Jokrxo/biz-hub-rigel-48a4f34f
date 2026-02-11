@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { navGroups } from "@/config/navigation";
+import { navGroups, type NavItem } from "@/config/navigation";
 import { UserMenu } from "./UserMenu";
 import {
   DropdownMenu,
@@ -17,7 +17,7 @@ export const TopNavigation = () => {
   const [logoError, setLogoError] = useState(false);
 
   const isActive = (path: string) => location.pathname === path;
-  const isGroupActive = (items: { href: string }[]) => items.some(item => isActive(item.href));
+  const isGroupActive = (items: NavItem[]) => items.some(item => item.href ? isActive(item.href) : item.items?.some(sub => sub.href && isActive(sub.href)));
 
   return (
     <>
